@@ -1,0 +1,34 @@
+{
+  "rdl_authorization": {
+    "auth_host": "https://login.radlab.dev",
+    "realm": "",
+    "client_id": "",
+    "client_secret": "",
+    "grant_type": "authorization_code",
+    "redirect_uri": "http://0.0.0.0:8000/",
+    "public_sign_key": "",
+    "audience": "account",
+    "scope": ".default",
+    "algorithms": [
+      "RS256",
+      "AES",
+      "HS512",
+      "RSA-QEAP"
+    ],
+    "user_role_main_scope": "resource_access",
+    "user_role_scope_variable": "account",
+    "accepted_user_roles": [
+      "superadmin"
+    ],
+    "default_organisation": {
+      "name": "sse_default",
+      "display_name": "SSE Default Organisation",
+      "description": "Semantic search engine default organisation"
+    },
+    "default_group": {
+      "name": "sse_default_users",
+      "display_name": "SSE default user group",
+      "description": "Semantic search engine default user group"
+    }
+  }
+}
