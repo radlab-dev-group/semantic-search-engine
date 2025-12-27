@@ -54,6 +54,8 @@ class UserQueryResponseAnswer(models.Model):
     rate_comment = models.TextField(null=True)
 
     generation_time = models.DurationField(null=True)
+
+
 #
 #
 # class UserQueryResultsBox(models.Model):
