@@ -1,0 +1,19 @@
+{
+  "users": [
+    {
+      "name": "default_admin",
+      "email": "default_admin@radlab.dev",
+      "password": "default_admin_password"
+    }
+  ],
+  "organisation": {
+    "name": "sse_default",
+    "display_name": "SSE Default Organisation",
+    "description": "Semantic search engine default organisation"
+  },
+  "group": {
+    "name": "sse_default_users",
+    "display_name": "SSE default user group",
+    "description": "Semantic search engine default user group"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "template_name": "<NAME>",
+  "query_templates": [
+    {
+      "name": "<UNIQUE_NAME1>",
+      "display": "<DISPLAY1_IN_VIEW_APP>",
+      "data_connector": {
+      },
+      "data_filter_expressions": {
+      },
+      "structured_response_if_exists": true,
+      "structured_response_data_fields": [
+      ]
+    },
+    {
+      "name": "<UNIQUE_NAM2E>",
+      "display": "<DISPLAY2_IN_VIEW_APP>",
+      "data_connector": {
+      },
+      "data_filter_expressions": {
+      },
+      "structured_response_if_exists": true,
+      "structured_response_data_fields": [
+      ]
+    }
+  ],
+  "templates_grammar": {
+    "tokens": [
+      "<UNIQUE_NAME1>",
+      "<UNIQUE_NAM2E>"
+    ],
+    "alphabet": {
+    }
+  }
+}

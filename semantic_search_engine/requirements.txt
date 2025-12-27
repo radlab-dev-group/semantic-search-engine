@@ -1,0 +1,34 @@
+# Django dependencies
+django
+djangorestframework
+django-rest-swagger
+django-filter
+pyjwt
+
+# other
+markdown
+gunicorn
+python-docx
+pybind11
+pypdf
+deepl
+pybind11
+xlsxwriter
+
+# ml
+transformers
+torch
+sentencepiece
+spacy
+sentence_transformers
+fasttext-langdetect
+langchain
+langchain-community
+openai
+huggingface_hub
+
+# db
+pymilvus
+psycopg2-binary
+
+Levenshtein

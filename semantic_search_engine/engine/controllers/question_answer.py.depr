@@ -1,0 +1,86 @@
+# import os
+# import abc
+# from engine.controllers.models import (
+#     OpenAIGenerativeController,
+#     GenerativeModelControllerApi,
+# )
+#
+#
+# class GenerativeControllerI(abc.ABC):
+#     def __init__(self):
+#         self.deepl_api_key = os.environ.get("DEEPL_AUTH_KEY", None)
+#
+#     @abc.abstractmethod
+#     def generative_answer_from_context(
+#         self,
+#         question_str: str,
+#         contexts: list,
+#         qa_gen_model: str,
+#         which_docs: list | None,
+#         answer_language: str | None,
+#         question_prompt: str | None,
+#     ):
+#         pass
+
+#
+# class GenerativeControllerOpenAi(GenerativeControllerI):
+#     def __init__(self):
+#         super().__init__()
+#         self.openai_api_key = os.environ.get("OPENAI_API_KEY", None)
+#
+#     def generative_answer_from_context(
+#         self,
+#         question_str: str,
+#         contexts: list,
+#         qa_gen_model: str,
+#         which_docs: list | None,
+#         answer_language: str | None,
+#         question_prompt: str | None,
+#     ):
+#         # if self.openai_api_key is None or len(self.openai_api_key) < 10:
+#         #     # st.error(
+#         #     #     "OPENAI_API_KEY environment is not set! "
+#         #     #     "Generative answer will not be generated!"
+#         #     # )
+#         #     return None
+#         #
+#         # openai_controller = OpenAIGenerativeController(
+#         #     openai_api_key=self.openai_api_key
+#         # )
+#         # return openai_controller.generative_summarization_openai(
+#         #     question_str=question_str,
+#         #     search_results=contexts,
+#         #     qa_gen_model=qa_gen_model,
+#         #     which_docs=which_docs,
+#         # )
+#         pass
+#
+#
+# class GenerativeControllerLLama2(GenerativeControllerI):
+#     def __init__(self):
+#         super().__init__()
+#
+#     def generative_answer_from_context(
+#         self,
+#         question_str: str,
+#         contexts: list,
+#         qa_gen_model: str,
+#         which_docs: list | None,
+#         answer_language: str | None,
+#         question_prompt: str | None,
+#     ):
+#         # if translate_llama_output and (
+#         #     deepl_api_key is None or len(deepl_api_key) < 10
+#         # ):
+#         #     translate_llama_output = False
+#         #
+#         # llama_controller = LLamaGenerativeController(deepl_api_key=deepl_api_key)
+#         # llama_summarization_str = llama_controller.generative_summarization_llama(
+#         #     question_str=question_str,
+#         #     search_results=answers,
+#         #     qa_gen_model=qa_gen_model,
+#         #     target_lang=answer_language if translate_llama_output else None,
+#         #     question_prompt=question_prompt,
+#         #     which_docs=which_docs,
+#         # )
+#         pass
