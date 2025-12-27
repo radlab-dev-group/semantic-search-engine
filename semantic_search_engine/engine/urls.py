@@ -1,3 +1,14 @@
+"""
+urls.py
+-------
+
+URL configuration for the public API endpoints of the search engine.
+Each view class implements a distinct operation (search, generative
+answer, rating, model listing, …).  The ``prepare_api_url`` helper
+adds the appropriate prefix (e.g. ``/api/v1/``) defined in project
+settings.
+"""
+
 from django.urls import path
 
 from main.src.constants import prepare_api_url
