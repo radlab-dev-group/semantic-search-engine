@@ -1,223 +1,248 @@
-## Moduł`engine.controllers.search.DBSemanticSearchController`
+# Semantic Search Engine
 
-Logika wyszukiwania jest w ogólnej mierze nastepująca:
+A lightweight, extensible toolkit for preparing and handling textual data for semantic search and downstream NLP
+tasks.  
+The repository bundles a collection of utilities for:
 
-1. W pierwszym kroku, na podstawie meta-informacji przygotowywane są dokumenty,
-   w których przeszukiwana będzie fraza. Ten krok ogranicza przestrzeń w bazie semantycznej.
-   Tylko przefiltrowane w tym kroku dokumenty będą uwzględniane podczas przeszukiwania
-   semantycznego. W tym kroku bardzo dużo błędnych dokumentów odrzucamy na starcie,
-   zanim zaczniemy przeszukiwanie semantyczne.
-2. Do przeszukiwania semantycznego wykorzystywany jest oczywiście aspekt podobieństwa
-   semantycznego, jednak zamiast przeszukiwać całą bazę semantyczną,
-   przeszukiwane są tylko dokumenty, które wyszły z _Kroku 1_.
+* Converting Doccano exports to formats ready for sequence‑ or token‑classification models.
+* Transforming plain‑text corpora into JSON/JSONL datasets, with optional chunking, language detection and
+  preprocessing.
+* Managing model configurations (e.g., denoiser models) and interacting with AWS S3 storage.
+* A minimal Django entry‑point (`manage.py`) for optional web or API components.
 
-### Wyszukiwanie z opcjami, metoda `search_with_options`
+---
 
-```python
-def search_with_options(
-        self,
-        question_str: str,
-        search_params: dict,
-        convert_to_pd: bool = False,
-        reformat_to_display: bool = False,
-        ignore_question_lang_detect: bool = False,
-        organisation_user: OrganisationUser = None,
-        collection: CollectionOfDocuments = None,
-        user_query: UserQuery = None,
-):
-    ...
+## Table of Contents
+
+1. [Project Structure](#project-structure)
+2. [Prerequisites](#prerequisites)
+3. [Installation](#installation)
+4. [Configuration](#configuration)
+5. [Command‑line Tools](#commandline-tools)
+    - [Doccano Converter](#doccano-converter)
+    - [Any‑Text‑to‑JSON Converter](#anytexttojson-converter)
+6. [AWS Handler](#aws-handler)
+7. [Running the Django Management Script](#running-the-django-management-script)
+8. [License](#license)
+
+---
+
+## Project Structure
+
+```
+semantic-search-engine/
+├── configs/                # Configuration files (e.g. AWS credentials)
+├── scripts/                # Helper scripts (optional)
+├── semantic_search_engine/ # Core package (models, utils, handlers)
+│   ├── __init__.py
+│   ├── constants.py
+│   ├── aws_handler.py
+│   └── models.json
+├── doccano_converter.py   # Doccano export → dataset conversion
+├── any_text_to_json.py    # Directory → JSON/JSONL conversion
+├── manage.py              # Django entry point (optional)
+└── README.md              # ← you are reading it!
 ```
 
-Ważnym elementem jest`search_params`, to słownik, który służy do filtrowania dokumentów przed
-przeszukiwaniem wyszukiwarki semantycznej. Słownik ten posiada pola:
+---
 
-* `categories` -- jako lista kategorii (stringów), dokument musi posiadać co
-  najmniej jedną z tych kategorii, dokument ma przypisaną jedną kategorię główną
-  (`document.category`) i to ona jest sprawdzana z tą listą.
-* `documents` -- lista nazw dokumentów, które mają być brane pod uwagę podczas
-  przeszukiwania, tylko te wskazane dokumenty będą przeszukiwane
-* `relative_path` -- podobnie jak dokumenty, ale wskazane ściezki relatywne.
-  W dokumentach kilka może mieć taką samą nazwę, ale tylko jeden posiada
-  daną ściezkę relatywną.
-* `relative_path_contains` -- Lista fraz, którymi przefiltrować tylko takie dokumenty,
-  które zawierają co najmniej jedną ze zdefiniowanych fraz. Może się przydać, kiedy np.
-  sciezka relatywna, to _url_ strony. Wtedy tą listą można przefiltrować strony po domenie,
-  a właściwie po liście domen -- można tym sposobem wybrać tylko teksty z określonych urli.
-* `templates` -- lista identyfikatorów templatek, którymi maja być filtrowane dokumenty
-* `metadata_filter` -- dowolny filtr oparty o przeszukiwanie metadanych
-  (pole `metadata_json` w `Document`)
-* `only_template_documents` -- znacznik _boolowski_, który domyślnie jest wyłaczony.
-  Włączenie tego przełącznika powoduje, że tylko dokumenty spełniający założenia templatek
-  będą wykorzystywane do wuszkiwania. Jeżeli ustawiona na _False_ wtedy również inne
-  mechanizmy filtrujące będą ogrniczały wyniki.
+## Prerequisites
 
-**Flow** filtrowania meta-informacjami jest nastepujący:
+| Tool                           | Minimum Version                    |
+|--------------------------------|------------------------------------|
+| Python                         | **3.11** (rc1 is fine)             |
+| pip                            | latest                             |
+| (Optional) Django              | 4.x                                |
+| (Optional) boto3               | for AWS integration                |
+| (Optional) radlab_data package | required by the conversion scripts |
 
-1. Jeżeli przekazane były kategorie, to z bazy wybierane są te dokumenty,
-   które posiadają jedną z przekazanych kategorii. Pobierane są nazwy tych dokumentów.
-   Dokumenty te odkładane są jako **pierwsza kupka dokumentów**.
-2. Jeżeli podane zostały identyfikatory templatek, to niezależnie od punktu 1.
-   tworzona jest **druga kupka dokumentów**. Wybierane są tylko takie dokumenty,
-   które spełniają założenia przekazanych szablonów.
-3. Tworzona jest **kupka dokumentów** `documents` (ze słownika `search_params`)
-4. Tworzona jest **kupka relatywnych ścieżek** ze słownika `search_params`
-6. Tworzona jest **kupka dokumentów** na podstawie `metadata_filters`
-7. Jeżeli ustawiona jest flaga `only_template_documents` to wszystkie
-   kupki są usuwane, poza kupką z dokumentów, które dopasowane zostały
-   na podstawie templatek. Wszysatko inne jest ignorowane -- nie ma
-   innych ograniczeń na dokumenty.
-8. Jeżeli ta flaga jest ustawiona na _False_ kupki z nazwami dokumentów
-   łączone są do jedenk kupki z _nazwami dokumentów_. Braną są wszyskie nazwy dokumentów.
-   Jeżeli dokument wystepouje tylko na jednej z kupek również jest brany pod uwagę.
-   Nie jest wymagane aby dokument spełnił wszystkie filtry, musi spełnic co najmniej
-   jeden i wtedy przechodzi do wyszukiwarki semantycznej.
+All other dependencies are listed in `requirements.txt` (or can be installed via `pip install -r requirements.txt`).
 
-Przkładowe zapisy `metadata_filters`:
+---
+
+## Installation
+
+```shell script
+# Clone the repository
+git clone https://github.com/your-org/semantic-search-engine.git
+cd semantic-search-engine
+
+# Create a virtual environment (recommended)
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install Python dependencies
+pip install -r requirements.txt
+```
+
+If you plan to use the Django utilities:
+
+```shell script
+pip install django
+```
+
+---
+
+## Configuration
+
+### AWS
+
+The `AwsHandler` expects a JSON configuration file placed in `configs/` (default filenames are defined in
+`semantic_search_engine/constants.py`).  
+A minimal example (`configs/aws_config.json`):
 
 ```json
-[
-  {
-    "operator": "in",
-    "field": {
-      "deep_labels": {
-        "0": [
-          "kategoria"
-        ]
-      }
-    }
-  },
-  {
-    "operator": "eq",
-    "field": {
-      "main_category": "kategoria"
-    }
-  },
-  {
-    "operator": "lt",
-    "field": {
-      "kategoria": {
-        "gdzie_wartosc": {
-          "jest_bardzo_gleboko": 100
-        }
-      }
-    }
+{
+  "aws": {
+    "REGION_NAME": "us-east-1",
+    "ENDPOINT_URL": "https://s3.amazonaws.com",
+    "ACCESS_KEY_ID": "<your-access-key>",
+    "SECRET_ACCESS_KEY": "<your-secret>",
+    "STORAGE_BUCKET_NAME": "my-semsearch-bucket"
   }
-]
+}
 ```
 
-Dostępne operatory: `["in", "eq", "ne", "gt", "lt", "gte", "lte", "hse"]`.
-Gdzie `hse` (_has same element_) to operacja, która służy do sprawdzania czy dwa
-zbiory posiadają taki sam element. Np. posiadając dwie listy można sprawdzić
-czy zawierają jakiś wspólny element. Przykłady działania `hse`
-na dwóch listach `list_a` oraz `list_b`.
+The handler validates that all required fields are present and will raise an assertion error if anything is missing.
 
+### Model Configuration
+
+`semantic_search_engine/models.json` holds model metadata, e.g.:
+
+```json
+{
+  "denoiser": {
+    "model_name": "radlab/polish-denoiser-t5-base",
+    "model_path": "/mnt/data2/llms/models/radlab-open/denoiser/radlab-denoiser-plt5-base-v2",
+    "device": "cuda:0"
+  }
+}
 ```
-list_a = [1, 2] list_b = [2, 5, 6, 7] --> return True
-list_a = [], list_b = [2, 5, 6, 7] --> return False
-list_a = [2] list_b = [2, 5, 6, 7] --> return True
-list_a = [1, 2, 3, 5] list_b = [6, 7] --> return False
-list_a = [1, 2, 3, 5] list_b = [5] --> return True
+
+You can edit the JSON to point to a different model or device.
+
+---
+
+## Command‑line Tools
+
+Both conversion utilities share a similar CLI pattern based on `argparse`.  
+Run `python <script>.py -h` for the full help message.
+
+### Doccano Converter
+
+Converts Doccano exports into datasets suitable for **sequence classification** or **token classification** tasks.
+
+#### Example – Sequence Classification
+
+```shell script
+python doccano_converter.py \
+    -I /path/to/doccano/export \
+    -e .jsonl \
+    --show-class-labels-histogram \
+    -O prepared_datasets/seq_class/20231208 \
+    --sequence-classification
 ```
 
-Podczas porównywania pojedycznego operatora z metadanymi, możliwe jest dowolne
-zagłębienie słowników.
+#### Example – Token Classification
 
-Poniżej znajduje się przykładaowa definicja metadanych `md_dict` oraz kilku
-wyrażeń filtrujących z różnymi opratorami.
+```shell script
+python doccano_converter.py \
+    -I /path/to/doccano/export \
+    -e .jsonl \
+    --show-class-labels-histogram \
+    -O prepared_datasets/token_class/20231208 \
+    --token-classification
+```
+
+Key flags:
+
+| Flag                            | Description                                     |
+|---------------------------------|-------------------------------------------------|
+| `-I` / `--input-dir`            | Directory containing Doccano export files       |
+| `-e` / `--dataset-extension`    | Extension of source files (default: `.jsonl`)   |
+| `-O` / `--output-dir`           | Destination for the prepared dataset            |
+| `--sequence-classification`     | Produce a dataset for text‑level classification |
+| `--token-classification`        | Produce a dataset for token‑level labeling      |
+| `--show-class-labels-histogram` | Prints a histogram of class label frequencies   |
+
+### Any‑Text‑to‑JSON Converter
+
+Walks through a directory of plain text files and writes a unified JSON (or JSONL) file. Supports optional chunking,
+overlapping tokens, language detection, and cleaning.
+
+#### Basic usage
+
+```shell script
+python any_text_to_json.py \
+    -d /path/to/texts \
+    -o /path/to/output/dataset.json
+```
+
+#### Advanced options
+
+| Option                              | Description                                                                  |
+|-------------------------------------|------------------------------------------------------------------------------|
+| `--proper-pages`                    | Merge all texts belonging to the same page into a single entry               |
+| `--merge-document-pages`            | Merge all pages of a document into one record                                |
+| `--clear-texts`                     | Apply `radlab_data` cleaning pipeline before saving                          |
+| `--split-to-max-tokens-in-chunk N`  | Split each document into chunks of *N* tokens                                |
+| `--overlap-tokens-between-chunks M` | Overlap *M* tokens between consecutive chunks (requires the previous option) |
+| `--check-text-language`             | Detect language of each document and store it in metadata                    |
+| `--processes K`                     | Parallelise processing with *K* worker processes                             |
+
+The script automatically detects whether the output file ends with `.json` (single JSON object) or any other extension (
+treated as JSONL, one record per line).
+
+---
+
+## AWS Handler
+
+`semantic_search_engine/aws_handler.py` provides a thin wrapper around **boto3** for common S3 operations:
+
+* `mkdir(path)` – create a “directory” (zero‑byte object with a trailing slash).
+* `rm(path)` – delete an object or a pseudo‑directory.
+* `add_file_from_buffer(buffer, dest_path)` – upload raw data.
+* `add_file_from_path(local_path, dest_dir)` – read a local file and upload it.
+* `ls(dir=None, extensions=None)` – list objects, optionally filtered by file extensions (`json`, `jsonl`).
+* `load_file(file_path, file_type=None)` – download and deserialize JSON/JSONL files.
+
+Typical usage pattern:
 
 ```python
-# %%
-md_dict = {
-    "deep_labels": {
-        "0": [],
-        "1": [
-            "Konflikty i kryzysy"
-        ],
-        "2": [
-            "Informacje o Ukrainie w czasie kryzysu."
-        ],
-        "3": [
-            "Napady Naturalne i Konflikty Militarne"
-        ],
-        "4": [
-            "Konflikty zbrojne na Ukrainie."
-        ],
-        "5": {
-            "6": {
-                "7": 125
-            }
-        }
-    },
-    "channel": "TCH_channel",
-    "dataset_id": "Telegram UA",
-    "main_label": "Konflikty zbrojne na Ukrainie.",
-    "clear_texts": False,
-}
+from semantic_search_engine.aws_handler import AwsHandler
 
-# Filtering expressions with operators
-# 1
-e_dict_1 = {
-    "deep_labels": {
-        "1": "Konflikty i kryzysy"
-    }
-}
-e_op_1 = "in"
-# 2
-e_dict_2 = {
-    "main_label": "Konflikty zbrojne na Ukrainie."
-}
-e_op_2 = "gt"
-# 3
-e_dict_3 = {
-    "deep_labels": {
-        "5": {
-            "6": {
-                "7": 125
-            }
-        }
-    }
-}
-e_op_3 = "eq"
+aws = AwsHandler()  # Loads config from configs/aws_config.json
+aws.mkdir('datasets/')  # Create a bucket “folder”
+aws.add_file_from_path('data.json', 'datasets/')
+files = aws.ls('datasets/', extensions=['json'])
+print('Bucket contents:', files)
+
+# Load a JSON file back into Python
+data = aws.load_file('datasets/data.json')
 ```
 
-Wynik działania/pokrycia eyrażeń na metadanych:
+All methods expose a `last_error` attribute for troubleshooting and automatically log failures.
 
-``` 
-Konflikty i kryzysy in ['Konflikty i kryzysy'] -> True
-Konflikty zbrojne na Ukrainie. gt Konflikty zbrojne na Ukrainie. -> False
-125 eq 125 -> True
+---
+
+## Running the Django Management Script
+
+If the project includes a Django component, the standard `manage.py` entry point is provided:
+
+```shell script
+export DJANGO_SETTINGS_MODULE=main.settings   # Adjust if your settings module differs
+python manage.py runserver                     # Start the development server
+python manage.py migrate                       # Apply migrations
 ```
 
-Po wyżej przedstawionej procedurze uruchamiane jest wyszukiwanie:
+The script simply forwards the command‑line arguments to Django’s `execute_from_command_line`.
 
-```python
-query_results = self.search(
-    search_text=question_str,
-    max_results=search_params.get("max_results", 50),
-    rerank_results=search_params.get("rerank_results", False),
-    language=lang_str,
-    return_with_factored_fields=search_params.get(
-        "return_with_factored_fields", False
-    ),
-    search_in_documents=docs_to_search,
-    relative_paths=relative_paths,
-)[0]
-```
+---
 
-W tej metodzie do przeszukiwania semantycznego wykorzystywany jest
-handler do Milvusa. Pamiętajmy, że tutaj przeszukujemy bazę semantyczną
-czyli określamy podobieństwo między dwoma _reprezentacjami embeddingowymi_
-tekstów -- pytania i fragmentu dokumentu. Dla embeddingu pytania
-odszukiwane są najbardziej podobne embeddingi z fragmentami tekstów.
+## License
 
-Tworzonyt jest słownik opcji do filtrowania
-w Milvusie (po metadanych). Tworzony jest słownik `metadata_filter`
-a do niego wpisywane są trzy wartości:
+This project is licensed under the **Apache 2.0 License** – see the `LICENSE` file for details.
 
-1. `language` -- jeżeli podano, to tylko _embeddingi_ ze wskazanym językiem będą przeszukiwane;
-2. `filenames` -- lista nazw dokumentów -- tylko embeddinigi z tymi nazwami będą przeszukiwane;
-3. `relative_paths` -- lista ścieżek relatywnych -- podobnie jak `filenames` jednak ściezki relatywne;
+---  
 
-Jeżeli podano więcej niż jeden z ww wartości, to w odróżnieniu od bazy relacyjnej,
-w Milvusie wybierane są do przeszukiwania te embeddingi,
-które spełniają warunek połączomy `AND`, nie `OR 
+*Happy coding! 🚀*  
