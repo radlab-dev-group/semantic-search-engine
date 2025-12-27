@@ -1,3 +1,23 @@
+"""
+search.py
+---------
+
+Utility module providing high‑level search functionality built on top of
+Milvus vector store, Django ORM models and optional transformer‑based
+embedder/reranker models.  It defines three main controller classes:
+
+* ``SearchQueryController`` – orchestrates creation of a user query and
+  retrieval of the corresponding response.
+* ``DBSemanticSearchController`` – wraps low‑level indexing and search
+  operations, handling filtering, metadata queries and result
+  post‑processing.
+* ``DBTextSearchController`` – fetches raw text fragments from the
+  relational database and formats them for display.
+
+The module is used by the web application to answer user questions
+against a collection of documents.
+"""
+
 import math
 import tqdm
 import json
@@ -27,7 +47,18 @@ from engine.controllers.embedders_rerankers import EmbeddingModelsConfig
 
 
 class SearchQueryController:
+    """
+    High‑level controller that creates a ``UserQuery`` record,
+    runs the semantic search and stores the resulting ``UserQueryResponse``.
+    """
+
     def __init__(self):
+        """
+        Initialise a ``SearchQueryController`` instance.
+
+        Currently no internal state is required; the constructor is kept
+        for future extensibility.
+        """
         pass
 
     @staticmethod
@@ -39,6 +70,31 @@ class SearchQueryController:
         sse_engin_config_path: str,
         ignore_question_lang_detect: bool = False,
     ):
+        """
+        Create a new user query, execute the search and persist the response.
+
+        Parameters
+        ----------
+        query_str : str
+            The raw text entered by the user.
+        search_options_dict : dict
+            Dictionary of search options (filters, ranking flags, etc.).
+        collection : CollectionOfDocuments
+            The document collection against which the search is performed.
+        organisation_user : OrganisationUser
+            The user performing the query.
+        sse_engin_config_path : str
+            Path to the semantic search engine configuration file.
+        ignore_question_lang_detect : bool, optional
+            If ``True`` the language detection step is skipped.
+
+        Returns
+        -------
+        dict
+            A dictionary containing the search ``results`` and the
+            ``query_response_id``.  If template prompts were generated they
+            are included under the ``template_prompts`` key.
+        """
         new_query_obj = UserQuery.objects.create(
             organisation_user=organisation_user,
             collection=collection,
@@ -84,6 +140,19 @@ class SearchQueryController:
 
     @staticmethod
     def get_user_response_by_id(query_response_id) -> UserQueryResponse | None:
+        """
+        Retrieve a ``UserQueryResponse`` instance by its primary key.
+
+        Parameters
+        ----------
+        query_response_id : int
+            Primary key of the ``UserQueryResponse`` to fetch.
+
+        Returns
+        -------
+        UserQueryResponse | None
+            The matching response object, or ``None`` if it does not exist.
+        """
         try:
             return UserQueryResponse.objects.get(id=query_response_id)
         except UserQueryResponse.DoesNotExist:
@@ -91,6 +160,12 @@ class SearchQueryController:
 
 
 class DBSemanticSearchController:
+    """
+    Controller that handles indexing of document texts into Milvus and
+    executing vector‑based searches with optional metadata filtering,
+    reranking and result post‑processing.
+    """
+
     POSSIBLE_OPERATORS = ["in", "eq", "ne", "gt", "lt", "gte", "lte", "hse"]
     """
     `hse` operation --> has same elem:
@@ -110,6 +185,25 @@ class DBSemanticSearchController:
         embedder_model: str | None = None,
         cross_encoder_model: str | None = None,
     ):
+        """
+        Initialise the controller with configuration for Milvus, embedder
+        and optional reranker models.
+
+        Parameters
+        ----------
+        jsonl_config_path : str
+            Path to the JSONL configuration for Milvus collections.
+        collection_name : str
+            Name of the Milvus collection.
+        index_name : str | None
+            Optional name of the Milvus index to use.
+        batch_size : int, default 10
+            Number of documents processed per batch during indexing.
+        embedder_model : str | None, optional
+            Identifier of the transformer model used for embedding texts.
+        cross_encoder_model : str | None, optional
+            Identifier of the cross‑encoder model used for reranking.
+        """
         self._logger = get_logger()
 
         self.batch_size = batch_size
@@ -161,6 +255,22 @@ class DBSemanticSearchController:
     def prepare_controller_for_collection(
         collection: CollectionOfDocuments, sse_engin_config_path: str
     ):
+        """
+        Factory method that creates a ``DBSemanticSearchController`` instance
+        pre‑configured for the supplied collection.
+
+        Parameters
+        ----------
+        collection : CollectionOfDocuments
+            The collection for which the controller should be prepared.
+        sse_engin_config_path : str
+            Path to the semantic‑search engine configuration file.
+
+        Returns
+        -------
+        DBSemanticSearchController
+            Configured controller ready to index or search the collection.
+        """
         return DBSemanticSearchController(
             jsonl_config_path=sse_engin_config_path,
             collection_name=collection.name,
@@ -171,6 +281,15 @@ class DBSemanticSearchController:
         )
 
     def index_texts(self, from_collection: CollectionOfDocuments) -> None:
+        """
+        Index all text fragments belonging to ``from_collection`` into
+        Milvus.
+
+        Parameters
+        ----------
+        from_collection : CollectionOfDocuments
+            The source collection whose texts will be indexed.
+        """
         all_doc_pages_texts = self._text_db_controller.get_all_texts_from_collection(
             from_collection
         )
@@ -180,6 +299,16 @@ class DBSemanticSearchController:
     def index_texts_from_list(
         self, all_texts: list | QuerySet, collection: CollectionOfDocuments
     ) -> None:
+        """
+        Index a list (or ``QuerySet``) of ``DocumentPageText`` objects.
+
+        Parameters
+        ----------
+        all_texts : list | QuerySet
+            Iterable containing text objects to be indexed.
+        collection : CollectionOfDocuments
+            The collection to which the texts belong.
+        """
         with tqdm.tqdm(total=len(all_texts), desc="Indexing documents") as pbar:
             # batched_texts = []
             for text in all_texts:
@@ -224,6 +353,33 @@ class DBSemanticSearchController:
         search_in_documents: list = None,
         relative_paths: list = None,
     ) -> []:
+        """
+        Perform a vector search in Milvus with optional metadata filters.
+
+        Parameters
+        ----------
+        search_text : str
+            The query string to embed and search for.
+        max_results : int
+            Maximum number of results to return.
+        rerank_results : bool, default True
+            Whether to apply the reranker model to the raw results.
+        language : str, optional
+            Language filter – only vectors with this language are considered.
+        additional_output_fields : list | None, optional
+            Extra fields to retrieve from Milvus.
+        return_with_factored_fields : bool, default False
+            If ``True`` the returned objects include additional factor fields.
+        search_in_documents : list, optional
+            List of document names to restrict the search to.
+        relative_paths : list, optional
+            List of relative file paths to restrict the search to.
+
+        Returns
+        -------
+        list
+            List of search hits returned by Milvus.
+        """
         metadata_filter = {}
         if language is not None and len(language):
             metadata_filter["text_language"] = language
@@ -258,8 +414,11 @@ class DBSemanticSearchController:
         user_query: UserQuery = None,
     ):
         """
-        Sample search_params
+        High‑level search method that interprets ``search_params`` (filters,
+        ranking options, etc.), performs the vector search and formats the
+        output.
 
+        Sample search_params
         {
           "categories": [
             "Sport",
@@ -277,15 +436,36 @@ class DBSemanticSearchController:
           ]
         }
 
-        :param question_str:
-        :param search_params: F.e. Contains "filter_options" with filtering options
-        :param convert_to_pd:
-        :param reformat_to_display:
-        :param ignore_question_lang_detect:
-        :param organisation_user:
-        :param collection:
-        :param user_query:
-        :return:
+        Parameters
+        ----------
+        question_str : str
+            The user query.
+        search_params : dict
+            Dictionary containing search options (categories, documents,
+            templates, pagination, etc.).
+        convert_to_pd : bool, default False
+            If ``True`` the statistics are returned as a pandas DataFrame.
+        reformat_to_display : bool, default False
+            If ``True`` the detailed results are reformatted for UI display.
+        ignore_question_lang_detect : bool, default False
+            Skip language detection for the query.
+        organisation_user : OrganisationUser, optional
+            The user performing the search.
+        collection : CollectionOfDocuments, optional
+            The collection to search within.
+        user_query : UserQuery, optional
+            The ``UserQuery`` instance to associate with the search.
+
+        Returns
+        -------
+        tuple
+            ``(results, structured_results, template_prompts)`` where
+            * ``results`` is a dict with ``query``, ``stats`` and
+              ``detailed_results``,
+            * ``structured_results`` is a list of structured documents
+              (or empty list),
+            * ``template_prompts`` is a list of system prompts generated
+              from matched templates.
         """
 
         doc_names_from_cat = []
@@ -545,12 +725,21 @@ class DBSemanticSearchController:
 
         Possible operators: ["in", "eq", "ne", "gt", "lt", "gte", "lte", "hse"]
 
-        Field may be any nested, and is stored into Document.metadata_json fdield.
+        Field may be any nested, and is stored into Document.metadata_json field.
 
-        :param collection: Collection to filter.
-        :param metadata_filters: List of dictionaries (single metadata filter)
-        :param use_and_operator: Whether to use `AND` or `OR` operator.
-        :return: List of filtered Documents.
+        Parameters
+        ----------
+        collection : CollectionOfDocuments
+            Collection to filter.
+        metadata_filters : list
+            List of dictionaries (single metadata filter).
+        use_and_operator : bool
+            Whether to combine filters with ``AND`` (True) or ``OR`` (False).
+
+        Returns
+        -------
+        list[Document]
+            List of filtered Documents.
         """
         if not len(metadata_filters):
             return []
@@ -594,6 +783,22 @@ class DBSemanticSearchController:
     def __get_documents_with_metadata_filter_expression(
         self, collection: CollectionOfDocuments, expression: dict
     ) -> list[Document]:
+        """
+        Retrieve documents from ``collection`` that satisfy a single
+        ``expression`` (operator + field definition).
+
+        Parameters
+        ----------
+        collection : CollectionOfDocuments
+            The collection to search.
+        expression : dict
+            Dictionary describing the operator and field to filter on.
+
+        Returns
+        -------
+        list[Document]
+            Documents matching the expression.
+        """
         c_docs = self._text_db_controller.get_all_documents_from_collection(
             collection=collection
         )
@@ -608,6 +813,22 @@ class DBSemanticSearchController:
     def __is_document_covered_with_metadata_expression(
         self, document: Document, expression: dict
     ) -> bool:
+        """
+        Check whether a single ``document`` satisfies the provided
+        ``expression``.
+
+        Parameters
+        ----------
+        document : Document
+            Document instance to test.
+        expression : dict
+            Expression containing ``operator`` and ``field``.
+
+        Returns
+        -------
+        bool
+            ``True`` if the document matches the expression, ``False`` otherwise.
+        """
         if document.metadata_json is None or not len(document.metadata_json):
             return False
 
@@ -624,6 +845,24 @@ class DBSemanticSearchController:
     def __is_properly_matched_expression_with_metadata(
         self, expr_operator: str, expr_dict: dict, metadata_dict: dict
     ) -> bool:
+        """
+        Recursively evaluate a nested metadata expression against a
+        document's metadata.
+
+        Parameters
+        ----------
+        expr_operator : str
+            One of the supported operators (``in``, ``eq`` … ``hse``).
+        expr_dict : dict
+            The field definition (may be nested).
+        metadata_dict : dict
+            The document's ``metadata_json`` dictionary.
+
+        Returns
+        -------
+        bool
+            ``True`` if the expression matches, ``False`` otherwise.
+        """
         for k, v in expr_dict.items():
             if k not in metadata_dict:
                 return False
@@ -645,6 +884,24 @@ class DBSemanticSearchController:
     def __check_expression_operator_value(
         self, expr_operator: str, expr_value, metadata_value
     ) -> bool:
+        """
+        Evaluate a primitive comparison between ``expr_value`` and
+        ``metadata_value`` according to ``expr_operator``.
+
+        Parameters
+        ----------
+        expr_operator : str
+            Operator name (e.g., ``in``, ``eq``).
+        expr_value : Any
+            Value from the filter expression.
+        metadata_value : Any
+            Corresponding value from the document metadata.
+
+        Returns
+        -------
+        bool
+            Result of the comparison.
+        """
         expr_operator = expr_operator.lower().strip()
         if expr_operator == "in":
             return expr_value in metadata_value
@@ -682,6 +939,20 @@ class DBSemanticSearchController:
         return False
 
     def __is__proper__expression(self, expression: dict) -> bool:
+        """
+        Validate that ``expression`` contains required keys and a supported
+        operator.
+
+        Parameters
+        ----------
+        expression : dict
+            Expression dictionary to validate.
+
+        Returns
+        -------
+        bool
+            ``True`` if the expression is well‑formed, ``False`` otherwise.
+        """
         if None in [
             expression.get("operator", None),
             expression.get("field", None),
@@ -699,6 +970,24 @@ class DBSemanticSearchController:
         collection: CollectionOfDocuments,
         query_templates: list[QueryTemplate],
     ):
+        """
+        Build a list of structured document dictionaries based on the first
+        template that requests a structured response.
+
+        Parameters
+        ----------
+        results : list[dict]
+            Raw search results.
+        collection : CollectionOfDocuments
+            Collection from which the documents originate.
+        query_templates : list[QueryTemplate]
+            Templates used in the query.
+
+        Returns
+        -------
+        list[dict] | None
+            List of structured documents or ``None`` if no template requires it.
+        """
         template_to_use = None
         for qt in query_templates:
             if qt.structured_response_if_exists:
@@ -747,6 +1036,22 @@ class DBSemanticSearchController:
     def get_accumulated_docs_by_rank_perc(
         results: dict, perc_rank_gen_qa: float
     ) -> list:
+        """
+        Return document names whose cumulative weighted score reaches the
+        given percentage of the total.
+
+        Parameters
+        ----------
+        results : dict
+            Search results containing a ``stats`` mapping.
+        perc_rank_gen_qa : float
+            Target cumulative percentage (e.g., ``0.2`` for 20 %).
+
+        Returns
+        -------
+        list
+            Ordered list of document names.
+        """
         doc_stats = results["stats"]
         sorted_doc_names = sorted(
             list(doc_stats.keys()),
@@ -773,6 +1078,23 @@ class DBSemanticSearchController:
         which_docs: list | None,
         use_doc_names_in_response: bool = False,
     ) -> dict:
+        """
+        Convert raw search results into a mapping ``{document_name: [answers]}``.
+
+        Parameters
+        ----------
+        search_results : dict
+            Mapping of result identifiers to result dictionaries.
+        which_docs : list | None
+            If provided, only include results from these documents.
+        use_doc_names_in_response : bool, default False
+            Prefix each answer with its document name.
+
+        Returns
+        -------
+        dict
+            ``{document_name: [answer strings]}``.
+        """
         doc2answers = {}
         for _, result in search_results.items():
             doc_name = result["document_name"]
@@ -795,6 +1117,23 @@ class DBSemanticSearchController:
     def prepare_documents_stats(
         postgres_docs, smooth_factor: float = 0.0001
     ) -> dict:
+        """
+        Compute per‑document statistics (hits, average score, weighted
+        score, etc.) from a list of PostgreSQL document fragments.
+
+        Parameters
+        ----------
+        postgres_docs : list
+            List of document fragment dictionaries returned by
+            ``_prepare_document_page``.
+        smooth_factor : float, default 0.0001
+            Minimum value used when scaling weighted scores.
+
+        Returns
+        -------
+        dict
+            Mapping ``{document_name: stats_dict}``.
+        """
         doc_stats = dict()
         for result in postgres_docs:
             result = result["result"]
@@ -823,7 +1162,7 @@ class DBSemanticSearchController:
                 float(res["score"] * res["hits"] * res["pages_count"])
             )
             w_scores.append(res["score_weighted"])
-        # percentage-like scaling with smooth factor
+        # percentage-like scaling with a smooth factor
         min_w_scores = abs(min(w_scores))
         sum_w_scores = sum([s + min_w_scores for s in w_scores])
         for doc, res in doc_stats.items():
@@ -840,6 +1179,24 @@ class DBSemanticSearchController:
     def filter_stats_to_display_results(
         doc_stats: dict, remove_under_hits: int = 5, remove_under_pages: int = 3
     ) -> dict:
+        """
+        Filter out documents that do not meet minimal hit or page count
+        thresholds.
+
+        Parameters
+        ----------
+        doc_stats : dict
+            Statistics dictionary produced by ``prepare_documents_stats``.
+        remove_under_hits : int, default 5
+            Minimum number of hits required.
+        remove_under_pages : int, default 3
+            Minimum number of distinct pages required.
+
+        Returns
+        -------
+        dict
+            Filtered statistics dictionary.
+        """
         filter_result = dict()
         for doc, res in doc_stats.items():
             if (
@@ -853,6 +1210,20 @@ class DBSemanticSearchController:
     def reformat_search_results_to_display(
         search_results: list | dict,
     ) -> dict | list:
+        """
+        Transform raw search results into a UI‑friendly structure that
+        contains scores, context snippets and document identifiers.
+
+        Parameters
+        ----------
+        search_results : list | dict
+            Raw results as returned by ``search``.
+
+        Returns
+        -------
+        dict | list
+            Reformatted results ready for presentation.
+        """
         ans_dict = {}
         for idx, answer in enumerate(search_results):
             a = answer["result"]
@@ -880,6 +1251,24 @@ class DBSemanticSearchController:
         collection: CollectionOfDocuments,
         return_documents_names: bool = False,
     ) -> list[str | Document]:
+        """
+        Retrieve documents that match any of the supplied ``query_templates``.
+
+        Parameters
+        ----------
+        query_templates : list[QueryTemplate]
+            Templates defining data‑connector constraints.
+        collection : CollectionOfDocuments
+            Collection from which to fetch documents.
+        return_documents_names : bool, default False
+            If ``True`` return only document names; otherwise return full
+            ``Document`` objects.
+
+        Returns
+        -------
+        list[str] | list[Document]
+            List of matching document names or objects.
+        """
         data_filter = {}
         for template in query_templates:
             for dc_name, dc_value in template.data_connector.items():
@@ -902,12 +1291,40 @@ class DBSemanticSearchController:
 
 
 class DBTextSearchController:
+    """
+    Helper controller that fetches raw text fragments from the relational
+    database and builds the result structures expected by the semantic
+    search controller.
+    """
+
     def __init__(self):
+        """
+        Initialise the ``DBTextSearchController``.  No internal state is
+        required at the moment.
+        """
         pass
 
     def get_texts(
         self, texts_ids: list, texts_scores: list, surrounding_chunks: int = 0
     ) -> list:
+        """
+        Retrieve ``DocumentPageText`` objects for the given IDs and attach
+        their scores.
+
+        Parameters
+        ----------
+        texts_ids : list
+            List of primary keys of ``DocumentPageText`` records.
+        texts_scores : list
+            Corresponding relevance scores.
+        surrounding_chunks : int, default 0
+            Number of neighbouring text chunks to include as context.
+
+        Returns
+        -------
+        list
+            List of dictionaries produced by ``_prepare_document_page``.
+        """
         document_pages = DocumentPageText.objects.filter(id__in=texts_ids)
         doc_results = []
         for idx, doc_page in enumerate(document_pages):
@@ -921,6 +1338,19 @@ class DBTextSearchController:
 
     @staticmethod
     def get_all_categories(collection: CollectionOfDocuments):
+        """
+        Return the distinct categories present in ``collection``.
+
+        Parameters
+        ----------
+        collection : CollectionOfDocuments
+            The collection to inspect.
+
+        Returns
+        -------
+        QuerySet
+            Distinct category values.
+        """
         categories = (
             Document.objects.filter(collection=collection)
             .values_list("category", flat=True)
@@ -930,6 +1360,19 @@ class DBTextSearchController:
 
     @staticmethod
     def get_all_documents(collection: CollectionOfDocuments):
+        """
+        Return the distinct document names present in ``collection``.
+
+        Parameters
+        ----------
+        collection : CollectionOfDocuments
+            The collection to inspect.
+
+        Returns
+        -------
+        QuerySet
+            Distinct document names.
+        """
         documents = (
             Document.objects.filter(collection=collection)
             .values_list("name", flat=True)
@@ -943,6 +1386,24 @@ class DBTextSearchController:
         categories: list,
         only_used_to_search: bool = True,
     ):
+        """
+        Retrieve document names that belong to any of the supplied
+        ``categories``.
+
+        Parameters
+        ----------
+        collection : CollectionOfDocuments
+            The collection to query.
+        categories : list
+            List of category strings.
+        only_used_to_search : bool, default True
+            If ``True`` limit to documents marked ``use_in_search=True``.
+
+        Returns
+        -------
+        QuerySet
+            Document names matching the categories.
+        """
         opts = {"collection": collection.pk, "category__in": categories}
         if only_used_to_search:
             opts["use_in_search"] = True
@@ -956,6 +1417,24 @@ class DBTextSearchController:
         texts: list[str],
         only_used_to_search: bool = True,
     ) -> list[str]:
+        """
+        Find document names whose relative path contains any of the given
+        substrings.
+
+        Parameters
+        ----------
+        collection : CollectionOfDocuments
+            The collection to search.
+        texts : list[str]
+            Substrings to look for in ``relative_path``.
+        only_used_to_search : bool, default True
+            Restrict to documents marked ``use_in_search=True``.
+
+        Returns
+        -------
+        list[str]
+            Unique document names matching at least one substring.
+        """
         all_doc_contains = []
         for text in texts:
             opts = {"collection": collection.pk, "relative_path__contains": text}
@@ -973,6 +1452,24 @@ class DBTextSearchController:
     def _prepare_document_page(
         self, doc_page: DocumentPageText, score: float, surrounding_chunks: int
     ) -> dict:
+        """
+        Build the result dictionary for a single ``DocumentPageText``
+        instance, including surrounding context if requested.
+
+        Parameters
+        ----------
+        doc_page : DocumentPageText
+            The text fragment to process.
+        score : float
+            Relevance score associated with this fragment.
+        surrounding_chunks : int
+            Number of adjacent chunks to include as left/right context.
+
+        Returns
+        -------
+        dict
+            Structured representation of the fragment and its context.
+        """
         main_text = {
             "score": score,
             "document_name": doc_page.page.document.name,
@@ -997,6 +1494,25 @@ class DBTextSearchController:
         }
 
     def _prepare_text_context(self, doc_page, surrounding_chunks, context) -> list:
+        """
+        Retrieve surrounding text chunks for ``doc_page`` either to the
+        ``left`` or ``right`` of the current fragment.
+
+        Parameters
+        ----------
+        doc_page : DocumentPageText
+            Reference fragment.
+        surrounding_chunks : int
+            Number of neighbouring chunks to fetch.
+        context : str
+            Either ``"left"`` or ``"right"``.
+
+        Returns
+        -------
+        list
+            List of dictionaries ``{'text_number': int, 'text_str': str}``
+            representing the surrounding context.
+        """
         text_num = doc_page.text_number
         if context == "left":
             beg_position = max(text_num - surrounding_chunks, 0)
