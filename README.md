@@ -64,8 +64,8 @@ All other dependencies are listed in `requirements.txt` (or can be installed via
 
 ```shell script
 # Clone the repository
-git clone https://github.com/your-org/semantic-search-engine.git
 cd semantic-search-engine
+git clone https://github.com/radlab-dev-group/semantic-search-engine.git
 
 # Create a virtual environment (recommended)
 python3 -m venv .venv
