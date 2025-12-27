@@ -1,6 +1,6 @@
 """
 Models module
---------------
+-------------
 
 Provides a set of controllers and utilities for working with generative
 language models, extractive question‑answering, and configuration handling.
@@ -37,7 +37,7 @@ ALL_AVAILABLE_GENAI_MODELS_NAMES = []
 
 class GenerativeModelConfig:
     """
-    Controller for generative model configurations
+    Controller for generative model configurations.
     """
 
     JSON_API_HOSTS = "api_hosts"
