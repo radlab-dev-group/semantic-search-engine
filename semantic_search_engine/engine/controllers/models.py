@@ -1,26 +1,45 @@
+"""
+Models module
+-------------
+
+Provides a set of controllers and utilities for working with generative
+language models, extractive question‑answering, and configuration handling.
+The module includes:
+
+* ``GenerativeModelConfig`` – loads and parses a JSON configuration that
+  defines active OpenAI and locally‑hosted models.
+* ``ExtractiveQAController`` – runs a HuggingFace “question‑answering” pipeline
+  on retrieved document passages.
+* ``OpenAIGenerativeController`` – builds prompts and calls the OpenAI chat API.
+* ``GenerativeModelControllerApi`` – thin wrapper around a custom local generative
+  model HTTP API.
+* ``GenerativeModelController`` – high‑level façade that coordinates the above
+  components, optionally translating answers via DeepL and persisting results.
+"""
+
 import datetime
-import os
 import json
 import logging
-from typing import List, Dict
+import os
+from typing import Dict, List
 
 import requests
-
 from openai import OpenAI
 from transformers import pipeline
 
-from radlab_data.text.utils import TextUtils
-
 from chat.models import MessageState
-from engine.models import UserQueryResponse, UserQueryResponseAnswer
-
 from engine.controllers.search import DBSemanticSearchController
-
+from engine.models import UserQueryResponse, UserQueryResponseAnswer
+from radlab_data.text.utils import TextUtils
 
 ALL_AVAILABLE_GENAI_MODELS_NAMES = []
 
 
 class GenerativeModelConfig:
+    """
+    Controller for generative model configurations.
+    """
+
     JSON_API_HOSTS = "api_hosts"
     JSON_API_EP_LIST = "ep"
     JSON_API_HOSTS_LIST = "hosts"
@@ -28,11 +47,16 @@ class GenerativeModelConfig:
     JSON_API_HOSTS_OPENAI = "openai_models_api"
     JSON_API_HOSTS_LOCAL_MODELS = "local_models_api"
 
-    """
-    Controller for generative model configurations
-    """
-
     def __init__(self, config_path: str | None = "configs/generative-models.json"):
+        """
+        Initialise the configuration loader.
+
+        Parameters
+        ----------
+        config_path : str | None
+            Path to the JSON file containing generative‑model configuration.
+            If ``None`` the configuration is not loaded.
+        """
         self._config_path = config_path
 
         self._models_config_json = None
@@ -46,32 +70,49 @@ class GenerativeModelConfig:
     @property
     def active_openai_hosts(self) -> dict:
         """
-        Returns the active OpenAI models (as dict)
-        :return: Dictionary, where the key is model name, and value is openai model
+        Returns the active OpenAI models.
+
+        Returns
+        -------
+        dict
+            Mapping where the key is the model name and the value is the
+            OpenAI model identifier.
         """
         return self._active_openai_hosts
 
     @property
     def active_local_models_hosts(self) -> dict:
         """
-        Returns the active locally-provided models (as dict)
-        :return: Dictionary, where the key is name of model, and value is model host
+        Returns the active locally‑provided models.
+
+        Returns
+        -------
+        dict
+            Mapping where the key is the model name and the value is the model host URL.
         """
         return self._active_local_models_hosts
 
     @property
     def local_models_endpoints(self) -> dict:
         """
-        Returns the Local models api endpoints (as dict)
-        :return: Dictionary of endpoints (ep-name -> ep-url)
+        Returns the local models API endpoints.
+
+        Returns
+        -------
+        dict
+            Mapping of endpoint names to their URLs.
         """
         return self._local_models_endpoints
 
     def load(self, config_path: str | None = None) -> None:
         """
-        Load config from given path, process config
-        :param config_path: Path to config file
-        :return: None
+        Load configuration from a JSON file.
+
+        Parameters
+        ----------
+        config_path : str | None
+            Optional alternative path. If supplied, it overrides the instance’s
+            stored path.
         """
         if config_path is not None:
             self._config_path = config_path
@@ -83,8 +124,7 @@ class GenerativeModelConfig:
 
     def _process_config_file(self) -> None:
         """
-        Prepare active openai and local models
-        :return: None
+        Populate internal dictionaries with active OpenAI and local models.
         """
         self._active_local_models_hosts.clear()
         self._active_openai_hosts.clear()
@@ -117,11 +157,29 @@ class GenerativeModelConfig:
 
 
 class ExtractiveQAController:
+    """
+    Controller that runs extractive question‑answering using a HuggingFace pipeline.
+    """
+
     model_path = "radlab/polish-qa-v2"
 
     def __init__(
         self, model_path: str | None, qa_pipeline=None, device: str = "cpu"
     ):
+        """
+        Initialise the controller.
+
+        Parameters
+        ----------
+        model_path : str | None
+            Path or identifier of the model to load if ``qa_pipeline`` is not
+            provided.
+        qa_pipeline : object | None
+            An already‑initialised ``pipeline`` object. If supplied, ``model_path``
+            is ignored.
+        device : str
+            Device to run the model on (e.g., ``"cpu"`` or ``"cuda"``).
+        """
         assert model_path is not None or qa_pipeline is not None
 
         self.device = device
@@ -131,9 +189,40 @@ class ExtractiveQAController:
             self.question_answerer = self.load_model(model_path)
 
     def load_model(self, model_path):
+        """
+        Load a HuggingFace “question‑answering” pipeline.
+
+        Parameters
+        ----------
+        model_path : str
+            Model identifier or path.
+
+        Returns
+        -------
+        pipeline
+            A ready‑to‑use question‑answering pipeline.
+        """
         return pipeline("question-answering", model=model_path, device=self.device)
 
     def run_extractive_qa(self, question_str: str, search_results: dict):
+        """
+        Perform extractive QA on a set of retrieved passages.
+
+        Parameters
+        ----------
+        question_str : str
+            The user’s question.
+        search_results : dict
+            Dictionary produced by the semantic‑search controller. Must contain a
+            ``"results"`` list where each entry holds a ``"result"`` dict with
+            ``"text"`` sub‑fields.
+
+        Returns
+        -------
+        dict
+            Mapping of document name to a dict containing page number, text
+            number, the extracted answer and its confidence score.
+        """
         document_answers = {}
         for answer in search_results["results"]:
             answer_str = answer["result"]["text"]["text_str"]
@@ -152,11 +241,23 @@ class ExtractiveQAController:
 
 
 class OpenAIGenerativeController:
+    """
+    Wrapper around the OpenAI chat API for generative summarisation.
+    """
+
     models_config = GenerativeModelConfig(
         config_path="configs/generative-models.json"
     )
 
     def __init__(self, openai_api_key: str) -> None:
+        """
+        Initialise the OpenAI client.
+
+        Parameters
+        ----------
+        openai_api_key : str
+            API key for authenticating with the OpenAI service.
+        """
         self.openai_api_key = openai_api_key
         self.client = None
         if openai_api_key is not None and len(openai_api_key.strip()) > 5:
@@ -172,6 +273,31 @@ class OpenAIGenerativeController:
         generation_options,
         system_prompt: str or None = None,
     ):
+        """
+        Generate a summary using an OpenAI model.
+
+        Parameters
+        ----------
+        question_str : str
+            The original user question.
+        query_instruction : str
+            Additional instruction for the model.
+        search_results : dict
+            Search results to be turned into context.
+        qa_gen_model : str
+            Name of the active OpenAI model to use.
+        which_docs : list
+            List of document identifiers to include in the prompt.
+        generation_options : dict
+            Generation parameters (currently unused).
+        system_prompt : str | None
+            Optional system‑level prompt that overrides the default.
+
+        Returns
+        -------
+        list[str]
+            List of generated answer strings (one per ``choice``).
+        """
         doc2answers = (
             DBSemanticSearchController.convert_search_results_to_doc2answer(
                 search_results=search_results, which_docs=which_docs
@@ -187,8 +313,6 @@ class OpenAIGenerativeController:
             messages=input_prompt,
         )
 
-        # Not used yet: generation_options
-
         answers = []
         for choice in response.choices:
             answers.append(choice.message.content)
@@ -202,6 +326,25 @@ class OpenAIGenerativeController:
         doc2answers: dict,
         system_prompt: str or None = None,
     ) -> list:
+        """
+        Build the list of messages required by the OpenAI chat endpoint.
+
+        Parameters
+        ----------
+        question_str : str
+            The user’s question.
+        query_instruction : str
+            Optional extra instruction for the model.
+        doc2answers : dict
+            Mapping of document name to a list of extracted answer strings.
+        system_prompt : str | None
+            Custom system prompt; if ``None`` the default prompt is used.
+
+        Returns
+        -------
+        list[dict]
+            Ordered list of ``{\"role\": ..., \"content\": ...}`` messages.
+        """
         system_prompt = self.__get_openai_system_prompt(system_prompt)
 
         messages = [{"role": "system", "content": system_prompt}]
@@ -226,33 +369,64 @@ class OpenAIGenerativeController:
 
     @staticmethod
     def __get_openai_system_prompt(system_prompt):
+        """
+        Return a system prompt for the OpenAI model.
+
+        Parameters
+        ----------
+        system_prompt : str | None
+            Custom prompt supplied by the caller.
+
+        Returns
+        -------
+        str
+            The system prompt to be sent to the API.
+        """
         if system_prompt is not None and len(system_prompt.strip()):
             return system_prompt
 
         system_prompt = """
-        You are QA assistance, to prepare your answer use only 
-        knowledge from the given texts. Your response have to 
-        be created with the same style as in original texts. 
-        Return only response for question without your comment. 
-        The texts to prepare answer for question will be given in format 
-        like: doc_name: <context>. 
-        doc_name is the name of document where <context> comes from. 
-        Use only knowledge from <context>. And generating response inform 
-        about document names from the response comes from. 
-        The language of response have to be in polish. 
-        The response length have to be about 1000k tokens. 
-        The question for the context will be given at the end. 
-        """
+            You are QA assistance, to prepare your answer use only 
+            knowledge from the given texts. Your response have to 
+            be created with the same style as in original texts. 
+            Return only response for question without your comment. 
+            The texts to prepare answer for question will be given in format 
+            like: doc_name: <context>. 
+            doc_name is the name of document where <context> comes from. 
+            Use only knowledge from <context>. And generating response inform 
+            about document names from the response comes from. 
+            The language of response have to be in polish. 
+            The response length have to be about 1000k tokens. 
+            The question for the context will be given at the end. 
+            """
 
         return system_prompt
 
 
 class GenerativeModelControllerApi:
+    """
+    API client for custom local generative models.
+    """
+
     class LocalModelAPI:
+        """
+        Helper that builds URLs and request templates for a specific local model.
+        """
+
         JSON_FIELD_EP_GENERATIVE_ANSWER = "generative_answer"
         JSON_FIELD_EP_CONVERSATION_WITH_MODEL = "conversation_with_model"
 
         def __init__(self, qa_gen_model: str, models_config: GenerativeModelConfig):
+            """
+            Initialise URLs for the chosen local model.
+
+            Parameters
+            ----------
+            qa_gen_model : str
+                Name of the model as defined in the configuration.
+            models_config : GenerativeModelConfig
+                Loaded configuration providing host and endpoint data.
+            """
             api_host = models_config.active_local_models_hosts[qa_gen_model]
             if api_host.endswith("/"):
                 api_host = api_host[:-1]
@@ -280,6 +454,19 @@ class GenerativeModelControllerApi:
 
         @staticmethod
         def get_request_data_template(generation_options: dict | None) -> dict:
+            """
+            Create a baseline request payload for the local API.
+
+            Parameters
+            ----------
+            generation_options : dict | None
+                Optional generation parameters that will overwrite defaults.
+
+            Returns
+            -------
+            dict
+                JSON‑serialisable request body.
+            """
             request_data = {
                 "question_str": "",
                 "question_prompt": "",
@@ -304,6 +491,14 @@ class GenerativeModelControllerApi:
     )
 
     def __init__(self, deepl_api_key: str):
+        """
+        Initialise the façade with a DeepL API key.
+
+        Parameters
+        ----------
+        deepl_api_key : str
+            Authentication token for DeepL translation service.
+        """
         self.deepl_api_key = deepl_api_key
 
     def generative_answer_local_api_model(
@@ -317,6 +512,35 @@ class GenerativeModelControllerApi:
         generation_options: dict | None = None,
         system_prompt: str or None = None,
     ) -> (str | None, float | None):
+        """
+        Request a generative answer from a locally hosted model.
+
+        Parameters
+        ----------
+        question_str : str
+            The user’s question.
+        search_results : dict
+            Search results to be transformed into context.
+        qa_gen_model : str
+            Model name as defined in the configuration.
+        question_prompt : str
+            Optional prompt that will be appended to the question.
+        which_docs : list | None
+            Sub‑set of documents to include.
+        use_doc_names_in_response : bool
+            If ``True``, document names are added to the generated answer.
+        generation_options : dict | None
+            Model‑specific generation parameters.
+        system_prompt : str | None
+            Optional system prompt that overrides the default.
+
+        Returns
+        -------
+        tuple
+            ``(generated_answer, generation_time)`` where
+            ``generated_answer`` is a string or ``None`` on failure,
+            and ``generation_time`` is the elapsed time in seconds.
+        """
         local_model_api = self.LocalModelAPI(qa_gen_model, self.models_config)
 
         request_data = local_model_api.get_request_data_template(generation_options)
@@ -353,7 +577,7 @@ class GenerativeModelControllerApi:
             return generated_answer, generation_time
 
         generated_answer = generated_answer["response"]
-        if type(generated_answer) in [dict]:
+        if isinstance(generated_answer, dict):
             logging.error(generated_answer)
             return generated_answer, generation_time
 
@@ -366,6 +590,27 @@ class GenerativeModelControllerApi:
         options: Dict[str, str],
         model_name_path: str,
     ) -> (str | None, float | None):
+        """
+        Conduct a multi‑turn conversation with a local generative model.
+
+        Parameters
+        ----------
+        history : List[Dict[str, str]]
+            List of prior ``{\"role\": ..., \"content\": ...}`` messages.
+        last_user_message : str
+            The most recent user utterance.
+        options : Dict[str, str]
+            Generation options that will be merged into the request payload.
+        model_name_path : str
+            Name of the model to query.
+
+        Returns
+        -------
+        tuple
+            ``(assistant_message, generation_time)`` where ``assistant_message``
+            is the model’s reply (or ``None`` on error) and ``generation_time`` is
+            the elapsed time in seconds.
+        """
         local_model_api = self.LocalModelAPI(model_name_path, self.models_config)
         request_data = local_model_api.get_request_data_template(options)
         request_data["user_last_statement"] = last_user_message
@@ -392,6 +637,10 @@ class GenerativeModelControllerApi:
 
 
 class GenerativeModelController:
+    """
+    High‑level orchestrator for generative QA workflows.
+    """
+
     available_generation_options = [
         "top_k",
         "top_p",
@@ -402,6 +651,14 @@ class GenerativeModelController:
     ]
 
     def __init__(self, store_to_db: bool = True):
+        """
+        Initialise sub‑controllers and environment variables.
+
+        Parameters
+        ----------
+        store_to_db : bool
+            If ``True`` the generated answers are persisted via Django ORM.
+        """
         self.store_to_db = store_to_db
         self.deepl_api_key = os.environ.get("DEEPL_AUTH_KEY", None)
         self.openai_api_key = os.environ.get("OPENAI_API_KEY", None)
@@ -417,12 +674,38 @@ class GenerativeModelController:
     def get_user_query_response_answer(
         user_query_response_id: int,
     ) -> UserQueryResponseAnswer | None:
+        """
+        Retrieve a stored ``UserQueryResponseAnswer`` by its primary key.
+
+        Parameters
+        ----------
+        user_query_response_id : int
+            Database identifier.
+
+        Returns
+        -------
+        UserQueryResponseAnswer | None
+            The answer instance, or ``None`` if it does not exist.
+        """
         try:
             return UserQueryResponseAnswer.objects.get(id=user_query_response_id)
         except UserQueryResponseAnswer.DoesNotExist:
             return None
 
     def _prepare_generation_options(self, query_options: dict) -> Dict[str, str]:
+        """
+        Filter user‑provided options to those supported by the model.
+
+        Parameters
+        ----------
+        query_options : dict
+            Dictionary supplied by the client.
+
+        Returns
+        -------
+        dict
+            Sub‑dictionary containing only recognised generation parameters.
+        """
         g_opt = {}
         for opt in self.available_generation_options:
             if opt in query_options:
@@ -436,6 +719,26 @@ class GenerativeModelController:
         history: List[Dict[str, str]],
         message_state: MessageState | None,
     ) -> (str | None, str | None, str | None):
+        """
+        Generate a conversational answer using a local model.
+
+        Parameters
+        ----------
+        query_options : dict
+            Options controlling generation, model choice, translation, etc.
+        last_user_message : str
+            The most recent user utterance.
+        history : List[Dict[str, str]]
+            Prior dialogue turns.
+        message_state : MessageState | None
+            Optional state that can modify the incoming user message.
+
+        Returns
+        -------
+        tuple
+            ``(answer, translated_answer, generation_time)`` where any element
+            may be ``None`` on failure.
+        """
         generation_options = self._prepare_generation_options(query_options)
 
         if "openai" in query_options["generative_model"].lower():
@@ -477,6 +780,21 @@ class GenerativeModelController:
     def handle_message_state(
         self, last_user_message: str, message_state: MessageState | None
     ) -> str:
+        """
+        Apply optional ``MessageState`` transformations to the user message.
+
+        Parameters
+        ----------
+        last_user_message : str
+            Original message.
+        message_state : MessageState | None
+            Optional state object.
+
+        Returns
+        -------
+        str
+            Possibly modified message.
+        """
         if message_state is None:
             return last_user_message
         last_user_message = self._handle_message_state_content_supervisor(
@@ -488,6 +806,21 @@ class GenerativeModelController:
     def _handle_message_state_content_supervisor(
         last_user_message: str, message_state: MessageState | None
     ) -> str:
+        """
+        Append ``www_content`` from a ``ContentSupervisorState`` to the message.
+
+        Parameters
+        ----------
+        last_user_message : str
+            Current message text.
+        message_state : MessageState | None
+            May contain a ``content_supervisor_state`` with ``www_content``.
+
+        Returns
+        -------
+        str
+            Message with any additional content appended.
+        """
         if message_state is None:
             return last_user_message
         cs_state = message_state.content_supervisor_state
@@ -509,6 +842,25 @@ class GenerativeModelController:
         query_options: dict,
         system_prompt: str or None = None,
     ) -> UserQueryResponseAnswer | None:
+        """
+        Generate a (possibly translated) answer for a stored ``UserQueryResponse``.
+
+        Parameters
+        ----------
+        user_response : UserQueryResponse
+            The persisted user query object.
+        query_instruction : str
+            Additional instruction that guides the generation.
+        query_options : dict
+            Dictionary with model choice, generation settings, translation flags, etc.
+        system_prompt : str | None
+            Optional system prompt for the underlying model.
+
+        Returns
+        -------
+        UserQueryResponseAnswer | None
+            The newly created answer record, or ``None`` on failure.
+        """
         generated_answer = []
         query_response_answer = UserQueryResponseAnswer.objects.create(
             user_response=user_response,
@@ -582,6 +934,31 @@ class GenerativeModelController:
         generation_options: dict = None,
         system_prompt: str or None = None,
     ) -> (str | None, float | None):
+        """
+        Generate an answer using an OpenAI model.
+
+        Parameters
+        ----------
+        user_response : UserQueryResponse
+            The persisted query with search results.
+        generative_model : str
+            Name of the OpenAI model to use.
+        query_instruction : str
+            Additional instruction for the model.
+        percentage_rank_mass : int
+            Percent of top‑ranked documents to include.
+        generation_options : dict | None
+            Optional generation settings (currently unused).
+        system_prompt : str | None
+            Optional system prompt that overrides the default.
+
+        Returns
+        -------
+        tuple
+            ``(generated_answer, generation_time)`` where ``generated_answer`` is a
+            list of strings (or ``None`` on error) and ``generation_time`` is the
+            elapsed time in seconds.
+        """
         if self.openai_api_key is None or len(self.openai_api_key) < 10:
             logging.error("OPENAI_API_KEY is not defined!")
             return None
@@ -616,6 +993,36 @@ class GenerativeModelController:
         dont_response_when_no_documents: bool = True,
         system_prompt: str or None = None,
     ) -> (str | None, float | None):
+        """
+        Generate an answer using a locally hosted model via HTTP API.
+
+        Parameters
+        ----------
+        user_response : UserQueryResponse
+            The persisted query object.
+        generative_model : str
+            Name of the local model.
+        query_instruction : str
+            Prompt that guides generation.
+        percentage_rank_mass : int
+            Percent of top‑ranked documents to include.
+        use_doc_names_in_response : bool
+            Whether to prepend document names to each generated fragment.
+        generation_options : dict | None
+            Model‑specific generation parameters.
+        dont_response_when_no_documents : bool
+            If ``True`` and no documents are selected, a short explanatory
+            string is returned instead of calling the model.
+        system_prompt : str | None
+            Optional system prompt.
+
+        Returns
+        -------
+        tuple
+            ``(generated_answer, generation_time)`` where ``generated_answer`` is a
+            string (or ``None`` on error) and ``generation_time`` is the elapsed
+            time in seconds.
+        """
         which_docs = DBSemanticSearchController.get_accumulated_docs_by_rank_perc(
             results={"stats": user_response.general_stats_json},
             perc_rank_gen_qa=percentage_rank_mass,
