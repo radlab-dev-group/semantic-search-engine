@@ -8,7 +8,11 @@ if [[ "$INSTALLATION_MODE_NAME" == "clear" ]]; then
   find . -type f -path "*/migrations/*.pyc" -delete
 fi
 
-python3 manage.py makemigrations
+if [[ "$INSTALLATION_MODE_NAME" == "migrate" ]]; then
+  echo "🚀 Running migrations..."
+  python3 manage.py makemigrations
+  python3 manage.py migrate
+fi
 
 #
 #export PIP_BREAK_SYSTEM_PACKAGES=1

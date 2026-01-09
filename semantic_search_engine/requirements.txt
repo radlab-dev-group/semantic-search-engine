@@ -22,8 +22,8 @@ sentencepiece
 spacy
 sentence_transformers
 fasttext-langdetect
-langchain
-langchain-community
+# langchain
+# langchain-community
 openai
 huggingface_hub
 

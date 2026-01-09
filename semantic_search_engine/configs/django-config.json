@@ -33,11 +33,11 @@
   },
   "database": {
     "ENGINE": "django.db.backends.postgresql",
-    "NAME": "<DB_NAME>",
-    "USER": "<USER>>",
-    "PASSWORD": "<PASSWORD>",
-    "HOST": "<HOST>",
-    "PORT": "5432"
+    "NAME": "sse_backend",
+    "USER": "admin",
+    "PASSWORD": "SuperSecretPassword123",
+    "HOST": "192.168.100.67",
+    "PORT": "5457"
   },
   "celery": {
     "broker_url": "amqp://***:***@***:***/"
