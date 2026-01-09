@@ -6,7 +6,7 @@ from django.contrib.auth.models import AnonymousUser
 from django.utils.deprecation import MiddlewareMixin
 
 from main.src.constants import get_logger
-from rdl_authorization.core.authentication import GATokenAuthentication
+from authorization.core.authentication import GATokenAuthentication
 
 
 middleware_callback: Callable | None = None

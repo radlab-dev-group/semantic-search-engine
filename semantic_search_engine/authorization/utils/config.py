@@ -6,7 +6,7 @@ class RdlAuthConfig:
     RdlAuth config parser/reader/handler
     """
 
-    RDL_AUTH_JSON_FIELD = "rdl_authorization"
+    RDL_AUTH_JSON_FIELD = "authorization"
 
     def __init__(self, cfg_path: str = "configs/auth-config.json"):
         self._auth_host = None

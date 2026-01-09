@@ -1,7 +1,7 @@
 from django.urls import path
 from main.src.constants import prepare_api_url
 
-from rdl_authorization.api.authorization import (
+from authorization.api.authorization import (
     obtain_auth_token,
     remove_auth_token,
     GenerateLoginUrl,

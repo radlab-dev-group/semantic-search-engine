@@ -1,7 +1,7 @@
 from main.src.constants import get_logger
 
-from rdl_authorization.models import Token
-from rdl_authorization.core.handlers import (
+from authorization.models import Token
+from authorization.core.handlers import (
     RdlAuthUserTokenHandler,
     RdlAuthGrantAccTokenHandler,
 )

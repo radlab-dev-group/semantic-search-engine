@@ -8,8 +8,8 @@ from django.conf import settings
 from django.contrib.auth.models import User
 
 from main.src.constants import get_logger
-from rdl_authorization.models import Token, SessionState
-from rdl_authorization.utils.config import RdlAuthConfig
+from authorization.models import Token, SessionState
+from authorization.utils.config import RdlAuthConfig
 
 
 DEFAULT_AUTH = "Bearer"

@@ -17,7 +17,7 @@ from django.contrib.auth.models import User
 def prepare_middleware_callback():
     """
     Initialise the global ``middleware_callback`` used by the external
-    ``rdl_authorization`` package.
+    ``authorization`` package.
 
     The callback, when registered, adds a default organisation,
     organisation group and an ``OrganisationUser`` record for the Django
@@ -32,9 +32,9 @@ def prepare_middleware_callback():
     ]
 
     if any(auths):
-        from rdl_authorization.core import middleware
+        from authorization.core import middleware
         from system.controllers import SystemController
-        from rdl_authorization.utils.config import RdlAuthConfig
+        from authorization.utils.config import RdlAuthConfig
 
         if middleware.middleware_callback is None:
             if settings.SYSTEM_HANDLER.use_introspect:

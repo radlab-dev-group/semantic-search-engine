@@ -26,7 +26,7 @@ if (
     if sum([_kc, _ov1, _ov2]) > 1:
         raise Exception("Choose between Keycloak or OAuth/OAuth V2 authentication!")
 
-    from rdl_authorization import urls as rdl_auth_urls
+    from authorization import urls as rdl_auth_urls
 
     urlpatterns += rdl_auth_urls.urlpatterns
 else:

@@ -120,12 +120,12 @@ if (
     or system_handler.use_oauth_v1_auth
     or system_handler.use_oauth_v2_auth
 ):
-    import rdl_authorization
+    import authorization
 
-    INSTALLED_APPS.append(rdl_authorization.app_name)
-    MIDDLEWARE.append(rdl_authorization.default_middleware_class)
+    INSTALLED_APPS.append(authorization.app_name)
+    MIDDLEWARE.append(authorization.default_middleware_class)
     REST_FRAMEWORK["DEFAULT_AUTHENTICATION_CLASSES"] = [
-        rdl_authorization.default_auth_class
+        authorization.default_auth_class
     ]
 else:
     INSTALLED_APPS.append("rest_framework.authtoken")

@@ -1,4 +1,4 @@
-from rdl_authorization import app_name
+from authorization import app_name
 from django.apps import AppConfig
 
 

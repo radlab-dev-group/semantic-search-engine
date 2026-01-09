@@ -3,7 +3,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 
-from rdl_authorization.core.errors import (
+from authorization.core.errors import (
     STATE_GEN_PROBLEM,
     LOGIN_URL_GEN_PROBLEM,
     TOKEN_LOGIN_PROBLEM,
@@ -16,8 +16,8 @@ from main.src.constants import get_logger
 from main.src.response import response_with_status
 from main.src.decorators import get_default_language, required_params_exists
 
-from rdl_authorization.core.handlers import RdlAuthStateHandler
-from rdl_authorization.core.handlers import RdlAuthGrantAccTokenHandler
+from authorization.core.handlers import RdlAuthStateHandler
+from authorization.core.handlers import RdlAuthGrantAccTokenHandler
 
 
 class GenerateLoginUrl(APIView):

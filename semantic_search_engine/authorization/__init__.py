@@ -1,4 +1,4 @@
-app_name = "rdl_authorization"
+app_name = "authorization"
 
 default_token_model = f"{app_name}.models"
 default_app_config = f"{app_name}.apps.RdlAuthConfig"
