@@ -11,6 +11,7 @@ engine/
 ├─ controllers/
 │   ├─ __init__.py
 │   ├─ embedders_rerankers.py      # Loads embedder & reranker model configs
+│   ├─ milvus.py                   # Milvus handler (connection, queries, etc.)
 │   ├─ models.py                   # High‑level models for queries, responses & answers
 │   ├─ question_answer.py.depr     # Deprecated QA helper (kept for reference)
 │   ├─ search.py                   # Semantic search, indexing, filtering & result processing
