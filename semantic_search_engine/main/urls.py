@@ -2,6 +2,12 @@ from django.urls import path
 from django.conf import settings
 from rest_framework.authtoken.views import obtain_auth_token
 
+from chat.urls import urlpatterns as chat_urlpatterns
+from data.urls import urlpatterns as data_urlpatterns
+from engine.urls import urlpatterns as engine_urlpatterns
+from system.urls import urlpatterns as system_urlpatterns
+
+
 urlpatterns = []
 
 if settings.SYSTEM_HANDLER.show_admin_window():
@@ -28,31 +34,8 @@ else:
         path("api-token-auth/", obtain_auth_token, name="api_token_auth")
     )
 
-if settings.SYSTEM_HANDLER.use_radlab_proxy():
-    if settings.SYSTEM_HANDLER.use_radlab_proxy_sse():
-        from proxy.sse import urls as sse_urls
-
-        urlpatterns += sse_urls.urlpatterns
-
-# Auto added urls during installation
-# chat_urls.py
-from chat.urls import urlpatterns as chat_urlpatterns
 
 urlpatterns += chat_urlpatterns
-
-# data_urls.py
-from data.urls import urlpatterns as data_urlpatterns
-
 urlpatterns += data_urlpatterns
-
-# engine_urls.py
-from engine.urls import urlpatterns as engine_urlpatterns
-
 urlpatterns += engine_urlpatterns
-
-# system_urls.py
-from system.urls import urlpatterns as system_urlpatterns
-
 urlpatterns += system_urlpatterns
-
-# End of auto added urls

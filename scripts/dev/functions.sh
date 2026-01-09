@@ -1,16 +1,4 @@
 # Install bash dependencies
-function download_bash_dependencies() {
-  rm -rf radlab-django-core
-  git clone https://radlab-group@dev.azure.com/radlab-group/radlab-django-core/_git/radlab-django-core
-
-  if [ -e radlab-django-core/django_core/scripts/colours.sh ]
-  then
-    cp radlab-django-core/django_core/scripts/colours.sh .
-    cp radlab-django-core/django_core/scripts/functions.sh .
-  fi
-  rm -rf radlab-django-core
-}
-
 
 function end_installation_message() {
   echo ""
