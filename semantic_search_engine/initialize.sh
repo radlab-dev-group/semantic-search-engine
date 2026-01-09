@@ -2,6 +2,11 @@
 
 INSTALLATION_MODE_NAME=${1}
 
+if [[ "$INSTALLATION_MODE_NAME" == "clear" ]]; then
+  echo "🔧 Clearing Django migration files..."
+  find . -type f -path "*/migrations/*.py" ! -name "__init__.py" -delete
+  find . -type f -path "*/migrations/*.pyc" -delete
+fi
 
 python3 manage.py makemigrations
 
