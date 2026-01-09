@@ -1,5 +1,6 @@
 from typing import List
-from radlab_db.non_relational.milvus_handler import MilvusHandler
+
+from engine.controllers.milvus import MilvusHandler
 from engine.controllers.embedders_rerankers import EmbeddingModelsConfig
 from data.controllers.constants import NORMALIZE_EMBEDDINGS
 
