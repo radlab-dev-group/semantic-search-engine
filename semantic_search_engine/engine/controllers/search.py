@@ -25,17 +25,16 @@ import pandas as pd
 from django.db.models import QuerySet
 from transformers import AutoTokenizer
 
-from main.src.constants import get_logger
-
 from radlab_data.text.utils import TextUtils
-from radlab_db.non_relational.milvus_handler import MilvusHandler
 
+from main.src.constants import get_logger
 from data.models import (
     Document,
     DocumentPageText,
     CollectionOfDocuments,
     QueryTemplate,
 )
+
 from data.controllers.relational_db import RelationalDBController
 from data.controllers.constants import NORMALIZE_EMBEDDINGS
 from data.controllers.query_templates import QueryTemplateController
@@ -43,6 +42,7 @@ from data.controllers.query_templates import QueryTemplateController
 from engine.models import UserQuery, UserQueryResponse
 from system.models import OrganisationUser
 
+from engine.controllers.milvus import MilvusHandler
 from engine.controllers.embedders_rerankers import EmbeddingModelsConfig
 
 

@@ -1,0 +1,129 @@
+{
+  "main": {
+    "debug": true,
+    "allowed_hosts": [
+      "*"
+    ],
+    "admin_window": false,
+    "default_language": "pl",
+    "public_api_available": true,
+    "api": {
+      "root_url": "api",
+      "major_version": "",
+      "minor_version": "",
+      "release_candidate": ""
+    },
+    "use_keycloak_authentication": false,
+    "use_oauth_v1_authentication": false,
+    "use_oauth_v2_authentication": false,
+    "use_authorization_introspect": false,
+    "introspect_email_verification": false,
+    "use_celery": false,
+    "use_aws": false
+  },
+  "installed_apps": [
+    "data.apps.DataConfig",
+    "system.apps.SystemConfig",
+    "engine.apps.EngineConfig",
+    "chat.apps.ChatConfig"
+  ],
+  "session": {
+    "csrf_cookie_secure": true,
+    "session_cookie_secure": true
+  },
+  "database": {
+    "ENGINE": "django.db.backends.postgresql",
+    "NAME": "sse_backend",
+    "USER": "admin",
+    "PASSWORD": "SuperSecretPassword123",
+    "HOST": "192.168.100.67",
+    "PORT": "5457"
+  },
+  "celery": {
+    "broker_url": "amqp://***:***@***:***/"
+  },
+  "aws": {
+    "ACCESS_KEY_ID": "",
+    "SECRET_ACCESS_KEY": "",
+    "STORAGE_BUCKET_NAME": "",
+    "ENDPOINT_URL": "https://s3.***:***",
+    "REGION_NAME": "eu-central-1"
+  },
+  "logger": {
+    "use_logger": "dev",
+    "config": {
+      "version": 1,
+      "disable_existing_loggers": false,
+      "formatters": {
+        "simple": {
+          "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        },
+        "extended": {
+          "format": "[%(asctime)s] p%(process)s {%(pathname)s:%(lineno)d} %(levelname)s - %(message)s'",
+          "datefmt": "%Y-%m-%d:%H:%M:%S"
+        }
+      },
+      "handlers": {
+        "stdout_simple": {
+          "class": "logging.StreamHandler",
+          "level": "INFO",
+          "formatter": "simple",
+          "stream": "ext://sys.stdout"
+        },
+        "stderr_simple": {
+          "class": "logging.StreamHandler",
+          "level": "ERROR",
+          "formatter": "simple",
+          "stream": "ext://sys.stderr"
+        },
+        "file_simple": {
+          "class": "logging.FileHandler",
+          "formatter": "simple",
+          "filename": "semantic_search_engine_backend.log",
+          "mode": "w"
+        },
+        "stdout_extended": {
+          "class": "logging.StreamHandler",
+          "level": "INFO",
+          "formatter": "extended",
+          "stream": "ext://sys.stdout"
+        },
+        "stderr_extended": {
+          "class": "logging.StreamHandler",
+          "level": "ERROR",
+          "formatter": "extended",
+          "stream": "ext://sys.stderr"
+        },
+        "file_extended": {
+          "class": "logging.FileHandler",
+          "formatter": "extended",
+          "filename": "semantic_search_engine_backend.log",
+          "mode": "w"
+        }
+      },
+      "dev": {
+        "level": "DEBUG",
+        "handlers": [
+          "stderr_extended",
+          "stdout_extended",
+          "file_extended"
+        ]
+      },
+      "demo": {
+        "level": "DEBUG",
+        "handlers": [
+          "stderr_extended",
+          "file_extended"
+        ]
+      },
+      "prod": {
+        "level": "INFO",
+        "handlers": [
+          "file_simple"
+        ]
+      }
+    }
+  },
+  "external_api": {
+  }
+}

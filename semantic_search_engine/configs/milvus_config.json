@@ -1,0 +1,10 @@
+{
+  "milvus_db_connection": {
+    "uri": "http",
+    "host": "192.168.100.67",
+    "port": 19530,
+    "db_name": "sse_backend",
+    "user": "sse_user",
+    "password": "sse_password"
+  }
+}

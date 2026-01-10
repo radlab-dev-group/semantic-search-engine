@@ -5,8 +5,9 @@ import datetime
 from typing import List, Dict
 
 from django.db.models import QuerySet
-from radlab_content_supervisor.supervisor import ContentSupervisor
-from radlab_content_supervisor.processors.regex_processors import URLRegexProcessor
+
+from content_supervisor.supervisor import ContentSupervisor
+from content_supervisor.processors.regex_processors import URLRegexProcessor
 
 from chat.models import (
     Chat,

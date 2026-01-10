@@ -9,7 +9,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "main.settings")
 django.setup()
 
 from system.controllers import SystemController
-from rdl_authorization.utils.config import RdlAuthConfig
+from authorization.utils.config import RdlAuthConfig
 from data.controllers.query_templates import QueryTemplatesLoaderController
 
 

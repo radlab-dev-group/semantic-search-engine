@@ -9,6 +9,7 @@ from django.db.models import QuerySet
 from radlab_data.text.reader import DirectoryFileReader
 from radlab_data.text.document import Document as InputTextDocument
 
+
 from system.models import OrganisationUser, OrganisationGroup
 from data.models import (
     CollectionOfDocuments,

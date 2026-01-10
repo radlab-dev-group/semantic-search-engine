@@ -27,10 +27,11 @@ import requests
 from openai import OpenAI
 from transformers import pipeline
 
+from radlab_data.text.utils import TextUtils
+
 from chat.models import MessageState
 from engine.controllers.search import DBSemanticSearchController
 from engine.models import UserQueryResponse, UserQueryResponseAnswer
-from radlab_data.text.utils import TextUtils
 
 ALL_AVAILABLE_GENAI_MODELS_NAMES = []
 

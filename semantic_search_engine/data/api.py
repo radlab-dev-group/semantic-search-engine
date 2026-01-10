@@ -1,7 +1,7 @@
 import json
 from rest_framework.views import APIView
 
-from radlab_db.non_relational.milvus import INDEX_QUERY_PARAMS
+from engine.controllers.milvus import INDEX_QUERY_PARAMS
 
 from main.src.decorators import required_params_exists, get_default_language
 from main.src.response import response_with_status
