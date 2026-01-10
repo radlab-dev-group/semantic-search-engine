@@ -2,7 +2,7 @@ import urllib.request
 from typing import Dict, Any
 from bs4 import BeautifulSoup
 
-from radlab_content_supervisor.executors.executor import ExecutorI
+from content_supervisor.executors.executor import ExecutorI
 
 
 class WWWContentGrabberExecutor(ExecutorI):

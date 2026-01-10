@@ -1,8 +1,8 @@
 import re
 from typing import Any, List, Dict
 
-from radlab_content_supervisor.processors.processors import ProcessorI
-from radlab_content_supervisor.executors.www_content_grabber import (
+from content_supervisor.processors.processors import ProcessorI
+from content_supervisor.executors.www_content_grabber import (
     WWWContentGrabberExecutor,
 )
 

@@ -1,6 +1,6 @@
 from typing import List, Dict, Any
 
-from radlab_content_supervisor.processors.regex_processors import URLRegexProcessor
+from content_supervisor.processors.regex_processors import URLRegexProcessor
 
 
 class ContentSupervisorOutput:
