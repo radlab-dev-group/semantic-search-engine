@@ -12,7 +12,7 @@ from authorization.core.authentication import GATokenAuthentication
 middleware_callback: Callable | None = None
 
 
-class RdlAuthAuthenticationMiddleware(MiddlewareMixin):
+class AuthAuthenticationMiddleware(MiddlewareMixin):
     ga_token = GATokenAuthentication()
     logger = get_logger()
 
