@@ -2,6 +2,12 @@
 
 INSTALLATION_MODE_NAME=${1}
 
+
+if [[ "$INSTALLATION_MODE_NAME" == "dep" ]]; then
+  echo "📦 Installing dependencies"
+  pip install git+https://github.com/radlab-dev-group/radlab-data.git
+fi
+
 if [[ "$INSTALLATION_MODE_NAME" == "clear" ]]; then
   echo "🔧 Clearing Django migration files..."
   find . -type f -path "*/migrations/*.py" ! -name "__init__.py" -delete

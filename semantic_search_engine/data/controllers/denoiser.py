@@ -1,6 +1,7 @@
 import json
 import logging
-from radlab_cleaner.cleaner.t5_inference import DenoiserInference
+
+from data.controllers.denoiser_inference import DenoiserInference
 
 
 CACHED_MODELS = {}
