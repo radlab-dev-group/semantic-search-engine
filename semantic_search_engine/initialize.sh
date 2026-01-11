@@ -23,6 +23,13 @@ if [[ "$INSTALLATION_MODE_NAME" == "migrate"  || "$INSTALLATION_MODE_NAME" == "a
   python3 manage.py migrate
 fi
 
+if [[ "$INSTALLATION_MODE_NAME" == "semantic"  || "$INSTALLATION_MODE_NAME" == "all" ]]; then
+  echo "📚 Preparing semantic database"
+  cp apps_sse/admin/prepare_semantic_db.py .
+  python3 prepare_semantic_db.py
+  rm -f prepare_semantic_db.py
+fi
+
 #
 #export PIP_BREAK_SYSTEM_PACKAGES=1
 #
