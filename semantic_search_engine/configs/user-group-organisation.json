@@ -2,8 +2,8 @@
   "users": [
     {
       "name": "default_admin",
-      "email": "default_admin@radlab.dev",
-      "password": "default_admin_password"
+      "email": "default_admin@email.me",
+      "password": "password"
     }
   ],
   "organisation": {
