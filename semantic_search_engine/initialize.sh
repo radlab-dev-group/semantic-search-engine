@@ -30,31 +30,16 @@ if [[ "$INSTALLATION_MODE_NAME" == "semantic"  || "$INSTALLATION_MODE_NAME" == "
   rm -f prepare_semantic_db.py
 fi
 
-#
-#export PIP_BREAK_SYSTEM_PACKAGES=1
-#
-#source ../scripts/dev/functions.sh
-#
-#check_args_branch "${INSTALLATION_MODE_NAME}"
-#BRANCH_NAME=$(resolve_branch_name "${INSTALLATION_MODE_NAME}")
-#
-#clear_django_core
-#
-#install_radlab_data_and_copy_apps "${BRANCH_NAME}" "apps_sse/installed"
-#install_radlab_semantic_search_db "${BRANCH_NAME}"
-#install_radlab_text_cleaner "${BRANCH_NAME}"
-#install_radlab_content_supervisor "${BRANCH_NAME}"
-#install_radlab_django_core "${BRANCH_NAME}"
-#
-#install_urls ../tmp/urls
-#copy_configs ../tmp/configs
-#copy_resources ../tmp/resources
-#
-#if [ $# -eq 1 ]
+
+if [[ "$INSTALLATION_MODE_NAME" == "add_user"  || "$INSTALLATION_MODE_NAME" == "all" ]]; then
+  echo "👤 Adding default user"
+  cp ../scripts/admin/add_user.sh .
+  bash add_user.sh
+  rm -f add_user.sh
+fi
+
+
 #then
-#  make_and_migrate
-#  prepare_semantic_db
-#  add_default_organisation_and_user
 #  add_question_templates
 #  end_installation_message
 #  remove_bash_dependencies
