@@ -2,19 +2,22 @@
 
 INSTALLATION_MODE_NAME=${1}
 
-
-if [[ "$INSTALLATION_MODE_NAME" == "dep" ]]; then
-  echo "📦 Installing dependencies"
-  pip install git+https://github.com/radlab-dev-group/radlab-data.git
-fi
-
 if [[ "$INSTALLATION_MODE_NAME" == "clear" ]]; then
   echo "🔧 Clearing Django migration files..."
   find . -type f -path "*/migrations/*.py" ! -name "__init__.py" -delete
   find . -type f -path "*/migrations/*.pyc" -delete
 fi
 
-if [[ "$INSTALLATION_MODE_NAME" == "migrate" ]]; then
+
+if [[ "$INSTALLATION_MODE_NAME" == "dep" || "$INSTALLATION_MODE_NAME" == "all" ]]; then
+  echo "📦 Installing dependencies"
+  echo "   🔧 installing radlab-data"
+  pip install git+https://github.com/radlab-dev-group/radlab-data.git
+  echo "   🔧 installing llm-router"
+  pip install git+https://github.com/radlab-dev-group/llm-router.git
+fi
+
+if [[ "$INSTALLATION_MODE_NAME" == "migrate"  || "$INSTALLATION_MODE_NAME" == "all" ]]; then
   echo "🚀 Running migrations..."
   python3 manage.py makemigrations
   python3 manage.py migrate
