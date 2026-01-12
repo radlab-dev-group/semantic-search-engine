@@ -44,11 +44,3 @@ if [[ "$INSTALLATION_MODE_NAME" == "add_query_templates"  || "$INSTALLATION_MODE
   bash add_query_templates.sh
   rm -f add_query_templates.sh
 fi
-
-
-
-#then
-#  add_question_templates
-#  end_installation_message
-#  remove_bash_dependencies
-#fi
