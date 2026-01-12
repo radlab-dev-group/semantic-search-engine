@@ -38,6 +38,14 @@ if [[ "$INSTALLATION_MODE_NAME" == "add_user"  || "$INSTALLATION_MODE_NAME" == "
   rm -f add_user.sh
 fi
 
+if [[ "$INSTALLATION_MODE_NAME" == "add_query_templates"  || "$INSTALLATION_MODE_NAME" == "all" ]]; then
+  echo "📄 Adding query templates"
+  cp ../scripts/admin/add_query_templates.sh .
+  bash add_query_templates.sh
+  rm -f add_query_templates.sh
+fi
+
+
 
 #then
 #  add_question_templates

@@ -1,5 +1,5 @@
 {
-  "rdl_authorization": {
+  "authorization": {
     "auth_host": "https://login.radlab.dev",
     "realm": "",
     "client_id": "",

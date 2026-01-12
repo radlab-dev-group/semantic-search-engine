@@ -1,9 +1,6 @@
 import os
 import django
-import logging
 import argparse
-
-import pandas as pd
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "main.settings")
 django.setup()
@@ -23,10 +20,10 @@ def prepare_parser(desc=""):
     )
 
     p.add_argument(
-        "--keycloak-config",
-        dest="keycloak_config",
+        "--auth-config",
+        dest="auth_config",
         default="./configs/auth-config.json",
-        help="Path to keycloak config with defined organisation.",
+        help="Path to auth config with defined organisation.",
     )
 
     return p
@@ -36,7 +33,7 @@ def main(argv=None):
     args = prepare_parser(argv).parse_args(argv)
 
     sys_controller = SystemController()
-    kc_config = RdlAuthConfig(cfg_path=args.keycloak_config)
+    kc_config = RdlAuthConfig(cfg_path=args.auth_config)
     qt_controller = QueryTemplatesLoaderController(config_path=args.query_config)
 
     organisation = sys_controller.get_organisation(
