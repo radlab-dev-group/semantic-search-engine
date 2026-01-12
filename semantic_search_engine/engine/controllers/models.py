@@ -38,123 +38,122 @@ ALL_AVAILABLE_GENAI_MODELS_NAMES = []
 
 class GenerativeModelConfig:
     """
-    Controller for generative model configurations.
+    Konfigurator modeli generatywnych.
+
+    Odczytuje konfigurację z pliku ``generative-models.json`` w następującym
+    formacie:
+
+    {
+        "api_hosts": {
+            "<model_name>": "<host_url>",
+            ...
+        },
+        "ep": {
+            "generative_answer": "api/generative_answer",
+            "conversation_with_model": "api/conversation_with_model"
+        },
+        "active_api_models": [
+            "<model_name>",
+            ...
+        ]
+    }
+
+    Po wczytaniu pliku dostępne są:
+    * ``active_local_models_hosts`` – mapowanie nazwy modelu → URL hosta,
+    * ``local_models_endpoints`` – mapowanie nazwy endpointu → ścieżka URL.
     """
 
+    # Nazwy kluczy w pliku JSON
     JSON_API_HOSTS = "api_hosts"
-    JSON_API_EP_LIST = "ep"
-    JSON_API_HOSTS_LIST = "hosts"
+    JSON_EP = "ep"
     JSON_ACTIVE_API_MODELS = "active_api_models"
-    JSON_API_HOSTS_OPENAI = "openai_models_api"
-    JSON_API_HOSTS_LOCAL_MODELS = "local_models_api"
 
     def __init__(self, config_path: str | None = "configs/generative-models.json"):
         """
-        Initialise the configuration loader.
+        Inicjalizacja konfiguracji.
 
         Parameters
         ----------
         config_path : str | None
-            Path to the JSON file containing generative‑model configuration.
-            If ``None`` the configuration is not loaded.
+            Ścieżka do pliku JSON z konfiguracją. ``None`` oznacza,
+            że konfiguracja nie zostanie wczytana.
         """
         self._config_path = config_path
+        self._models_config_json: dict | None = None
 
-        self._models_config_json = None
-        self._active_local_models_hosts = {}
-        self._local_models_endpoints = {}
-        self._active_openai_hosts = {}
+        # Mappings exposed via właściwości
+        self._active_local_models_hosts: dict = {}
+        self._local_models_endpoints: dict = {}
 
         if self._config_path is not None:
             self.load()
 
-    @property
-    def active_openai_hosts(self) -> dict:
-        """
-        Returns the active OpenAI models.
-
-        Returns
-        -------
-        dict
-            Mapping where the key is the model name and the value is the
-            OpenAI model identifier.
-        """
-        return self._active_openai_hosts
-
+    # ------------------------------------------------------------------
+    # Publiczne właściwości
+    # ------------------------------------------------------------------
     @property
     def active_local_models_hosts(self) -> dict:
         """
-        Returns the active locally‑provided models.
-
-        Returns
-        -------
-        dict
-            Mapping where the key is the model name and the value is the model host URL.
+        Zwraca mapowanie aktywnych modeli → adresów hostów.
         """
         return self._active_local_models_hosts
 
     @property
     def local_models_endpoints(self) -> dict:
         """
-        Returns the local models API endpoints.
-
-        Returns
-        -------
-        dict
-            Mapping of endpoint names to their URLs.
+        Zwraca mapowanie nazw endpointów → ich ścieżek (np. ``api/generative_answer``).
         """
         return self._local_models_endpoints
 
+    # ------------------------------------------------------------------
+    # Ładowanie i przetwarzanie pliku konfiguracyjnego
+    # ------------------------------------------------------------------
     def load(self, config_path: str | None = None) -> None:
         """
-        Load configuration from a JSON file.
+        Wczytuje (lub przeładowuje) konfigurację z pliku JSON.
 
         Parameters
         ----------
         config_path : str | None
-            Optional alternative path. If supplied, it overrides the instance’s
-            stored path.
+            Opcjonalna alternatywna ścieżka do pliku. Jeśli podana,
+            zostanie użyta zamiast ścieżki podanej przy konstrukcji.
         """
         if config_path is not None:
             self._config_path = config_path
 
-        with open(self._config_path, "rt") as models_in:
-            self._models_config_json = json.load(models_in)
+        with open(self._config_path, "rt", encoding="utf-8") as f:
+            self._models_config_json = json.load(f)
 
         self._process_config_file()
 
     def _process_config_file(self) -> None:
         """
-        Populate internal dictionaries with active OpenAI and local models.
+        Buduje wewnętrzne słowniki ``_active_local_models_hosts`` oraz
+        ``_local_models_endpoints`` na podstawie wczytanej konfiguracji.
         """
         self._active_local_models_hosts.clear()
-        self._active_openai_hosts.clear()
+        self._local_models_endpoints.clear()
 
-        all_api_hosts = self._models_config_json[self.JSON_API_HOSTS]
-        active_api_models = self._models_config_json[self.JSON_ACTIVE_API_MODELS]
-        local_api_models = all_api_hosts[self.JSON_API_HOSTS_LOCAL_MODELS][
-            self.JSON_API_HOSTS_LIST
-        ]
-        openai_api_models = all_api_hosts[self.JSON_API_HOSTS_OPENAI][
-            self.JSON_API_HOSTS_LIST
-        ]
+        all_api_hosts: dict = self._models_config_json[self.JSON_API_HOSTS]
+        active_models: list = self._models_config_json[self.JSON_ACTIVE_API_MODELS]
 
-        self._local_models_endpoints = all_api_hosts[
-            self.JSON_API_HOSTS_LOCAL_MODELS
-        ][self.JSON_API_EP_LIST]
+        for model_name in active_models:
+            host_url = all_api_hosts.get(model_name)
+            if host_url:
+                if host_url.endswith("/"):
+                    host_url = host_url[:-1]
+                self._active_local_models_hosts[model_name] = host_url
+            else:
+                logging.warning(
+                    f"Model '{model_name}' is active but no definition in "
+                    f"'{self.JSON_API_HOSTS}'."
+                )
 
-        for active_model in active_api_models:
-            if active_model not in ALL_AVAILABLE_GENAI_MODELS_NAMES:
-                ALL_AVAILABLE_GENAI_MODELS_NAMES.append(active_model)
+        # ------------------------------------------------------------------
+        self._local_models_endpoints = self._models_config_json.get(self.JSON_EP, {})
 
-            if active_model in local_api_models:
-                self._active_local_models_hosts[active_model] = local_api_models[
-                    active_model
-                ]
-            elif active_model in openai_api_models:
-                self._active_openai_hosts[active_model] = openai_api_models[
-                    active_model
-                ]
+        if not self._local_models_endpoints:
+            logging.info("No defined endpoints found in 'ep'.")
 
 
 class ExtractiveQAController:

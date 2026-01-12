@@ -1,8 +1,6 @@
-import tqdm
-import json
 import argparse
 
-from radlab_db.non_relational.milvus_handler import MilvusHandler
+from engine.controllers.milvus import MilvusHandler
 
 
 def prepare_parser(desc=""):

@@ -2,50 +2,45 @@
 
 INSTALLATION_MODE_NAME=${1}
 
-
-if [[ "$INSTALLATION_MODE_NAME" == "dep" ]]; then
-  echo "📦 Installing dependencies"
-  pip install git+https://github.com/radlab-dev-group/radlab-data.git
-fi
-
 if [[ "$INSTALLATION_MODE_NAME" == "clear" ]]; then
   echo "🔧 Clearing Django migration files..."
   find . -type f -path "*/migrations/*.py" ! -name "__init__.py" -delete
   find . -type f -path "*/migrations/*.pyc" -delete
 fi
 
-if [[ "$INSTALLATION_MODE_NAME" == "migrate" ]]; then
+
+if [[ "$INSTALLATION_MODE_NAME" == "dep" || "$INSTALLATION_MODE_NAME" == "all" ]]; then
+  echo "📦 Installing dependencies"
+  echo "   🔧 installing radlab-data"
+  pip install git+https://github.com/radlab-dev-group/radlab-data.git
+  echo "   🔧 installing llm-router"
+  pip install git+https://github.com/radlab-dev-group/llm-router.git
+fi
+
+if [[ "$INSTALLATION_MODE_NAME" == "migrate"  || "$INSTALLATION_MODE_NAME" == "all" ]]; then
   echo "🚀 Running migrations..."
   python3 manage.py makemigrations
   python3 manage.py migrate
 fi
 
-#
-#export PIP_BREAK_SYSTEM_PACKAGES=1
-#
-#source ../scripts/dev/functions.sh
-#
-#check_args_branch "${INSTALLATION_MODE_NAME}"
-#BRANCH_NAME=$(resolve_branch_name "${INSTALLATION_MODE_NAME}")
-#
-#clear_django_core
-#
-#install_radlab_data_and_copy_apps "${BRANCH_NAME}" "apps_sse/installed"
-#install_radlab_semantic_search_db "${BRANCH_NAME}"
-#install_radlab_text_cleaner "${BRANCH_NAME}"
-#install_radlab_content_supervisor "${BRANCH_NAME}"
-#install_radlab_django_core "${BRANCH_NAME}"
-#
-#install_urls ../tmp/urls
-#copy_configs ../tmp/configs
-#copy_resources ../tmp/resources
-#
-#if [ $# -eq 1 ]
-#then
-#  make_and_migrate
-#  prepare_semantic_db
-#  add_default_organisation_and_user
-#  add_question_templates
-#  end_installation_message
-#  remove_bash_dependencies
-#fi
+if [[ "$INSTALLATION_MODE_NAME" == "semantic"  || "$INSTALLATION_MODE_NAME" == "all" ]]; then
+  echo "📚 Preparing semantic database"
+  cp apps_sse/admin/prepare_semantic_db.py .
+  python3 prepare_semantic_db.py
+  rm -f prepare_semantic_db.py
+fi
+
+
+if [[ "$INSTALLATION_MODE_NAME" == "add_user"  || "$INSTALLATION_MODE_NAME" == "all" ]]; then
+  echo "👤 Adding default user"
+  cp ../scripts/admin/add_user.sh .
+  bash add_user.sh
+  rm -f add_user.sh
+fi
+
+if [[ "$INSTALLATION_MODE_NAME" == "add_query_templates"  || "$INSTALLATION_MODE_NAME" == "all" ]]; then
+  echo "📄 Adding query templates"
+  cp ../scripts/admin/add_query_templates.sh .
+  bash add_query_templates.sh
+  rm -f add_query_templates.sh
+fi

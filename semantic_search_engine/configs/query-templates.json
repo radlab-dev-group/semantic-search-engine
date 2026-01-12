@@ -1,35 +1,54 @@
 {
-  "template_name": "<NAME>",
+  "template_name": "Sample templates",
   "query_templates": [
     {
-      "name": "<UNIQUE_NAME1>",
-      "display": "<DISPLAY1_IN_VIEW_APP>",
+      "name": "today",
+      "display": "News from today",
       "data_connector": {
+        "type": "*"
       },
       "data_filter_expressions": {
+        "date": {
+          "begin": "dateutil.parser.isoparse('DATA_VALUE').astimezone().replace(hour=0, minute=0, second=0, microsecond=0) <= datetime.datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)",
+          "end": "dateutil.parser.isoparse('DATA_VALUE').astimezone().replace(hour=0, minute=0, second=0, microsecond=0) >= datetime.datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)"
+        }
       },
       "structured_response_if_exists": true,
       "structured_response_data_fields": [
-      ]
+        "date",
+        "tags",
+        "title",
+        "date_raw"
+      ],
+      "prompt_file": "resources/prompts/system_prompt_event.txt"
     },
     {
-      "name": "<UNIQUE_NAM2E>",
-      "display": "<DISPLAY2_IN_VIEW_APP>",
+      "name": "tomorrow",
+      "display": "Tommorow expression",
       "data_connector": {
+        "type": "*"
       },
       "data_filter_expressions": {
+        "date": {
+          "begin": "dateutil.parser.isoparse('DATA_VALUE').astimezone().replace(hour=0, minute=0, second=0, microsecond=0) <= datetime.datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0) + datetime.timedelta(days=1)",
+          "end": "dateutil.parser.isoparse('DATA_VALUE').astimezone().replace(hour=0, minute=0, second=0, microsecond=0) >= datetime.datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0) + datetime.timedelta(days=1)"
+        }
       },
       "structured_response_if_exists": true,
       "structured_response_data_fields": [
-      ]
+        "date",
+        "tags",
+        "title",
+        "date_raw"
+      ],
+      "prompt_file": "resources/prompts/system_prompt_event.txt"
     }
   ],
   "templates_grammar": {
     "tokens": [
-      "<UNIQUE_NAME1>",
-      "<UNIQUE_NAM2E>"
+      "today",
+      "tomorrow"
     ],
-    "alphabet": {
-    }
+    "alphabet": {}
   }
 }
