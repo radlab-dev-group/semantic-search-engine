@@ -52,7 +52,7 @@ The **Semantic Search Engine** provides a full‑stack solution for building sem
 | **Storage**                              | Persist raw documents and metadata in PostgreSQL (relational) and Milvus (vector) databases.                           | `data.models`, `engine.models`, `semantic_search_engine/aws_handler.py` |
 | **Embedding & Reranking**                | Compute dense vector representations and optionally re‑rank using cross‑encoders.                                      | `embedders_rerankers.py`, `engine.controllers.embedders_rerankers`      |
 | **Search**                               | Retrieve nearest‑neighbor chunks with optional metadata filters, template‑based constraints, and pagination.           | `engine.controllers.search`, `data.controllers.relational_db`           |
-| **RAG (Retrieval‑Augmented Generation)** | Combine retrieved snippets with LLMs (local or OpenAI) to generate context‑aware answers.                              | `chat.controllers`, `engine.controllers.models`                         |
+| **RAG (Retrieval‑Augmented Generation)** | Combine retrieved snippets with LLMs (local or cloud-hosted) to generate context‑aware answers.                        | `chat.controllers`, `engine.controllers.models`                         |
 | **API Layer**                            | Expose all functionality via a clean, versioned REST API built on Django Rest Framework.                               | `chat.api`, `data.api`, `engine.api`, `system.api`                      |
 | **Administration**                       | User, organisation, and group management, plus collection lifecycle utilities.                                         | `system.controllers`, `system.models`                                   |
 
