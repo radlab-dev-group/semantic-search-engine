@@ -29,6 +29,8 @@ from transformers import pipeline
 
 from radlab_data.text.utils import TextUtils
 
+from llm_router_lib.client import LLMRouterClient
+
 from chat.models import MessageState
 from engine.controllers.search import DBSemanticSearchController
 from engine.models import UserQueryResponse, UserQueryResponseAnswer
@@ -48,10 +50,6 @@ class GenerativeModelConfig:
             "<model_name>": "<host_url>",
             ...
         },
-        "ep": {
-            "generative_answer": "api/generative_answer",
-            "conversation_with_model": "api/conversation_with_model"
-        },
         "active_api_models": [
             "<model_name>",
             ...
@@ -59,13 +57,11 @@ class GenerativeModelConfig:
     }
 
     Po wczytaniu pliku dostępne są:
-    * ``active_local_models_hosts`` – mapowanie nazwy modelu → URL hosta,
-    * ``local_models_endpoints`` – mapowanie nazwy endpointu → ścieżka URL.
+    * ``active_local_models_hosts`` – mapowanie nazwy modelu → URL hosta.
     """
 
     # Nazwy kluczy w pliku JSON
     JSON_API_HOSTS = "api_hosts"
-    JSON_EP = "ep"
     JSON_ACTIVE_API_MODELS = "active_api_models"
 
     def __init__(self, config_path: str | None = "configs/generative-models.json"):
@@ -83,7 +79,6 @@ class GenerativeModelConfig:
 
         # Mappings exposed via właściwości
         self._active_local_models_hosts: dict = {}
-        self._local_models_endpoints: dict = {}
 
         if self._config_path is not None:
             self.load()
@@ -97,13 +92,6 @@ class GenerativeModelConfig:
         Zwraca mapowanie aktywnych modeli → adresów hostów.
         """
         return self._active_local_models_hosts
-
-    @property
-    def local_models_endpoints(self) -> dict:
-        """
-        Zwraca mapowanie nazw endpointów → ich ścieżek (np. ``api/generative_answer``).
-        """
-        return self._local_models_endpoints
 
     # ------------------------------------------------------------------
     # Ładowanie i przetwarzanie pliku konfiguracyjnego
@@ -128,11 +116,10 @@ class GenerativeModelConfig:
 
     def _process_config_file(self) -> None:
         """
-        Buduje wewnętrzne słowniki ``_active_local_models_hosts`` oraz
-        ``_local_models_endpoints`` na podstawie wczytanej konfiguracji.
+        Buduje wewnętrzne słowniki ``_active_local_models_hosts``
+        na podstawie wczytanej konfiguracji.
         """
         self._active_local_models_hosts.clear()
-        self._local_models_endpoints.clear()
 
         all_api_hosts: dict = self._models_config_json[self.JSON_API_HOSTS]
         active_models: list = self._models_config_json[self.JSON_ACTIVE_API_MODELS]
@@ -148,12 +135,6 @@ class GenerativeModelConfig:
                     f"Model '{model_name}' is active but no definition in "
                     f"'{self.JSON_API_HOSTS}'."
                 )
-
-        # ------------------------------------------------------------------
-        self._local_models_endpoints = self._models_config_json.get(self.JSON_EP, {})
-
-        if not self._local_models_endpoints:
-            logging.info("No defined endpoints found in 'ep'.")
 
 
 class ExtractiveQAController:
@@ -427,28 +408,26 @@ class GenerativeModelControllerApi:
             models_config : GenerativeModelConfig
                 Loaded configuration providing host and endpoint data.
             """
-            api_host = models_config.active_local_models_hosts[qa_gen_model]
-            if api_host.endswith("/"):
-                api_host = api_host[:-1]
+            # self.api_host = models_config.active_local_models_hosts[qa_gen_model]
 
-            ep_url_generative_answer = models_config.local_models_endpoints[
-                self.JSON_FIELD_EP_GENERATIVE_ANSWER
-            ]
-            if ep_url_generative_answer.startswith("/"):
-                ep_url_generative_answer = ep_url_generative_answer[1:]
-            self.api_generative_answer_ep_url = (
-                f"{api_host}/{ep_url_generative_answer}"
-            )
+            # ep_url_generative_answer = models_config.local_models_endpoints[
+            #     self.JSON_FIELD_EP_GENERATIVE_ANSWER
+            # ]
+            # if ep_url_generative_answer.startswith("/"):
+            #     ep_url_generative_answer = ep_url_generative_answer[1:]
+            # self.api_generative_answer_ep_url = (
+            #     f"{api_host}/{ep_url_generative_answer}"
+            # )
 
-            ep_url_conv_with_model = models_config.local_models_endpoints[
-                self.JSON_FIELD_EP_CONVERSATION_WITH_MODEL
-            ]
-            if ep_url_conv_with_model.startswith("/"):
-                ep_url_conv_with_model = ep_url_conv_with_model[1:]
-
-            self.api_conversation_with_model_ep_url = (
-                f"{api_host}/{ep_url_conv_with_model}"
-            )
+            # ep_url_conv_with_model = models_config.local_models_endpoints[
+            #     self.JSON_FIELD_EP_CONVERSATION_WITH_MODEL
+            # ]
+            # if ep_url_conv_with_model.startswith("/"):
+            #     ep_url_conv_with_model = ep_url_conv_with_model[1:]
+            #
+            # self.api_conversation_with_model_ep_url = (
+            #     f"{api_host}/{ep_url_conv_with_model}"
+            # )
 
             self.api_header = {"Content-Type": "application/json; charset=utf-8"}
 
@@ -561,16 +540,11 @@ class GenerativeModelControllerApi:
         if system_prompt is not None and len(system_prompt.strip()):
             request_data["system_prompt"] = system_prompt
 
-        generated_answer = requests.post(
-            local_model_api.api_generative_answer_ep_url,
-            headers=local_model_api.api_header,
-            json=request_data,
+        _r_client = LLMRouterClient(
+            api=self.models_config.active_local_models_hosts[qa_gen_model]
         )
-        if not generated_answer.ok:
-            logging.error(generated_answer)
-            return None, None
+        generated_answer = _r_client.generative_answer(payload=request_data)
 
-        generated_answer = generated_answer.json()
         generation_time = generated_answer["generation_time"]
         if "response" not in generated_answer:
             logging.error(generated_answer)
@@ -870,6 +844,8 @@ class GenerativeModelController:
             generated_answer=json.dumps(generated_answer),
         )
 
+        # TODO: Tutaj wywalamy openai i mamy klienta routera do ktorego wysylamy zadania!
+        # TODO: LLMRouterClient
         generation_options = self._prepare_generation_options(query_options)
         if "openai" in query_options["generative_model"].lower():
             generated_answer, generation_time = (
