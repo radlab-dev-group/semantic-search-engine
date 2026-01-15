@@ -1,10 +1,10 @@
 import json
 
-from llm_router_lib import LLMRouterClient
+# from llm_router_lib import LLMRouterClient
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from engine.core.constants import LLM_ROUTER_API
+# from engine.core.constants import LLM_ROUTER_API
 from main.src.response import response_with_status
 from main.src.decorators import required_params_exists, get_default_language
 
@@ -12,7 +12,10 @@ from system.core.decorators import get_organisation_user
 from engine.controllers.relational_db import RelationalDBController
 from engine.controllers.system import EngineSystemController
 from engine.controllers.search import SearchQueryController
-from engine.controllers.models import GenerativeModelController
+from engine.controllers.models import (
+    GenerativeModelController,
+    GenerativeModelControllerApi,
+)
 from engine.controllers.embedders_rerankers import EmbeddingModelsConfig
 
 
@@ -132,16 +135,16 @@ class GenerativeAnswerForQuestion(APIView):
 
 
 class ListGenerativeModels(APIView):
+    gam_controller = GenerativeModelControllerApi(deepl_api_key="")
+
     @get_default_language
     def get(self, language, request):
-        _r_client = LLMRouterClient(api=LLM_ROUTER_API)
-        models_list = _r_client.models()
 
         return response_with_status(
             status=True,
             language=language,
             error_name=None,
-            response_body=models_list,
+            response_body=self.gam_controller.models_config.active_local_models_hosts,
         )
 
 

@@ -10,7 +10,7 @@ import logging
 try:
     from apps_sse.installed import any_text_to_json as attj
 except Exception:
-    from installed import any_text_to_json as attj
+    from apps_sse.installed import any_text_to_json as attj
 finally:
     if attj is None:
         raise Exception("Cannot import installed.any_text_to_json application")
