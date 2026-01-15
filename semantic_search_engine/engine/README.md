@@ -1,8 +1,7 @@
 ### Overview
 
 The **engine** package implements the core search‑and‑generation logic of the Semantic Search Engine.  
-It glues together vector‑based semantic search (Milvus), embedding/reranking models, and generative language models (
-OpenAI or locally hosted).
+It glues together vector‑based semantic search (Milvus), embedding/reranking models, and generative language models.
 
 ### Package Structure
 
@@ -48,8 +47,8 @@ engine/
    b) Calls `DBSemanticSearchController.search_with_options()` to retrieve ranked text fragments. <br>c) Persists a
    `UserQueryResponse`.
 3. **Generative Answer** – Client POSTs to `/api/<version>/generative_answer/` with the `query_response_id` and
-   generation options. The view uses `GenerativeModelController` to call either an OpenAI model or a local model via
-   HTTP, optionally translating the answer. The generated answer is saved as a `UserQueryResponseAnswer`.
+   generation options. The view uses `GenerativeModelController` to call model using `LLMRouterClient` object, 
+   optionally translating the answer. The generated answer is saved as a `UserQueryResponseAnswer`.
 4. **Rating** – Users can rate the generated answer via `/api/<version>/rate_generative_answer/`;
    `EngineSystemController.set_rating()` updates the rating fields.
 
@@ -59,5 +58,3 @@ engine/
   registries will pick up the new entries automatically.
 - **Custom post‑processing**: Subclass `DBSemanticSearchController` or add new helper methods in `search.py` and expose
   them via additional API endpoints.
-- **New generative back‑ends**: Implement a wrapper similar to `OpenAIGenerativeController` or extend
-  `GenerativeModelControllerApi.LocalModelAPI` to communicate with another service.

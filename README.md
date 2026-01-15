@@ -52,7 +52,7 @@ The **Semantic Search Engine** provides a full‑stack solution for building sem
 | **Storage**                              | Persist raw documents and metadata in PostgreSQL (relational) and Milvus (vector) databases.                           | `data.models`, `engine.models`, `semantic_search_engine/aws_handler.py` |
 | **Embedding & Reranking**                | Compute dense vector representations and optionally re‑rank using cross‑encoders.                                      | `embedders_rerankers.py`, `engine.controllers.embedders_rerankers`      |
 | **Search**                               | Retrieve nearest‑neighbor chunks with optional metadata filters, template‑based constraints, and pagination.           | `engine.controllers.search`, `data.controllers.relational_db`           |
-| **RAG (Retrieval‑Augmented Generation)** | Combine retrieved snippets with LLMs (local or OpenAI) to generate context‑aware answers.                              | `chat.controllers`, `engine.controllers.models`                         |
+| **RAG (Retrieval‑Augmented Generation)** | Combine retrieved snippets with LLMs (local or cloud-hosted) to generate context‑aware answers.                        | `chat.controllers`, `engine.controllers.models`                         |
 | **API Layer**                            | Expose all functionality via a clean, versioned REST API built on Django Rest Framework.                               | `chat.api`, `data.api`, `engine.api`, `system.api`                      |
 | **Administration**                       | User, organisation, and group management, plus collection lifecycle utilities.                                         | `system.controllers`, `system.models`                                   |
 
@@ -162,18 +162,17 @@ semantic-search-engine/
 
 ## Prerequisites
 
-| Component                     | Minimum Version       | Why it matters                                                                                   |
-|-------------------------------|-----------------------|--------------------------------------------------------------------------------------------------|
-| **Python**                    | 3.11 (rc1 acceptable) | All scripts and Django run on 3.11+.                                                             |
-| **pip**                       | latest                | To install dependencies from `requirements.txt`.                                                 |
-| **PostgreSQL**                | 12+                   | Relational store for documents, users, collections.                                              |
-| **Milvus**                    | 2.3+                  | Vector database for semantic embeddings.                                                         |
-| **Django**                    | 4.x                   | Core web framework for the API layer.                                                            |
-| **boto3**                     | any                   | Required only if you enable AWS S3 storage.                                                      |
-| **radlab_data** package       | ≥ 0.2.0               | Provides `DirectoryFileReader`, `TextUtils`, and other utilities used by the conversion scripts. |
-| **CUDA (optional)**           | 11+                   | If you want to run embeddings / LLMs on GPU.                                                     |
-| **OpenAI API key** (optional) | –                     | Enables the OpenAI generative backend.                                                           |
-| **Deepl API key** (optional)  | –                     | Enables answer translation.                                                                      |
+| Component                    | Minimum Version       | Why it matters                                                                                   |
+|------------------------------|-----------------------|--------------------------------------------------------------------------------------------------|
+| **Python**                   | 3.11 (rc1 acceptable) | All scripts and Django run on 3.11+.                                                             |
+| **pip**                      | latest                | To install dependencies from `requirements.txt`.                                                 |
+| **PostgreSQL**               | 12+                   | Relational store for documents, users, collections.                                              |
+| **Milvus**                   | 2.3+                  | Vector database for semantic embeddings.                                                         |
+| **Django**                   | 4.x                   | Core web framework for the API layer.                                                            |
+| **boto3**                    | any                   | Required only if you enable AWS S3 storage.                                                      |
+| **radlab_data** package      | ≥ 0.2.0               | Provides `DirectoryFileReader`, `TextUtils`, and other utilities used by the conversion scripts. |
+| **CUDA (optional)**          | 11+                   | If you want to run embeddings / LLMs on GPU.                                                     |
+| **Deepl API key** (optional) | –                     | Enables answer translation.                                                                      |
 
 All third‑party Python dependencies are listed in `requirements.txt`.
 
@@ -247,7 +246,7 @@ Configuration files live under the `configs/` directory. The most important ones
 | `configs/aws_config.json`        | S3 credentials and bucket name (used by `AwsHandler`).                   |
 | `configs/embedders.json`         | Registry of available embedding models (paths, vector size, device).     |
 | `configs/rerankers.json`         | Registry of cross‑encoder reranker models.                               |
-| `configs/generative-models.json` | Mapping of generative model names to API endpoints (local or OpenAI).    |
+| `configs/generative-models.json` | Mapping of generative model names to LLMRouter instances.                |
 | `configs/query-templates.json`   | Definition of query‑template grammars and per‑template metadata filters. |
 
 ### Django Settings
@@ -325,7 +324,6 @@ You can add new models by extending the JSON and updating `embedders.json` / `re
 | `ENV_PUBLIC_API_AVAILABLE`                                                                              | Expose public API endpoints without authentication.         |
 | `ENV_CELERY_BROKER_URL`                                                                                 | URL of the Celery broker (RabbitMQ, Redis, etc.).           |
 | `ENV_DEFAULT_LANGUAGE`                                                                                  | Default language for API responses (`pl` or `en`).          |
-| `OPENAI_API_KEY`                                                                                        | API key for OpenAI model calls.                             |
 | `DEEPL_AUTH_KEY`                                                                                        | API key for DeepL translation service.                      |
 
 ---  
@@ -590,7 +588,7 @@ content supervision, and integrates with generative models.
     - If `use_rag_supervisor` is enabled, the system creates a `RAGMessageState` linking the query, response, and
       generated answer.
     - If `use_content_supervisor` is enabled, URLs in the user text are fetched and their content added to the prompt.
-4. **Generate assistant response** – either via a local LLM endpoint or OpenAI, with optional translation via DeepL.
+4. **Generate assistant response** – either via a local or cloud, with optional translation via DeepL.
 5. **Persist messages** – `Message` objects store role (`user`, `assistant`, `system`), text, timestamps, and optional
    `MessageState`.
 
@@ -610,9 +608,7 @@ This feature is useful for **dynamic knowledge retrieval** (e.g., fetching the l
 ### Generative Model Integration
 
 The `GenerativeModelController` orchestrates calls to:
-
-- **Local model APIs** – defined in `configs/generative-models.json` with custom endpoints (`/generate`).
-- **OpenAI** – via `OpenAIGenerativeController`.
+**model APIs** – defined in `configs/generative-models.json` with custom endpoints (`/generate`).
 
 Both paths support:
 

@@ -7,10 +7,9 @@ language models, extractive question‑answering, and configuration handling.
 The module includes:
 
 * ``GenerativeModelConfig`` – loads and parses a JSON configuration that
-  defines active OpenAI and locally‑hosted models.
+  defines active models.
 * ``ExtractiveQAController`` – runs a HuggingFace “question‑answering” pipeline
   on retrieved document passages.
-* ``OpenAIGenerativeController`` – builds prompts and calls the OpenAI chat API.
 * ``GenerativeModelControllerApi`` – thin wrapper around a custom local generative
   model HTTP API.
 * ``GenerativeModelController`` – high‑level façade that coordinates the above
@@ -24,10 +23,11 @@ import os
 from typing import Dict, List
 
 import requests
-from openai import OpenAI
 from transformers import pipeline
 
 from radlab_data.text.utils import TextUtils
+
+from llm_router_lib.client import LLMRouterClient
 
 from chat.models import MessageState
 from engine.controllers.search import DBSemanticSearchController
@@ -48,10 +48,6 @@ class GenerativeModelConfig:
             "<model_name>": "<host_url>",
             ...
         },
-        "ep": {
-            "generative_answer": "api/generative_answer",
-            "conversation_with_model": "api/conversation_with_model"
-        },
         "active_api_models": [
             "<model_name>",
             ...
@@ -59,13 +55,11 @@ class GenerativeModelConfig:
     }
 
     Po wczytaniu pliku dostępne są:
-    * ``active_local_models_hosts`` – mapowanie nazwy modelu → URL hosta,
-    * ``local_models_endpoints`` – mapowanie nazwy endpointu → ścieżka URL.
+    * ``active_local_models_hosts`` – mapowanie nazwy modelu → URL hosta.
     """
 
     # Nazwy kluczy w pliku JSON
     JSON_API_HOSTS = "api_hosts"
-    JSON_EP = "ep"
     JSON_ACTIVE_API_MODELS = "active_api_models"
 
     def __init__(self, config_path: str | None = "configs/generative-models.json"):
@@ -83,7 +77,6 @@ class GenerativeModelConfig:
 
         # Mappings exposed via właściwości
         self._active_local_models_hosts: dict = {}
-        self._local_models_endpoints: dict = {}
 
         if self._config_path is not None:
             self.load()
@@ -97,13 +90,6 @@ class GenerativeModelConfig:
         Zwraca mapowanie aktywnych modeli → adresów hostów.
         """
         return self._active_local_models_hosts
-
-    @property
-    def local_models_endpoints(self) -> dict:
-        """
-        Zwraca mapowanie nazw endpointów → ich ścieżek (np. ``api/generative_answer``).
-        """
-        return self._local_models_endpoints
 
     # ------------------------------------------------------------------
     # Ładowanie i przetwarzanie pliku konfiguracyjnego
@@ -128,11 +114,10 @@ class GenerativeModelConfig:
 
     def _process_config_file(self) -> None:
         """
-        Buduje wewnętrzne słowniki ``_active_local_models_hosts`` oraz
-        ``_local_models_endpoints`` na podstawie wczytanej konfiguracji.
+        Buduje wewnętrzne słowniki ``_active_local_models_hosts``
+        na podstawie wczytanej konfiguracji.
         """
         self._active_local_models_hosts.clear()
-        self._local_models_endpoints.clear()
 
         all_api_hosts: dict = self._models_config_json[self.JSON_API_HOSTS]
         active_models: list = self._models_config_json[self.JSON_ACTIVE_API_MODELS]
@@ -148,12 +133,6 @@ class GenerativeModelConfig:
                     f"Model '{model_name}' is active but no definition in "
                     f"'{self.JSON_API_HOSTS}'."
                 )
-
-        # ------------------------------------------------------------------
-        self._local_models_endpoints = self._models_config_json.get(self.JSON_EP, {})
-
-        if not self._local_models_endpoints:
-            logging.info("No defined endpoints found in 'ep'.")
 
 
 class ExtractiveQAController:
@@ -240,169 +219,6 @@ class ExtractiveQAController:
         return document_answers
 
 
-class OpenAIGenerativeController:
-    """
-    Wrapper around the OpenAI chat API for generative summarisation.
-    """
-
-    models_config = GenerativeModelConfig(
-        config_path="configs/generative-models.json"
-    )
-
-    def __init__(self, openai_api_key: str) -> None:
-        """
-        Initialise the OpenAI client.
-
-        Parameters
-        ----------
-        openai_api_key : str
-            API key for authenticating with the OpenAI service.
-        """
-        self.openai_api_key = openai_api_key
-        self.client = None
-        if openai_api_key is not None and len(openai_api_key.strip()) > 5:
-            self.client = OpenAI(api_key=self.openai_api_key)
-
-    def generative_summarization_openai(
-        self,
-        question_str,
-        query_instruction,
-        search_results,
-        qa_gen_model,
-        which_docs,
-        generation_options,
-        system_prompt: str or None = None,
-    ):
-        """
-        Generate a summary using an OpenAI model.
-
-        Parameters
-        ----------
-        question_str : str
-            The original user question.
-        query_instruction : str
-            Additional instruction for the model.
-        search_results : dict
-            Search results to be turned into context.
-        qa_gen_model : str
-            Name of the active OpenAI model to use.
-        which_docs : list
-            List of document identifiers to include in the prompt.
-        generation_options : dict
-            Generation parameters (currently unused).
-        system_prompt : str | None
-            Optional system‑level prompt that overrides the default.
-
-        Returns
-        -------
-        list[str]
-            List of generated answer strings (one per ``choice``).
-        """
-        doc2answers = (
-            DBSemanticSearchController.convert_search_results_to_doc2answer(
-                search_results=search_results, which_docs=which_docs
-            )
-        )
-
-        input_prompt = self.prepare_input_message_for_openai(
-            question_str, query_instruction, doc2answers, system_prompt=system_prompt
-        )
-
-        response = self.client.chat.completions.create(
-            model=self.models_config.active_openai_hosts[qa_gen_model],
-            messages=input_prompt,
-        )
-
-        answers = []
-        for choice in response.choices:
-            answers.append(choice.message.content)
-
-        return answers
-
-    def prepare_input_message_for_openai(
-        self,
-        question_str: str,
-        query_instruction: str,
-        doc2answers: dict,
-        system_prompt: str or None = None,
-    ) -> list:
-        """
-        Build the list of messages required by the OpenAI chat endpoint.
-
-        Parameters
-        ----------
-        question_str : str
-            The user’s question.
-        query_instruction : str
-            Optional extra instruction for the model.
-        doc2answers : dict
-            Mapping of document name to a list of extracted answer strings.
-        system_prompt : str | None
-            Custom system prompt; if ``None`` the default prompt is used.
-
-        Returns
-        -------
-        list[dict]
-            Ordered list of ``{\"role\": ..., \"content\": ...}`` messages.
-        """
-        system_prompt = self.__get_openai_system_prompt(system_prompt)
-
-        messages = [{"role": "system", "content": system_prompt}]
-        actual_role = "user"
-        for doc_name, answers in doc2answers.items():
-            for answer in answers:
-                message = {
-                    "role": actual_role,
-                    "content": f"{doc_name}: {answer}",
-                }
-                messages.append(message)
-                actual_role = "system" if actual_role == "user" else "user"
-
-        question_message = {
-            "role": actual_role,
-            "content": f"Pytanie: {question_str}",
-        }
-        if query_instruction is not None and len(query_instruction.strip()):
-            question_message["content"] += "\n" + query_instruction.strip()
-        messages.append(question_message)
-        return messages
-
-    @staticmethod
-    def __get_openai_system_prompt(system_prompt):
-        """
-        Return a system prompt for the OpenAI model.
-
-        Parameters
-        ----------
-        system_prompt : str | None
-            Custom prompt supplied by the caller.
-
-        Returns
-        -------
-        str
-            The system prompt to be sent to the API.
-        """
-        if system_prompt is not None and len(system_prompt.strip()):
-            return system_prompt
-
-        system_prompt = """
-            You are QA assistance, to prepare your answer use only 
-            knowledge from the given texts. Your response have to 
-            be created with the same style as in original texts. 
-            Return only response for question without your comment. 
-            The texts to prepare answer for question will be given in format 
-            like: doc_name: <context>. 
-            doc_name is the name of document where <context> comes from. 
-            Use only knowledge from <context>. And generating response inform 
-            about document names from the response comes from. 
-            The language of response have to be in polish. 
-            The response length have to be about 1000k tokens. 
-            The question for the context will be given at the end. 
-            """
-
-        return system_prompt
-
-
 class GenerativeModelControllerApi:
     """
     API client for custom local generative models.
@@ -412,45 +228,6 @@ class GenerativeModelControllerApi:
         """
         Helper that builds URLs and request templates for a specific local model.
         """
-
-        JSON_FIELD_EP_GENERATIVE_ANSWER = "generative_answer"
-        JSON_FIELD_EP_CONVERSATION_WITH_MODEL = "conversation_with_model"
-
-        def __init__(self, qa_gen_model: str, models_config: GenerativeModelConfig):
-            """
-            Initialise URLs for the chosen local model.
-
-            Parameters
-            ----------
-            qa_gen_model : str
-                Name of the model as defined in the configuration.
-            models_config : GenerativeModelConfig
-                Loaded configuration providing host and endpoint data.
-            """
-            api_host = models_config.active_local_models_hosts[qa_gen_model]
-            if api_host.endswith("/"):
-                api_host = api_host[:-1]
-
-            ep_url_generative_answer = models_config.local_models_endpoints[
-                self.JSON_FIELD_EP_GENERATIVE_ANSWER
-            ]
-            if ep_url_generative_answer.startswith("/"):
-                ep_url_generative_answer = ep_url_generative_answer[1:]
-            self.api_generative_answer_ep_url = (
-                f"{api_host}/{ep_url_generative_answer}"
-            )
-
-            ep_url_conv_with_model = models_config.local_models_endpoints[
-                self.JSON_FIELD_EP_CONVERSATION_WITH_MODEL
-            ]
-            if ep_url_conv_with_model.startswith("/"):
-                ep_url_conv_with_model = ep_url_conv_with_model[1:]
-
-            self.api_conversation_with_model_ep_url = (
-                f"{api_host}/{ep_url_conv_with_model}"
-            )
-
-            self.api_header = {"Content-Type": "application/json; charset=utf-8"}
 
         @staticmethod
         def get_request_data_template(generation_options: dict | None) -> dict:
@@ -486,10 +263,6 @@ class GenerativeModelControllerApi:
 
             return request_data
 
-    models_config = GenerativeModelConfig(
-        config_path="configs/generative-models.json"
-    )
-
     def __init__(self, deepl_api_key: str):
         """
         Initialise the façade with a DeepL API key.
@@ -500,6 +273,9 @@ class GenerativeModelControllerApi:
             Authentication token for DeepL translation service.
         """
         self.deepl_api_key = deepl_api_key
+        self.models_config = GenerativeModelConfig(
+            config_path="configs/generative-models.json"
+        )
 
     def generative_answer_local_api_model(
         self,
@@ -541,9 +317,10 @@ class GenerativeModelControllerApi:
             ``generated_answer`` is a string or ``None`` on failure,
             and ``generation_time`` is the elapsed time in seconds.
         """
-        local_model_api = self.LocalModelAPI(qa_gen_model, self.models_config)
 
-        request_data = local_model_api.get_request_data_template(generation_options)
+        request_data = self.LocalModelAPI.get_request_data_template(
+            generation_options
+        )
         request_data["question_str"] = question_str
         request_data["question_prompt"] = question_prompt
         request_data["texts"] = (
@@ -561,16 +338,11 @@ class GenerativeModelControllerApi:
         if system_prompt is not None and len(system_prompt.strip()):
             request_data["system_prompt"] = system_prompt
 
-        generated_answer = requests.post(
-            local_model_api.api_generative_answer_ep_url,
-            headers=local_model_api.api_header,
-            json=request_data,
+        _r_client = LLMRouterClient(
+            api=self.models_config.active_local_models_hosts[qa_gen_model]
         )
-        if not generated_answer.ok:
-            logging.error(generated_answer)
-            return None, None
+        generated_answer = _r_client.generative_answer(payload=request_data)
 
-        generated_answer = generated_answer.json()
         generation_time = generated_answer["generation_time"]
         if "response" not in generated_answer:
             logging.error(generated_answer)
@@ -611,22 +383,19 @@ class GenerativeModelControllerApi:
             is the model’s reply (or ``None`` on error) and ``generation_time`` is
             the elapsed time in seconds.
         """
-        local_model_api = self.LocalModelAPI(model_name_path, self.models_config)
-        request_data = local_model_api.get_request_data_template(options)
+        request_data = self.LocalModelAPI.get_request_data_template(options)
+
         request_data["user_last_statement"] = last_user_message
         request_data["historical_messages"] = history
         request_data["model_name"] = model_name_path
-        chat_assistant_response = requests.post(
-            local_model_api.api_conversation_with_model_ep_url,
-            headers=local_model_api.api_header,
-            json=request_data,
+
+        _r_client = LLMRouterClient(
+            api=self.models_config.active_local_models_hosts[model_name_path]
+        )
+        chat_assistant_response = _r_client.conversation_with_model(
+            payload=request_data
         )
 
-        if not chat_assistant_response.ok:
-            logging.error(chat_assistant_response)
-            return chat_assistant_response, None
-
-        chat_assistant_response = chat_assistant_response.json()
         if "response" not in chat_assistant_response:
             logging.error(chat_assistant_response)
             return chat_assistant_response, None
@@ -661,13 +430,9 @@ class GenerativeModelController:
         """
         self.store_to_db = store_to_db
         self.deepl_api_key = os.environ.get("DEEPL_AUTH_KEY", None)
-        self.openai_api_key = os.environ.get("OPENAI_API_KEY", None)
 
         self.gen_model_controller = GenerativeModelControllerApi(
             deepl_api_key=self.deepl_api_key
-        )
-        self.openai_controller = OpenAIGenerativeController(
-            openai_api_key=self.openai_api_key
         )
 
     @staticmethod
@@ -740,11 +505,6 @@ class GenerativeModelController:
             may be ``None`` on failure.
         """
         generation_options = self._prepare_generation_options(query_options)
-
-        if "openai" in query_options["generative_model"].lower():
-            raise Exception(
-                "Conversational search with OpenAI is not implemented yet"
-            )
 
         last_user_message = self.handle_message_state(
             last_user_message=last_user_message, message_state=message_state
@@ -870,32 +630,17 @@ class GenerativeModelController:
             generated_answer=json.dumps(generated_answer),
         )
 
-        generation_options = self._prepare_generation_options(query_options)
-        if "openai" in query_options["generative_model"].lower():
-            generated_answer, generation_time = (
-                self.generative_answer_for_response_openai(
-                    user_response=user_response,
-                    generative_model=query_options["generative_model"],
-                    query_instruction=query_instruction,
-                    percentage_rank_mass=query_options["percentage_rank_mass"],
-                    generation_options=generation_options,
-                    system_prompt=system_prompt,
-                )
+        generated_answer, generation_time = (
+            self.generative_answer_for_response_from_api(
+                user_response=user_response,
+                generative_model=query_options["generative_model"],
+                query_instruction=query_instruction,
+                percentage_rank_mass=query_options["percentage_rank_mass"],
+                use_doc_names_in_response=query_options["use_doc_names_in_response"],
+                generation_options=generation_options,
+                system_prompt=system_prompt,
             )
-        else:
-            generated_answer, generation_time = (
-                self.generative_answer_for_response_from_api(
-                    user_response=user_response,
-                    generative_model=query_options["generative_model"],
-                    query_instruction=query_instruction,
-                    percentage_rank_mass=query_options["percentage_rank_mass"],
-                    use_doc_names_in_response=query_options[
-                        "use_doc_names_in_response"
-                    ],
-                    generation_options=generation_options,
-                    system_prompt=system_prompt,
-                )
-            )
+        )
 
         if generated_answer is None:
             return None
@@ -925,63 +670,6 @@ class GenerativeModelController:
 
         return query_response_answer
 
-    def generative_answer_for_response_openai(
-        self,
-        user_response: UserQueryResponse,
-        generative_model: str,
-        query_instruction: str,
-        percentage_rank_mass: int,
-        generation_options: dict = None,
-        system_prompt: str or None = None,
-    ) -> (str | None, float | None):
-        """
-        Generate an answer using an OpenAI model.
-
-        Parameters
-        ----------
-        user_response : UserQueryResponse
-            The persisted query with search results.
-        generative_model : str
-            Name of the OpenAI model to use.
-        query_instruction : str
-            Additional instruction for the model.
-        percentage_rank_mass : int
-            Percent of top‑ranked documents to include.
-        generation_options : dict | None
-            Optional generation settings (currently unused).
-        system_prompt : str | None
-            Optional system prompt that overrides the default.
-
-        Returns
-        -------
-        tuple
-            ``(generated_answer, generation_time)`` where ``generated_answer`` is a
-            list of strings (or ``None`` on error) and ``generation_time`` is the
-            elapsed time in seconds.
-        """
-        if self.openai_api_key is None or len(self.openai_api_key) < 10:
-            logging.error("OPENAI_API_KEY is not defined!")
-            return None
-
-        which_docs = DBSemanticSearchController.get_accumulated_docs_by_rank_perc(
-            results={"stats": user_response.general_stats_json},
-            perc_rank_gen_qa=percentage_rank_mass,
-        )
-        logging.info(f"Number of documents to generate response: {len(which_docs)}")
-
-        start = datetime.datetime.now()
-        generated_answer = self.openai_controller.generative_summarization_openai(
-            question_str=user_response.user_query.query_str_prompt,
-            query_instruction=query_instruction,
-            search_results=user_response.detailed_results_json,
-            qa_gen_model=generative_model,
-            which_docs=which_docs,
-            generation_options=generation_options,
-            system_prompt=system_prompt,
-        )
-        generation_time = datetime.datetime.now() - start
-        return generated_answer, generation_time.total_seconds()
-
     def generative_answer_for_response_from_api(
         self,
         user_response: UserQueryResponse,
@@ -991,7 +679,7 @@ class GenerativeModelController:
         use_doc_names_in_response: bool = False,
         generation_options: dict | None = None,
         dont_response_when_no_documents: bool = True,
-        system_prompt: str or None = None,
+        system_prompt: str | None = None,
     ) -> (str | None, float | None):
         """
         Generate an answer using a locally hosted model via HTTP API.
