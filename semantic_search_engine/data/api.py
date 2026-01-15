@@ -19,8 +19,8 @@ from data.serializers import (
 
 from system.controllers import SystemController
 from data.controllers.upload import UploadDocumentsController
-from data.controllers.semantic_db import SemanticDBController
-from data.controllers.relational_db import RelationalDBController
+from engine.controllers.semantic_db import SemanticDBController
+from engine.controllers.relational_db import RelationalDBController
 from engine.controllers.search import DBSemanticSearchController
 
 

@@ -35,7 +35,7 @@ from data.models import (
     QueryTemplate,
 )
 
-from data.controllers.relational_db import RelationalDBController
+from engine.controllers.relational_db import RelationalDBController
 from data.controllers.constants import NORMALIZE_EMBEDDINGS
 from data.controllers.query_templates import QueryTemplateController
 

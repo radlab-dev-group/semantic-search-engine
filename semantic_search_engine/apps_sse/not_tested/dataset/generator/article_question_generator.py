@@ -10,7 +10,7 @@ from radlab_data.utils.threads import WorkerCluster
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "main.settings")
 django.setup()
 
-from data.controllers.relational_db import PublicRelationDBController
+from engine.controllers.relational_db import PublicRelationDBController
 from apps_sse.dataset.generator.question_worker import LLamaHandler, FileWriter
 
 

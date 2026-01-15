@@ -12,9 +12,8 @@ from data.models import (
     Document,
     DocumentPage,
     DocumentPageText,
-    CollectionOfDocuments,
 )
-from data.controllers.relational_db import PublicRelationDBController
+from engine.controllers.relational_db import PublicRelationDBController
 
 
 def prepare_parser(desc=""):

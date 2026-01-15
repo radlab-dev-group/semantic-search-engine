@@ -1,6 +1,3 @@
-import json
-import logging
-
 from rest_framework.views import APIView
 
 from main.src.response import response_with_status
@@ -16,7 +13,7 @@ from chat.core.errors import (
 )
 from chat.serializer import ChatSerializer, MessageSerializer, MessageStateSerializer
 from system.core.decorators import get_organisation_user
-from data.controllers.relational_db import RelationalDBController
+from engine.controllers.relational_db import RelationalDBController
 
 
 class NewChat(APIView):
