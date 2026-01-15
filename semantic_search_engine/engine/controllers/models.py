@@ -16,13 +16,12 @@ The module includes:
   components, optionally translating answers via DeepL and persisting results.
 """
 
-import datetime
 import json
-import logging
 import os
-from typing import Dict, List
+import logging
+import datetime
 
-import requests
+from typing import Dict, List
 from transformers import pipeline
 
 from radlab_data.text.utils import TextUtils
@@ -32,8 +31,6 @@ from llm_router_lib.client import LLMRouterClient
 from chat.models import MessageState
 from engine.controllers.search import DBSemanticSearchController
 from engine.models import UserQueryResponse, UserQueryResponseAnswer
-
-ALL_AVAILABLE_GENAI_MODELS_NAMES = []
 
 
 class GenerativeModelConfig:
