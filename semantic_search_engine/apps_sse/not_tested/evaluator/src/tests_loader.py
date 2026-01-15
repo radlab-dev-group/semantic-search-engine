@@ -7,7 +7,7 @@ from torchmetrics.text.rouge import ROUGEScore
 
 from system.models import OrganisationUser
 
-from data.controllers.relational_db import RelationalDBController
+from engine.controllers.relational_db import RelationalDBController
 
 from engine.controllers.search import SearchQueryController
 from engine.controllers.models import GenerativeModelController

@@ -1,4 +1,3 @@
-import json
 import os
 import hashlib
 import zipfile
@@ -12,7 +11,7 @@ from django.core.files.uploadedfile import TemporaryUploadedFile
 
 from system.models import OrganisationUser
 from data.models import UploadedDocuments, DocumentPageText, CollectionOfDocuments
-from data.controllers.relational_db import RelationalDBController
+from engine.controllers.relational_db import RelationalDBController
 from engine.controllers.search import DBSemanticSearchController
 
 

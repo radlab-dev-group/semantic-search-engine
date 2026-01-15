@@ -7,7 +7,7 @@ from main.src.response import response_with_status
 from main.src.decorators import required_params_exists, get_default_language
 
 from system.core.decorators import get_organisation_user
-from data.controllers.relational_db import RelationalDBController
+from engine.controllers.relational_db import RelationalDBController
 from engine.controllers.system import EngineSystemController
 from engine.controllers.search import SearchQueryController
 from engine.controllers.models import (
@@ -15,8 +15,6 @@ from engine.controllers.models import (
     ALL_AVAILABLE_GENAI_MODELS_NAMES,
 )
 from engine.controllers.embedders_rerankers import EmbeddingModelsConfig
-
-import engine.core.middleware
 
 
 class SearchWithOptions(APIView):
