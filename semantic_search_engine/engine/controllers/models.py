@@ -336,7 +336,8 @@ class GenerativeModelControllerApi:
             request_data["system_prompt"] = system_prompt
 
         _r_client = LLMRouterClient(
-            api=self.models_config.active_local_models_hosts[qa_gen_model]
+            api=self.models_config.active_local_models_hosts[qa_gen_model],
+            timeout=120,
         )
         generated_answer = _r_client.generative_answer(payload=request_data)
 
@@ -387,7 +388,8 @@ class GenerativeModelControllerApi:
         request_data["model_name"] = model_name_path
 
         _r_client = LLMRouterClient(
-            api=self.models_config.active_local_models_hosts[model_name_path]
+            api=self.models_config.active_local_models_hosts[model_name_path],
+            timeout=120,
         )
         chat_assistant_response = _r_client.conversation_with_model(
             payload=request_data
@@ -626,6 +628,8 @@ class GenerativeModelController:
             query_instruction_prompt=query_instruction,
             generated_answer=json.dumps(generated_answer),
         )
+
+        generation_options = self._prepare_generation_options(query_options)
 
         generated_answer, generation_time = (
             self.generative_answer_for_response_from_api(
