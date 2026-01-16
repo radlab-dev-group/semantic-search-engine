@@ -34,15 +34,13 @@ chat/
 | **ContentSupervisorState** | Stores the type of supervision (`state_type`) and any extracted web content (`www_content`).                                                                                                                           |
 | **RAGMessageState**        | Records whether a message triggered a query, the extracted query/instruction, and foreign keys to the Milvus search results (`sse_query`, `sse_response`, `sse_answer`). Also stores an optional system prompt.        |
 
-### Controllers (`controllers.py`)
+### Controllers (`controllers/`)
 
-- **ChatController** – Central orchestrator for chat lifecycle:
-    - `new_chat()` creates a `Chat` with a random hash.
-    - `add_user_message()` stores a user message, updates linked list pointers, and returns the updated history.
-    - `generate_assistant_message_cs_rag()` runs the RAG pipeline: extracts a question, optionally prepares a SSE query,
-      calls the semantic search controller, builds a `RAGMessageState`, and finally invokes the generative model to
-      produce an assistant reply.
-    - Helper methods for content supervision, message state creation, and history conversion.
+- **ChatLogicController** – Handles chat lifecycle: `new_chat()` creates a `Chat` with a random hash, and methods for
+  retrieving chats.
+- **MessageLogicController** – Handles message logic: `add_user_message()` stores a user message, and
+  `generate_assistant_message_cs_rag()` runs the RAG pipeline.
+- **ChatController** – A facade in `controllers/__init__.py` that combines both controllers for backward compatibility.
 - **MessageState creation** – Depending on request options (`use_rag_supervisor`, `use_content_supervisor`), the
   controller creates the appropriate state objects and links them to the message.
 
@@ -86,8 +84,8 @@ All endpoints use the common decorators:
 ### Extending the Chat Functionality
 
 - **Add a new message role** – Extend the `Message.role` choices (e.g., `system_notice`) and update
-  `ChatController.generate_assistant_message_cs_rag()` to handle the new role.
-- **Custom RAG pipelines** – Override `ChatController._prepare_rag_supervisor_state()` to inject additional
+  `MessageLogicController.generate_assistant_message_cs_rag()` to handle the new role.
+- **Custom RAG pipelines** – Override `MessageLogicController._prepare_rag_supervisor_state()` to inject additional
   query‑generation logic, or add new search options to the request payload.
 - **Persist additional state** – Create new fields on `MessageState` (e.g., sentiment analysis) and update the
   controller to populate them after each user message.

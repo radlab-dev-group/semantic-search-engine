@@ -1,13 +1,7 @@
-import string
 import random
-import logging
 import datetime
+
 from typing import List, Dict
-
-from django.db.models import QuerySet
-
-from content_supervisor.supervisor import ContentSupervisor
-from content_supervisor.processors.regex_processors import URLRegexProcessor
 
 from chat.models import (
     Chat,
@@ -18,12 +12,14 @@ from chat.models import (
 )
 from data.models import OrganisationUser, CollectionOfDocuments
 
-# from engine.models import UserQueryResponseAnswer
+from content_supervisor.supervisor import ContentSupervisor
+from content_supervisor.processors.regex_processors import URLRegexProcessor
+
 from engine.controllers.search.relational import SearchQueryController
 from engine.controllers.models_logic.generative import GenerativeModelController
 
 
-class ChatController:
+class MessageLogicController:
     USER_ROLE = "user"
     SYSTEM_ROLE = "system"
     ASSISTANT_ROLE = "assistant"
@@ -33,76 +29,10 @@ class ChatController:
         "\n\nTrzymając kontekst wcześniejszych pytań, odpowiedz na pytanie: "
     )
 
-    def __init__(self, add_to_db: bool = True, new_chat_hash_length: int = 128):
+    def __init__(self, add_to_db: bool = True):
         self._add_to_db = add_to_db
         self.cs_controller = ContentSupervisor(options={"use_executor": True})
         self.gen_model_controller = GenerativeModelController(store_to_db=True)
-
-        self._new_chat_hash_length = new_chat_hash_length
-
-    def new_chat(
-        self,
-        organisation_user: OrganisationUser,
-        collection: CollectionOfDocuments | None,
-        options: dict | None,
-        search_options: dict | None = None,
-    ) -> Chat:
-        """
-        Create a new chat.
-        :param organisation_user: Chat user
-        :param collection: Collection of documents to conversation
-        :param options: Dictionary with chat options.
-        :param search_options: Dictionary with search options.
-        :return: Created chat object
-        """
-        chat_hash = self._generate_chat_hash()
-        logging.info(f"Created new chat with hash: {chat_hash}")
-
-        new_chat = Chat(
-            organisation_user=organisation_user,
-            collection=collection,
-            options=options,
-            search_options=search_options,
-            hash=chat_hash,
-        )
-        if self._add_to_db:
-            new_chat.save()
-        return new_chat
-
-    def set_chat_as_saved(self, chat: Chat, read_only: bool) -> str:
-        """
-        Return hash of saved chat
-        :param chat:
-        :param read_only:
-        :return:
-        """
-        chat.is_saved = True
-        chat.read_only = read_only
-        if self._add_to_db:
-            chat.save()
-        return chat.hash
-
-    @staticmethod
-    def get_list_of_user_chats(user: OrganisationUser) -> QuerySet[Chat]:
-        return Chat.objects.filter(organisation_user=user)
-
-    @staticmethod
-    def get_chat_by_chat_hash(
-        chat_hash: str, only_saved: bool = True
-    ) -> Chat | None:
-        try:
-            return Chat.objects.get(is_saved=only_saved, hash=chat_hash)
-        except Chat.DoesNotExist:
-            return None
-
-    def _generate_chat_hash(self) -> str:
-        chat_hash = "".join(
-            random.SystemRandom().choice(
-                string.ascii_lowercase + string.ascii_uppercase + string.digits
-            )
-            for _ in range(self._new_chat_hash_length)
-        )
-        return chat_hash
 
     def add_user_message(
         self, chat: Chat, message: str, options: dict, search_options: dict
@@ -226,17 +156,6 @@ class ChatController:
         last_questions_to_query: int = -1,
         system_prompt: str or None = None,
     ) -> RAGMessageState | None:
-        """
-        If question state exists into message:
-          - prepare new db query
-          - run query search into relational/semantic db
-          - generate answer based on the query result
-
-        :param message:
-        :param collection:
-        :param organisation_user:
-        :return:
-        """
         if collection is None:
             return None
 
@@ -268,13 +187,6 @@ class ChatController:
         user_response = SearchQueryController.get_user_response_by_id(
             query_response_id=query_db_results_dict["query_response_id"]
         )
-        # if user_msg_is_rag_question:
-        #     if len(history):
-        #         user_response.user_query.query_str_prompt += (
-        #             self.USER_QUERY_PROMPT_HISTORY + message.text
-        #         )
-        #
-        #     question_str = user_response.user_query.query_str_prompt
 
         if "template_prompts" in query_db_results_dict:
             prompts = query_db_results_dict["template_prompts"]
@@ -326,11 +238,6 @@ class ChatController:
 
                 user_question += msg.text + "\n"
                 if only_first_user_history_message:
-                    # user_question = user_question.strip()
-                    # for rc in self.REMOVE_LAST_QUESTION_CHAR:
-                    #     user_question = user_question.rstrip(rc)
-                    # if len(user_question):
-                    #     user_question += " oraz "
                     break
 
         if not len(user_question.strip()):
@@ -385,12 +292,6 @@ class ChatController:
         last_questions_to_query: int = -1,
         system_prompt: str or None = None,
     ) -> (str | None, MessageState | None):
-        """
-        Check if message contains any state. Any question, instruction etc.
-        There classifier for "importance" should be used!
-        :param user_message: User message to check state
-        :return: Pair of generated response (or None) and message state (or None)
-        """
         rag_state = None
         if options.get("use_rag_supervisor", False):
             rag_state = self._prepare_rag_supervisor_state(
@@ -450,10 +351,3 @@ class ChatController:
     @staticmethod
     def get_chat_messages(chat: Chat) -> List[Message]:
         return [m for m in Message.objects.filter(chat=chat).order_by("number")]
-
-    @staticmethod
-    def get_chat_by_id(chat_id) -> Chat | None:
-        try:
-            return Chat.objects.get(id=chat_id)
-        except Chat.DoesNotExist:
-            return None
