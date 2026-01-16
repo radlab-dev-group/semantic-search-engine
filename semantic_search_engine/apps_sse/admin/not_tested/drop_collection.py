@@ -13,7 +13,7 @@ from data.models import (
     DocumentPage,
     DocumentPageText,
 )
-from engine.controllers.relational_db import PublicRelationDBController
+from engine.controllers.database import PublicRelationDBController
 
 
 def prepare_parser(desc=""):

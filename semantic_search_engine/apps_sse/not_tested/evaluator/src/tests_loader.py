@@ -7,11 +7,11 @@ from torchmetrics.text.rouge import ROUGEScore
 
 from system.models import OrganisationUser
 
-from engine.controllers.relational_db import RelationalDBController
+from engine.controllers.database import RelationalDBController
 
 from engine.controllers.search import SearchQueryController
-from engine.controllers.models import GenerativeModelController
-from engine.controllers.embedders_rerankers import EmbeddingModelsConfig
+from engine.controllers.models_logic import GenerativeModelController
+from engine.controllers.models_logic import EmbeddingModelsConfig
 
 TEST_STEP_SEM_SEARCH = "semantic_search"
 TEST_STEP_GEN_RESPONSE = "generative_response"

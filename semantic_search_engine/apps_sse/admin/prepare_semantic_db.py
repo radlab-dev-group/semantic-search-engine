@@ -1,6 +1,6 @@
 import argparse
 
-from engine.controllers.milvus import MilvusHandler
+from engine.controllers.database import MilvusHandler
 
 
 def prepare_parser(desc=""):
