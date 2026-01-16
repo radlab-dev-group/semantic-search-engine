@@ -1,22 +1,20 @@
 import json
 
-# from llm_router_lib import LLMRouterClient
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-# from engine.core.constants import LLM_ROUTER_API
 from main.src.response import response_with_status
 from main.src.decorators import required_params_exists, get_default_language
 
 from system.core.decorators import get_organisation_user
-from engine.controllers.relational_db import RelationalDBController
-from engine.controllers.system import EngineSystemController
-from engine.controllers.search import SearchQueryController
-from engine.controllers.models import (
+from engine.controllers.database.relational_db import RelationalDBController
+from engine.controllers.system_logic.system import EngineSystemController
+from engine.controllers.search.relational import SearchQueryController
+from engine.controllers.models_logic.generative import (
     GenerativeModelController,
     GenerativeModelControllerApi,
 )
-from engine.controllers.embedders_rerankers import EmbeddingModelsConfig
+from engine.controllers.models_logic.embedders_rerankers import EmbeddingModelsConfig
 
 
 class SearchWithOptions(APIView):
