@@ -10,9 +10,11 @@ from django.utils import timezone
 from django.core.files.uploadedfile import TemporaryUploadedFile
 
 from system.models import OrganisationUser
+
 from data.models import UploadedDocuments, DocumentPageText, CollectionOfDocuments
-from engine.controllers.relational_db import RelationalDBController
-from engine.controllers.search import DBSemanticSearchController
+
+from engine.controllers.search.semantic import DBSemanticSearchController
+from engine.controllers.database.relational_db import RelationalDBController
 
 
 class UploadDocumentsController:

@@ -1,14 +1,15 @@
 import json
 from rest_framework.views import APIView
 
-from engine.controllers.milvus import INDEX_QUERY_PARAMS
+from engine.controllers.database.milvus import INDEX_QUERY_PARAMS
 
 from main.src.decorators import required_params_exists, get_default_language
 from main.src.response import response_with_status
 
-from chat.core.errors import COLLECTION_NOT_FOUND
+
 from system.core.errors import GROUP_NAME_NOT_EXIST
 from system.core.decorators import get_organisation_user
+from system.controllers import SystemController
 
 from data.serializers import (
     CollectionOfDocumentsSerializer,
@@ -16,12 +17,14 @@ from data.serializers import (
     SimpleDocumentSerializer,
     SimpleQueryTemplateSerializer,
 )
-
-from system.controllers import SystemController
 from data.controllers.upload import UploadDocumentsController
-from engine.controllers.semantic_db import SemanticDBController
-from engine.controllers.relational_db import RelationalDBController
-from engine.controllers.search import DBSemanticSearchController
+
+
+from chat.core.errors import COLLECTION_NOT_FOUND
+
+from engine.controllers.search.semantic import DBSemanticSearchController
+from engine.controllers.database.semantic_db import SemanticDBController
+from engine.controllers.database.relational_db import RelationalDBController
 
 
 class NewCollection(APIView):
