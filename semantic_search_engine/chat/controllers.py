@@ -19,8 +19,8 @@ from chat.models import (
 from data.models import OrganisationUser, CollectionOfDocuments
 
 # from engine.models import UserQueryResponseAnswer
-from engine.controllers.search import SearchQueryController
-from engine.controllers.models import GenerativeModelController
+from engine.controllers.search.relational import SearchQueryController
+from engine.controllers.models_logic.generative import GenerativeModelController
 
 
 class ChatController:

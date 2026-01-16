@@ -3,6 +3,8 @@ from rest_framework.views import APIView
 from main.src.response import response_with_status
 from main.src.decorators import required_params_exists, get_default_language
 
+from system.core.decorators import get_organisation_user
+
 from chat.models import Chat, Message
 from chat.controllers import ChatController
 from chat.core.errors import (
@@ -12,8 +14,8 @@ from chat.core.errors import (
     CANNOT_ADD_MESSAGE_CHAT_RO,
 )
 from chat.serializer import ChatSerializer, MessageSerializer, MessageStateSerializer
-from system.core.decorators import get_organisation_user
-from engine.controllers.relational_db import RelationalDBController
+
+from engine.controllers.database.relational_db import RelationalDBController
 
 
 class NewChat(APIView):
