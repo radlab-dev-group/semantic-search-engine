@@ -32,7 +32,6 @@ from system.models import OrganisationUser
 
 from data.models import (
     Document,
-    DocumentPageText,
     CollectionOfDocuments,
     QueryTemplate,
 )
@@ -41,6 +40,7 @@ from data.controllers.template import QueryTemplateController
 
 from engine.models import UserQuery
 from engine.controllers.database.milvus import MilvusHandler
+from engine.controllers.search.relational import DBTextSearchController
 from engine.controllers.database.relational_db import RelationalDBController
 from engine.controllers.models_logic.embedders_rerankers import EmbeddingModelsConfig
 

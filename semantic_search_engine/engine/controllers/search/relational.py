@@ -1,9 +1,4 @@
-from system.models import OrganisationUser
-
 from data.models import CollectionOfDocuments, DocumentPageText, Document
-
-from engine.models import UserQuery, UserQueryResponse
-from engine.controllers.search.semantic import DBSemanticSearchController
 
 
 class DBTextSearchController:

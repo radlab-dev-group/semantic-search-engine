@@ -6,6 +6,7 @@ from django.db.models import QuerySet
 
 from chat.models import Chat
 from data.models import OrganisationUser, CollectionOfDocuments
+from chat.controllers.message import MessageLogicController
 
 
 class ChatLogicController:
@@ -83,3 +84,11 @@ class ChatLogicController:
             return Chat.objects.get(id=chat_id)
         except Chat.DoesNotExist:
             return None
+
+
+class ChatController(ChatLogicController, MessageLogicController):
+    def __init__(self, add_to_db: bool = True, new_chat_hash_length: int = 128):
+        ChatLogicController.__init__(
+            self, add_to_db=add_to_db, new_chat_hash_length=new_chat_hash_length
+        )
+        MessageLogicController.__init__(self, add_to_db=add_to_db)

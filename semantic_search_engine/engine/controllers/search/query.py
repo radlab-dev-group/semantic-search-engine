@@ -2,8 +2,8 @@ from system.models import OrganisationUser
 
 from data.models import CollectionOfDocuments
 
-from engine.controllers.search.semantic import DBSemanticSearchController
 from engine.models import UserQuery, UserQueryResponse
+from engine.controllers.search.semantic import DBSemanticSearchController
 
 
 class SearchQueryController:

@@ -6,7 +6,7 @@ from main.src.decorators import required_params_exists, get_default_language
 from system.core.decorators import get_organisation_user
 
 from chat.models import Chat, Message
-from chat.controllers import ChatController
+from chat.controllers.chat import ChatController
 from chat.core.errors import (
     COLLECTION_NOT_FOUND,
     CHAT_ID_NOT_FOUND,
