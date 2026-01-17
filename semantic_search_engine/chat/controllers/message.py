@@ -15,7 +15,7 @@ from data.models import OrganisationUser, CollectionOfDocuments
 from content_supervisor.supervisor import ContentSupervisor
 from content_supervisor.processors.regex_processors import URLRegexProcessor
 
-from engine.controllers.search.relational import SearchQueryController
+from engine.controllers.search.query import SearchQueryController
 from engine.controllers.models_logic.generative import GenerativeModelController
 
 
