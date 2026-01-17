@@ -25,7 +25,7 @@ fi
 
 if [[ "$INSTALLATION_MODE_NAME" == "semantic"  || "$INSTALLATION_MODE_NAME" == "all" ]]; then
   echo "📚 Preparing semantic database"
-  cp apps_sse/admin/prepare_semantic_db.py .
+  cp ../apps_sse/admin/prepare_semantic_db.py .
   python3 prepare_semantic_db.py
   rm -f prepare_semantic_db.py
 fi
