@@ -7,9 +7,9 @@ from main.src.response import response_with_status
 from main.src.decorators import required_params_exists, get_default_language
 
 from system.core.decorators import get_organisation_user
+from engine.controllers.search.query import SearchQueryController
 from engine.controllers.database.relational_db import RelationalDBController
 from engine.controllers.system_logic.system import EngineSystemController
-from engine.controllers.search.relational import SearchQueryController
 from engine.controllers.models_logic.generative import (
     GenerativeModelController,
     GenerativeModelControllerApi,
