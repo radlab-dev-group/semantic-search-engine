@@ -23,9 +23,16 @@
       "path": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
       "vector_size": 384,
       "device": "cuda:0"
+    },
+    {
+      "name": "google/embeddinggemma-300m",
+      "path": "/mnt/data2/llms/models/community/google/embeddinggemma-300m",
+      "vector_size": 768,
+      "device": "cuda:0"
     }
   ],
   "active_models": [
+    "google/embeddinggemma-300m",
     "radlab/article-bi-encoder-20240901",
     "ipipan/silver-retriever-base-v1.1",
     "radlab/polish-bi-encoder-mean",
