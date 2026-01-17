@@ -37,7 +37,7 @@ from data.models import (
     QueryTemplate,
 )
 from data.controllers.constants import NORMALIZE_EMBEDDINGS
-from data.controllers.query_templates import QueryTemplateController
+from data.controllers.template import QueryTemplateController
 
 from engine.models import UserQuery
 from engine.controllers.database.milvus import MilvusHandler

@@ -9,13 +9,15 @@ structures, plus controllers for denoising, uploading, relational DB interaction
 ```
 data/
 ├─ controllers/
-│   ├─ __init__.py
-│   ├─ constants.py               # Simple feature flags
-│   ├─ denoiser.py                # Text denoising using a T5‑based model
-│   ├─ query_templates.py         # Grammar & filtering for query templates
-│   ├─ relational_db.py           # CRUD + indexing helpers for the relational DB
-│   ├─ semantic_db.py             # Thin wrapper around Milvus for semantic indexing
-│   └─ upload.py                  # Handles file upload, extraction, and optional denoising
+│   ├─ common/
+│   │   └─ constants.py           # Simple feature flags
+│   ├─ denoising/
+│   │   └─ denoiser_logic.py      # Text denoising using a T5‑based model
+│   ├─ templates/
+│   │   └─ template_logic.py      # Grammar & filtering for query templates
+│   ├─ upload/
+│   │   └─ upload_logic.py        # Handles file upload, extraction, and optional denoising
+│   └─ __init__.py                # Facade for backward compatibility
 ├─ migrations/
 │   └─ __init__.py
 ├─ __init__.py
@@ -41,11 +43,11 @@ data/
 
 | Controller                                         | Role                                                                                                                                                                                                                                                                                             |
 |----------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **DenoiserController** (`denoiser.py`)             | Loads a T5‑based denoising model (cached) and provides `denoise_text()` for cleaning raw OCR output.                                                                                                                                                                                             |
+| **DenoiserController** (`denoiser_logic.py`)       | Loads a T5‑based denoising model (cached) and provides `denoise_text()` for cleaning raw OCR output.                                                                                                                                                                                             |
 | **RelationalDBController** (`relational_db.py`)    | - Retrieves user collections. <br> - Adds uploaded documents to the relational DB, handling page creation, optional denoising, and metadata extraction. <br> - Provides helper methods for fetching documents, pages, and categories.                                                            |
 | **SemanticDBController** (`semantic_db.py`)        | Thin wrapper around Milvus; prepares a collection, creates schemas, and offers a `collections()` helper.                                                                                                                                                                                         |
-| **UploadDocumentsController** (`upload.py`)        | Orchestrates the full upload‑index pipeline: <br>  1️⃣ Stores files in a structured directory (`<upload_dir>/<org>/<user>/<collection>/<timestamp>/`). <br>  2️⃣ Calls `RelationalDBController.add_uploaded_documents_to_db()`. <br>  3️⃣ Triggers semantic indexing via `SemanticDBController`. |
-| **QueryTemplateController** (`query_templates.py`) | Parses a JSON configuration of query templates, validates grammar, and filters documents based on template‑defined data‑connector constraints.                                                                                                                                                   |
+| **UploadDocumentsController** (`upload_logic.py`)  | Orchestrates the full upload‑index pipeline: <br>  1️⃣ Stores files in a structured directory (`<upload_dir>/<org>/<user>/<collection>/<timestamp>/`). <br>  2️⃣ Calls `RelationalDBController.add_uploaded_documents_to_db()`. <br>  3️⃣ Triggers semantic indexing via `SemanticDBController`. |
+| **QueryTemplateController** (`template_logic.py`) | Parses a JSON configuration of query templates, validates grammar, and filters documents based on template‑defined data‑connector constraints.                                                                                                                                                   |
 
 ### Public API (`api.py`)
 

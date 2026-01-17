@@ -5,9 +5,9 @@ import dateutil
 
 from django.db.models import QuerySet
 
-from data.models import Document
-
 from system.models import Organisation, OrganisationUser
+
+from data.models import Document
 from data.models import (
     CollectionOfQueryTemplates,
     QueryTemplateGrammar,
@@ -165,10 +165,6 @@ class QueryTemplateFilterer:
     ) -> bool:
         doc_metadata = document.metadata_json
         if doc_metadata is None or not len(doc_metadata):
-            # print("No metadata!")
-            # print("No metadata!")
-            # print("No metadata!")
-            # print("No metadata!")
             return False
 
         filter_opts = query_template.data_filter_expressions
@@ -176,25 +172,16 @@ class QueryTemplateFilterer:
         # When no filtering options into query template is defined
         # then each document should be accepted
         if filter_opts is None or not len(filter_opts):
-            # print("=" * 50)
-            # print("No filter opts!")
-            # print("No filter opts!")
-            # print("No filter opts!")
-            # print("No filter opts!")
-            # print("=" * 50)
             return True
 
         all_constraints_ok = False
         for var1, expr1 in filter_opts.items():
-            # print("use_document_in_sse, var1: ", var1)
             if doc_metadata.get(var1, None) is None:
-                # print("\t->skipped")
                 continue
 
             doc_values = []
             expressions = []
             if type(expr1) in [dict]:
-                # print(". - . - dict expression")
                 """
                 "data_filter_expressions": {
                     "date": {
@@ -204,42 +191,23 @@ class QueryTemplateFilterer:
                 },
                 """
                 for var2, val2 in expr1.items():
-                    # print("use_document_in_sse, var2: ", var2)
                     if type(val2) in [dict]:
                         raise Exception("Not supported expression with nested dict!")
                     if doc_metadata[var1].get(var2, None) is None:
-                        # print(f"NOT FOUND {var2} (with key {var1})")
                         continue
-                    # print(f"\t ok -> {var2} (with key {var1})")
                     expressions.append(val2)
                     doc_values.append(doc_metadata[var1][var2])
             else:
                 expressions.append(expr1)
                 doc_values.append(doc_metadata[var1])
 
-            # print("\\/" * 40)
-            # print("expressions=", expressions)
-            # print("doc_values=", doc_values)
-            # print("/\\" * 40)
-
             if not len(doc_values) or not len(expressions):
                 continue
 
-            # print("-=" * 50)
-            # print("type(expressions): ", type(expressions))
-            # print("len(expressions): ", len(expressions))
-            # print("expressions: ", expressions)
-            # print("type(doc_values): ", type(doc_values))
-            # print("len(doc_values): ", len(doc_values))
-            # print("doc_values: ", doc_values)
-            # print("-=" * 50)
-
             for expression, doc_value in zip(expressions, doc_values):
-                # print("applying expression: ", expression, "on data:", doc_value)
                 expression_to_eval = expression.replace(
                     VALUE_OF_DATA_EVAL_EXPRESSION, doc_value
                 )
-                # print("expression_to_eval=", expression_to_eval)
                 try:
                     accept_document = eval(expression_to_eval)
                 except Exception as e:
@@ -250,14 +218,6 @@ class QueryTemplateFilterer:
                     print("=" * 100)
                 if not accept_document:
                     return False
-
-                # print("= " * 50)
-                # print("query_template=", query_template.name)
-                # print("doc_value=", doc_value)
-                # print("expression=", expression)
-                # print("expression_to_eval=", expression_to_eval)
-                # print("accept_document (eval result)=", accept_document)
-                # print("= " * 50)
 
                 all_constraints_ok = True
         return all_constraints_ok
@@ -413,12 +373,9 @@ class QueryTemplateController:
             ):
                 f_docs.append(d)
 
-        # print("1. filter_documents")
-        # print("len(f_docs)", len(f_docs))
         if not len(f_docs):
             return []
 
-        # print("2. filter_documents")
         n_docs = []
         for d in f_docs:
             accept_doc = True
