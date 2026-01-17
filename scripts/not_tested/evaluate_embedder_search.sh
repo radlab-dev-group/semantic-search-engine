@@ -10,7 +10,7 @@ OUT_XLSX_FILE="eval_aia_${DATE_STR}.xlsx"
 
 # Python app -- evaluator
 APP_NAME=eavaluate_embedder_search.py
-APP_DIR=apps_sse/evaluator
+APP_DIR=../sse_apps/evaluator
 cp ${APP_DIR}/${APP_NAME} .
 
 # Run evaluator on each config

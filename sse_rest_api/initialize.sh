@@ -2,12 +2,6 @@
 
 INSTALLATION_MODE_NAME=${1}
 
-if [[ "$INSTALLATION_MODE_NAME" == "clear" ]]; then
-  echo "🔧 Clearing Django migration files..."
-  find . -type f -path "*/migrations/*.py" ! -name "__init__.py" -delete
-  find . -type f -path "*/migrations/*.pyc" -delete
-fi
-
 
 if [[ "$INSTALLATION_MODE_NAME" == "dep" || "$INSTALLATION_MODE_NAME" == "all" ]]; then
   echo "📦 Installing dependencies"
@@ -19,13 +13,12 @@ fi
 
 if [[ "$INSTALLATION_MODE_NAME" == "migrate"  || "$INSTALLATION_MODE_NAME" == "all" ]]; then
   echo "🚀 Running migrations..."
-  python3 manage.py makemigrations
   python3 manage.py migrate
 fi
 
 if [[ "$INSTALLATION_MODE_NAME" == "semantic"  || "$INSTALLATION_MODE_NAME" == "all" ]]; then
   echo "📚 Preparing semantic database"
-  cp ../apps_sse/admin/prepare_semantic_db.py .
+  cp ../sse_apps/admin/prepare_semantic_db.py .
   python3 prepare_semantic_db.py
   rm -f prepare_semantic_db.py
 fi

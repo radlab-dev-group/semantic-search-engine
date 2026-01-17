@@ -3,10 +3,10 @@
 if [ "${1}" == "sample" ]
 then
   SLEEP_TIME=3
-  DATA_DIR=/mnt/data/radlab-projekty/EGO-GPT4-20230425/data/etap1/I_tura___do_16.06/07_NEW/Łódzkie
+  DATA_DIR=/....
 else
   SLEEP_TIME=7
-  DATA_DIR=/mnt/data/radlab-projekty/EGO-GPT4-20230425/data/etap1/I_tura___do_16.06
+  DATA_DIR=/....
 fi
 
 echo ""
@@ -15,7 +15,7 @@ echo "Press CTR+C to abort indexing..."
 echo ""
 sleep ${SLEEP_TIME}
 
-cp apps_sse/add_files_from_dir.py .
+cp ../sse_apps/add_files_from_dir.py .
 
 python3 add_files_from_dir.py \
 	-d ${DATA_DIR} \
