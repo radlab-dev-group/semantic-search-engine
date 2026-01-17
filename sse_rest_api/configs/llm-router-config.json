@@ -1,6 +1,0 @@
-{
-  "api_host": "http://192.168.100.65:8080",
-  "fetch_embeddings": true,
-  "fetch_llms": true,
-  "timeout": 30
-}

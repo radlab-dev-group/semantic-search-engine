@@ -1,7 +1,0 @@
-{
-  "denoiser": {
-    "model_name": "radlab/polish-denoiser-t5-base",
-    "model_path": "/mnt/data2/llms/models/radlab-open/denoiser/radlab-denoiser-plt5-base-v2",
-    "device": "cuda:0"
-  }
-}
