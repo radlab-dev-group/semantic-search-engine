@@ -7,7 +7,7 @@ django.setup()
 
 from system.controllers import SystemController
 from authorization.utils.config import RdlAuthConfig
-from data.controllers.query_templates import QueryTemplatesLoaderController
+from data.controllers.templates.template_logic import QueryTemplatesLoaderController
 
 
 def prepare_parser(desc=""):
