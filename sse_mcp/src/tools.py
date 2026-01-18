@@ -16,9 +16,9 @@ def _normalize_response(payload: Any) -> Dict[str, Any]:
 
 @mcp.tool()
 def semantic_search(
-    query: str,
-    top_k: int = 5,
-    filters: Optional[Dict[str, Any]] = None,
+    # query: str,
+    # top_k: int = 5,
+    # filters: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Wyszukiwarka semantyczna z dokumentacją framework Medusa.
@@ -26,6 +26,40 @@ def semantic_search(
      - klient chce w bazie wiedzy wyszukać informacje
      - chce dowiedzieć jak zakodować coś zgodnie z dokumentacją
     """
+
+    return {
+        "results": [
+            {
+                "id": "doc:kb:12345",
+                "score": 0.9321,
+                "title": "Jak skonfigurować logowanie SSO",
+                "snippet": "Aby włączyć SSO, przejdź do Ustawienia → Bezpieczeństwo → SSO i wklej metadane IdP...",
+                "url": "https://docs.example.com/kb/sso-setup",
+                "metadata": {
+                    "source": "knowledge_base",
+                    "lang": "pl",
+                    "product": "core-app",
+                    "tags": ["sso", "security", "configuration"],
+                    "created_at": "2025-01-10T12:00:00Z",
+                    "updated_at": "2025-12-03T09:30:00Z",
+                },
+            },
+            {
+                "id": "doc:faq:778",
+                "score": 0.8476,
+                "title": "Reset hasła użytkownika",
+                "snippet": "Reset hasła wykonasz z poziomu panelu administratora w sekcji Użytkownicy → Akcje → Resetuj hasło...",
+                "url": "https://docs.example.com/faq/password-reset",
+                "metadata": {
+                    "source": "faq",
+                    "lang": "pl",
+                    "product": "admin-panel",
+                    "tags": ["password", "account"],
+                    "audience": "admin",
+                },
+            },
+        ]
+    }
 
     if not query or not query.strip():
         return {"error": "query is empty"}
