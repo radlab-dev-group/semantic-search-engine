@@ -1,3 +1,23 @@
+"""
+Utility module that defines the grammar, loading, and filtering logic for
+*query‑template* objects used throughout the system.
+
+Key responsibilities:
+* **QueryTemplatesSearchGrammar** – static description of supported actions,
+  types and how they map to JSON fields.
+* **QueryTemplateFilterer** – evaluates a document against a template’s
+  ``data_filter_expressions``.
+* **QueryTemplateConfigReader** – reads a JSON configuration file that
+  describes a collection of templates.
+* **QueryTemplatesLoaderController** – creates/updates the DB objects
+  (collections, grammars, templates) based on the configuration.
+* **QueryTemplateController** – high‑level façade that prepares templates for a
+  user and filters documents using the grammar and filterer.
+
+All classes are deliberately thin; heavy lifting is delegated to the
+individual helper methods.
+"""
+
 import os
 import json
 import datetime
@@ -17,23 +37,50 @@ from data.controllers.constants import VALUE_OF_DATA_EVAL_EXPRESSION
 
 
 class QueryTemplatesSearchGrammar:
+    """
+    Static description of the search‑grammar used for query templates.
+
+    The grammar defines:
+    * **Actions** – operations that can be performed on a document
+      (e.g. ``show_whole`` or ``end_date_older_than_today``).
+    * **Types** – high‑level document categories (event, address, other).
+    * **JsonFields** – keys used in a template JSON (``search`` and
+      ``presentation``).
+    * **MetadataFields** – keys expected inside a document’s
+      ``metadata_json`` (date and type).
+
+    The class also provides lookup tables that map *type* → *allowed actions*
+    per JSON field.
+    """
+
     class Actions:
+        """Supported actions for a document."""
+
         SHOW_WHOLE = "show_whole"
         END_DATE_OLDER_THAN_TODAY = "end_date_older_than_today"
 
     class Types:
+        """High‑level categories a document may belong to."""
+
         EVENT = "event"
         ADDRESS = "address"
         OTHER = "other"
 
     class JsonFields:
+        """Top‑level keys inside a template definition."""
+
         SEARCH = "search"
         PRESENTATION = "presentation"
 
     class MetadataFields:
+        """Keys expected inside ``Document.metadata_json``."""
+
         document_date = "date"
         document_type = "type"
 
+    # ------------------------------------------------------------------
+    # Lookup tables (kept as class attributes for fast access)
+    # ------------------------------------------------------------------
     ALL_POSSIBLE_TYPE_ACTIONS = [
         Actions.END_DATE_OLDER_THAN_TODAY,
         Actions.SHOW_WHOLE,
@@ -59,12 +106,33 @@ class QueryTemplatesSearchGrammar:
     }
 
     class GrammarFunctions:
+        """
+        Helper that knows how to evaluate a concrete ``action``
+        on a :class:`~data.models.Document`.
+        """
+
         def __init__(self):
+            # Map public action names to private evaluator methods.
             self._actions_mapping = {
                 QueryTemplatesSearchGrammar.Actions.END_DATE_OLDER_THAN_TODAY: self.__end_date_is_older_than_today
             }
 
         def accept_document(self, action: str, document: Document) -> bool:
+            """
+            Return ``True`` if *document* satisfies the given *action*.
+
+            Parameters
+            ----------
+            action: str
+                One of the values defined in :class:`QueryTemplatesSearchGrammar.Actions`.
+            document: Document
+                The document to evaluate.
+
+            Raises
+            ------
+            Exception
+                If *action* is not a valid *search*‑type action.
+            """
             assert action in self._actions_mapping
             if (
                 action
@@ -75,6 +143,15 @@ class QueryTemplatesSearchGrammar:
             return self._actions_mapping[action](document)
 
         def __end_date_is_older_than_today(self, d: Document) -> bool:
+            """
+            Check whether the document’s ``metadata_json.date.end`` is older
+            than (or equal to) today’s date.
+
+            Returns
+            -------
+            bool
+                ``True`` if the end‑date is today or later, ``False`` otherwise.
+            """
             metadata = d.metadata_json
             if metadata is None or not len(metadata):
                 return False
@@ -100,15 +177,22 @@ class QueryTemplatesSearchGrammar:
 
         @staticmethod
         def __datetime_from_str(date_str: str) -> datetime:
+            """
+            Parse a ``YYYY‑MM‑DD`` string into a :class:`datetime.datetime`.
+            """
             return datetime.datetime.strptime(date_str, "%Y-%m-%d")
 
     def __init__(self, use_metadata: bool = True):
         """
-        Set all params with default values.
+        Create a grammar helper.
 
-        :param use_metadata: Document info is stored in json metadata:
-         - type of document: `metadata_json.type`
-         - date: `metadata_json.date` and is split to: <date.begin, date.end>.
+        Parameters
+        ----------
+        use_metadata: bool, default ``True``
+            When ``True`` the helper expects document information to be stored
+            inside ``Document.metadata_json`` (type and date fields). The
+            current implementation only works with metadata, hence the
+            assertion below.
         """
         self.use_metadata_when_templating = use_metadata
         self._gf = self.GrammarFunctions()
@@ -121,10 +205,26 @@ class QueryTemplatesSearchGrammar:
         self, document: Document, skip_if_any_problem: bool = True
     ) -> bool:
         """
-        Main function o check if document have to be accepted to use in search engine
-        :param document: Document to check
-        :param skip_if_any_problem: Skip document if any problem, don't raise exception.
-        :return: True if document has to be accepted, otherwise False.
+        Determine whether *document* should be indexed by the search engine.
+
+        The method looks up the document’s type, fetches the allowed actions for
+        that type (only ``SEARCH`` actions are considered), and evaluates each
+        action via :class:`GrammarFunctions`.
+
+        Parameters
+        ----------
+        document: Document
+            Document to evaluate.
+        skip_if_any_problem: bool, default ``True``
+            If ``True`` any exception raised by an action is ignored and the
+            document is simply rejected; if ``False`` the original exception is
+            propagated.
+
+        Returns
+        -------
+        bool
+            ``True`` if the document passes **all** applicable actions,
+            otherwise ``False``.
         """
         document_type = self.__get_document_type(document)
         if not skip_if_any_problem:
@@ -144,9 +244,20 @@ class QueryTemplatesSearchGrammar:
         return True
 
     def get_document_or_chunk(self):
+        """
+        Placeholder for future implementation that will return either a full
+        document or a chunked representation.
+        """
         pass
 
     def __get_document_type(self, document: Document) -> str | None:
+        """
+        Extract the document type from its metadata.
+
+        Returns ``None`` if the type field is missing. Raises an exception if
+        ``use_metadata_when_templating`` is ``False`` because the current
+        implementation relies exclusively on metadata.
+        """
         if self.use_metadata_when_templating:
             return document.metadata_json.get(
                 QueryTemplatesSearchGrammar.MetadataFields.document_type, None
@@ -156,6 +267,16 @@ class QueryTemplatesSearchGrammar:
 
 
 class QueryTemplateFilterer:
+    """
+    Evaluates a :class:`~data.models.Document` against a
+    :class:`~data.models.QueryTemplate`'s ``data_filter_expressions``.
+
+    The filter expressions are stored as strings that may reference a special
+    placeholder (``VALUE_OF_DATA_EVAL_EXPRESSION``).  Each expression is
+    ``eval``‑ed in a safe context; if any expression evaluates to ``False`` the
+    document is rejected.
+    """
+
     def __init__(self):
         pass
 
@@ -163,6 +284,26 @@ class QueryTemplateFilterer:
     def use_document_in_sse(
         query_template: QueryTemplate, document: Document
     ) -> bool:
+        """
+        Return ``True`` if *document* satisfies *query_template* filters.
+
+        The method walks through ``query_template.data_filter_expressions``,
+        substitutes the placeholder with the actual document value,
+        and evaluates the resulting Python expression.
+
+        Parameters
+        ----------
+        query_template: QueryTemplate
+            Template that defines the filter expressions.
+        document: Document
+            Document to be checked.
+
+        Returns
+        -------
+        bool
+            ``True`` when all applicable expressions evaluate to ``True``;
+            ``False`` otherwise.
+        """
         doc_metadata = document.metadata_json
         if doc_metadata is None or not len(doc_metadata):
             return False
@@ -224,7 +365,25 @@ class QueryTemplateFilterer:
 
 
 class QueryTemplateConfigReader:
+    """
+    Read and validate the JSON configuration that defines a collection of
+    query‑template objects.
+
+    The configuration file must contain:
+    * ``template_name`` – a human readable identifier.
+    * ``query_templates`` – a list of template specifications.
+    * ``templates_grammar`` – token/alphabet definitions used by the grammar.
+    """
+
     def __init__(self, config_path: str = "configs/query-templates.json"):
+        """
+        Create a reader and immediately load the configuration.
+
+        Parameters
+        ----------
+        config_path: str, default ``"configs/query-templates.json"``
+            Path to the JSON file that holds the template definition.
+        """
         self.config_path = config_path
 
         self._whole_config = None
@@ -235,6 +394,9 @@ class QueryTemplateConfigReader:
         self.__load()
 
     def __load(self):
+        """
+        Load the JSON file and expose its top‑level keys as attributes.
+        """
         with open(self.config_path, "r") as f:
             self._whole_config = json.load(f)
 
@@ -248,10 +410,30 @@ class QueryTemplateConfigReader:
 
 
 class QueryTemplatesLoaderController:
+    """
+    Controller that creates/updates the database objects representing a
+    collection of query templates based on a configuration file.
+
+    It works with the following Django models:
+        * :class:`CollectionOfQueryTemplates`
+        * :class:`QueryTemplateGrammar`
+        * :class:`QueryTemplate`
+    """
+
     def __init__(self, config_path: str = "configs/query-templates.json"):
+        """
+        Instantiate the controller and read the configuration.
+        """
         self.config_reader = QueryTemplateConfigReader(config_path)
 
     def add_templates_to_organisation(self, organisation: Organisation):
+        """
+        Create the collection (if needed) and attach all templates
+        to the given organization.
+
+        Returns the created :class:`CollectionOfQueryTemplates` instance or
+        ``None`` if the configuration is invalid.
+        """
         print("Adding template collection", self.config_reader.template_name)
         return self.__get_add_collection_of_templates_to_organisation(
             organisation=organisation
@@ -260,6 +442,11 @@ class QueryTemplatesLoaderController:
     def __get_add_collection_of_templates_to_organisation(
         self, organisation: Organisation
     ) -> CollectionOfQueryTemplates or None:
+        """
+        Internal helper that performs the actual DB operations.
+
+        Returns ``None`` when the ``template_name`` is empty or malformed.
+        """
         if (
             self.config_reader.template_name is None
             or not len(self.config_reader.template_name.strip())
@@ -317,6 +504,10 @@ class QueryTemplatesLoaderController:
 
     @staticmethod
     def __read_file_if_exists(file_path: str or None):
+        """
+        Return the file contents if *file_path* points to an existing
+        readable file; otherwise return ``None``.
+        """
         if file_path is None or not len(file_path):
             return None
 
@@ -329,7 +520,19 @@ class QueryTemplatesLoaderController:
 
 
 class QueryTemplateController:
+    """
+    High‑level façade used by the application layer.
+
+    It combines the grammar logic (``QueryTemplatesSearchGrammar``) and the
+    filterer (``QueryTemplateFilterer``) to:
+    * Prepare a list of templates that a user is allowed to see.
+    * Filter a set of documents according to a list of selected templates.
+    """
+
     def __init__(self):
+        """
+        Instantiate the internal helpers.
+        """
         self._template_grammar = QueryTemplatesSearchGrammar()
         self._template_filterer = QueryTemplateFilterer()
 
@@ -339,6 +542,26 @@ class QueryTemplateController:
         templates: list,
         return_only_data_connector: bool = False,
     ) -> list[QueryTemplate | dict]:
+        """
+        Return a list of template objects (or their ``data_connector`` values)
+        that belong to *organisation_user*.
+
+        Parameters
+        ----------
+        organisation_user: OrganisationUser
+            The user whose Organization owns the templates.
+        templates: list
+            Iterable of template IDs or a single ID.
+        return_only_data_connector: bool, default ``False``
+            When ``True`` only the ``data_connector`` field of each template is
+            returned; otherwise the full :class:`QueryTemplate` instance is
+            returned.
+
+        Returns
+        -------
+        list[QueryTemplate | dict]
+            Empty list if ``templates`` is ``None``/empty.
+        """
         if templates is None:
             return []
 
@@ -366,6 +589,19 @@ class QueryTemplateController:
         documents: list[Document] | QuerySet[Document],
         query_templates: list[QueryTemplate],
     ) -> list[Document]:
+        """
+        Filter *documents* so that only those accepted by **all**
+        ``query_templates`` remain.
+
+        The method first applies the grammar’s ``use_document_in_sse`` check
+        (e.g., date‑related actions) and then runs the more granular
+        ``QueryTemplateFilterer`` logic.
+
+        Returns
+        -------
+        list[Document]
+            Possibly empty list of documents that satisfy every template.
+        """
         f_docs = []
         for d in documents:
             if self._template_grammar.use_document_in_sse(
@@ -391,6 +627,13 @@ class QueryTemplateController:
 
     @staticmethod
     def get_template_by_id(user: OrganisationUser, template_id):
+        """
+        Retrieve a :class:`QueryTemplate` by its primary key, ensuring that it
+        belongs to the same organisation as *user*.
+
+        Returns ``None`` if the template does not exist, belongs to another
+        organisation, or ``template_id`` is malformed.
+        """
         try:
             query_templ = QueryTemplate.objects.get(id=template_id)
             if (
