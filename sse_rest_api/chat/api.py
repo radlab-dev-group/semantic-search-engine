@@ -1,3 +1,17 @@
+"""
+Top‑level module providing API endpoints for chat operations.
+
+This module defines several Django REST Framework ``APIView`` subclasses that
+handle creating chats, adding user messages, retrieving saved chats, and
+listing a user's chats.  The views delegate business logic to a ``ChatController``
+and rely on custom decorators for request validation, organisation resolution,
+and language selection.
+
+All responses are wrapped with ``response_with_status`` to provide a uniform
+JSON payload that includes a status flag, optional error information and the
+actual response body.
+"""
+
 from rest_framework.views import APIView
 
 from main.src.response import response_with_status
@@ -19,6 +33,18 @@ from engine.controllers.database.relational_db import RelationalDBController
 
 
 class NewChat(APIView):
+    """
+    Create a new chat session.
+
+    The endpoint expects optional ``options``, a ``collection_name`` and
+    ``search_options`` in the request body.  If a collection name is supplied
+    the corresponding collection is fetched from the relational database; a
+    missing collection results in an error response.
+
+    The view returns a JSON response containing the serialized newly created
+    ``Chat`` object.
+    """
+
     required_params = []
     optional_params = ["options", "collection_name", "search_options"]
 
@@ -69,6 +95,18 @@ class NewChat(APIView):
 
 
 class AddUserMessageToChatWithSystemResponse(APIView):
+    """
+    Add a user message to an existing chat and generate a system response.
+
+    This view performs several steps:
+    1. Validates required and optional parameters.
+    2. Retrieves the target ``Chat`` and checks ownership/read‑only status.
+    3. Optionally resolves a collection for Retrieval‑Augmented Generation (RAG).
+    4. Persists the user message via ``ChatController.add_user_message``.
+    5. Generates an assistant reply using ``ChatController.generate_assistant_message_cs_rag``.
+    6. Returns the generated message, timing information, and updated history.
+    """
+
     LAST_QUESTIONS_TO_QUERY = 4
     chat_controller = ChatController(add_to_db=True)
 
@@ -81,6 +119,29 @@ class AddUserMessageToChatWithSystemResponse(APIView):
     @get_organisation_user
     @get_default_language
     def post(self, language, organisation_user, request):
+        """Process a user message and return the assistant's reply.
+
+        The request payload must contain:
+
+        - ``chat_id`` (int): Identifier of the target chat.
+        - ``user_message`` (str): The message sent by the user.
+        - ``options`` (dict): Generation options for the language model.
+        - ``collection_name`` (optional, str): Name of the collection used for
+          RAG.
+        - ``search_options`` (optional, dict): Parameters controlling the
+          vector‑store search.
+        - ``system_prompt`` (optional, str): Custom system prompt that, if
+          provided, overrides the default prompt.
+
+        The method validates ownership, read‑only status and collection
+        existence, then delegates to ``ChatController`` for the heavy lifting.
+        It finally returns a JSON payload with:
+
+        * ``generation_time`` – time taken by the model,
+        * ``history`` – serialized list of all messages in the chat,
+        * ``last_state`` – optional serialized ``MessageState``,
+        * ``generated_assistant_message`` – the new assistant reply.
+        """
         """
         {
             "chat_id": pk,
@@ -203,6 +264,16 @@ class AddUserMessageToChatWithSystemResponse(APIView):
 
 
 class SetChatStateAsSaved(APIView):
+    """
+    Mark a chat as saved (read‑only) or make it editable again.
+
+    The endpoint expects ``chat_id`` and a boolean ``read_only`` flag.  It
+    validates that the requesting user owns the chat and then updates the
+    ``read_only`` attribute via ``ChatController.set_chat_as_saved``.  The
+    response contains the new ``chat_hash`` that can be used to retrieve the
+    saved chat later.
+    """
+
     required_params = ["chat_id", "read_only"]
 
     chat_controller = ChatController(add_to_db=True)
@@ -235,6 +306,14 @@ class SetChatStateAsSaved(APIView):
 
 
 class GetSavedChatByHash(APIView):
+    """
+    Retrieve a previously saved (read‑only) chat using its hash.
+
+    The view only returns chats that have been marked as saved.  If the chat
+    does not exist, an empty history is returned.  Ownership is verified to
+    prevent leaking another organisation's data.
+    """
+
     required_params = ["chat_hash"]
 
     chat_controller = ChatController(add_to_db=True)
@@ -269,6 +348,25 @@ class GetSavedChatByHash(APIView):
 
     @staticmethod
     def prepare_response_body(chat: Chat, chat_messages: list[Message]):
+        """
+        Create a consistent response dictionary for a chat.
+
+        Parameters
+        ----------
+        chat : Chat | None
+            The ``Chat`` instance, or ``None`` if not found.
+        chat_messages : list[Message]
+            List of ``Message`` objects belonging to the chat.
+
+        Returns
+        -------
+        dict
+            Mapping with keys:
+
+            * ``chat_id`` – primary key of the chat or ``None``,
+            * ``is_read_only`` – ``chat.read_only`` flag or ``None``,
+            * ``chat_history`` – serialized list of messages.
+        """
         return {
             "chat_id": chat.pk if chat is not None else None,
             "is_read_only": chat.read_only if chat else None,
@@ -277,6 +375,14 @@ class GetSavedChatByHash(APIView):
 
 
 class ListOfUserChats(APIView):
+    """
+    Return a list of all chats belonging to the authenticated user.
+
+    Each entry in the returned ``history`` list mirrors the structure produced
+    by :meth:`GetSavedChatByHash.prepare_response_body`, i.e. it contains the
+    chat identifier, its read‑only status and the full message history.
+    """
+
     chat_controller = ChatController(add_to_db=True)
 
     @get_organisation_user
