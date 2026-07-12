@@ -17,3 +17,5 @@ exclude = '''
 
 [tool.bandit]
 skips = ["B101", "B110", "B112"]
+
+# TODO: Add radlab-data deps!
