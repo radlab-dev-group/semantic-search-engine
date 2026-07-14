@@ -532,12 +532,13 @@ class MilvusHandler:
             )
 
     def __add_index_to_collection(self):
-        index_params = self._milvus_client.prepare_index_params()
+        index_params = self._milvus_client.prepare_index_params(
+            field_name=self.DB_FIELD_EMBEDDING
+        )
         index_params.add_index(
             index_type="IVF_FLAT",
             metric_type="L2",
             params={"nlist": 1024},
-            field_name=self.DB_FIELD_EMBEDDING,
             index_name="emb_idx",
         )
 
@@ -561,9 +562,7 @@ class MilvusHandler:
         """
         self.__prepare_milvus_client()
         self.__prepare_collection_schema()
-        if not self._milvus_client.has_collection(
-            collection_name=self._collection_name
-        ):
+        if self._collection_name not in self._milvus_client.list_collections():
             if self.embedding_size is None:
                 raise Exception("Collection embedding size must be set")
             self.__add_milvus_collection(load_collection=True)
