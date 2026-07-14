@@ -51,6 +51,6 @@ urlpatterns = [
     path(
         prepare_api_url("filter_options"),
         ListFilteringOptions.as_view(),
-        name="question_templates",
+        name="filter_options",
     ),
 ]

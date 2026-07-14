@@ -81,8 +81,6 @@ class GenerativeAnswerForQuestion(APIView):
     required_params = ["query_response_id", "query_options"]
     optional_params = ["system_prompt"]
 
-    gen_model_controller = GenerativeModelController(store_to_db=True)
-
     @required_params_exists(required_params=required_params)
     @get_organisation_user
     @get_default_language
@@ -104,7 +102,8 @@ class GenerativeAnswerForQuestion(APIView):
 
         # TODO: trzeba sprawdzić czy organisation_user
         # może odczytać wyniki z query_response_id
-        query_response = self.gen_model_controller.generative_answer_for_response(
+        gen_model_controller = GenerativeModelController(store_to_db=True)
+        query_response = gen_model_controller.generative_answer_for_response(
             user_response=user_response,
             query_instruction=query_instruction,
             query_options=query_options,
@@ -133,50 +132,42 @@ class GenerativeAnswerForQuestion(APIView):
 
 
 class ListGenerativeModels(APIView):
-    gam_controller = GenerativeModelControllerApi(deepl_api_key="")
-
     @get_default_language
     def get(self, language, request):
-
+        gam_controller = GenerativeModelControllerApi(deepl_api_key="")
         return response_with_status(
             status=True,
             language=language,
             error_name=None,
-            response_body=self.gam_controller.models_config.active_local_models_hosts,
+            response_body=gam_controller.models_config.active_local_models_hosts,
         )
 
 
 class ListEmbeddersModels(APIView):
-    e_cfg = EmbeddingModelsConfig()
-
     @get_default_language
     def get(self, language, request):
         return response_with_status(
             status=True,
             language=language,
             error_name=None,
-            response_body={"models": self.e_cfg.embedders()},
+            response_body={"models": EmbeddingModelsConfig.embedders()},
         )
 
 
 class ListRerankersModels(APIView):
-    e_cfg = EmbeddingModelsConfig()
-
     @get_default_language
     def get(self, language, request):
         return response_with_status(
             status=True,
             language=language,
             error_name=None,
-            response_body={"models": self.e_cfg.rerankers()},
+            response_body={"models": EmbeddingModelsConfig.rerankers()},
         )
 
 
 class SetRateForQueryResponseAnswer(APIView):
     required_params = ["answer_response_id", "rate_value", "rate_value_max"]
     optional_params = ["rate_comment"]
-
-    engine_controller = EngineSystemController(store_to_db=True)
 
     @required_params_exists(
         required_params=required_params, optional_params=optional_params
@@ -195,7 +186,8 @@ class SetRateForQueryResponseAnswer(APIView):
             )
         )
 
-        self.engine_controller.set_rating(
+        engine_controller = EngineSystemController(store_to_db=True)
+        engine_controller.set_rating(
             query_response_answer,
             rating_value=rate_value,
             rating_value_max=rate_value_max,

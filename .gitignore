@@ -205,4 +205,15 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
-/semantic_search_engine/authorization/tests/token.txt
+
+# Django config files (may contain secrets)
+sse_rest_api/configs/django-config.json
+sse_rest_api/configs/auth-config.json
+sse_rest_api/configs/milvus_config.json
+sse_rest_api/configs/generative-models.json
+sse_rest_api/configs/models.json
+sse_rest_api/configs/embedders.json
+sse_rest_api/configs/rerankers.json
+sse_rest_api/configs/query-templates.json
+sse_rest_api/configs/user-group-organisation.json
+sse_rest_api/configs/secret-key.txt

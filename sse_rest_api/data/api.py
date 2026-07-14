@@ -26,6 +26,8 @@ from engine.controllers.search.semantic import DBSemanticSearchController
 from engine.controllers.database.semantic_db import SemanticDBController
 from engine.controllers.database.relational_db import RelationalDBController
 
+from data.models import Document, CollectionOfDocuments
+
 
 class NewCollection(APIView):
     required_params = [
@@ -37,11 +39,6 @@ class NewCollection(APIView):
         "embedder_index_type",
     ]
     optional_params = ["group_name"]
-
-    text_data_db_controller = RelationalDBController()
-    semantic_db_controller = SemanticDBController(
-        milvus_config_path="configs/milvus_config.json", prepare_db=False
-    )
 
     @required_params_exists(
         required_params=required_params, optional_params=optional_params
@@ -72,7 +69,11 @@ class NewCollection(APIView):
                     error_name=GROUP_NAME_NOT_EXIST,
                 )
 
-        collection = self.text_data_db_controller.get_add_collection(
+        text_data_db_controller = RelationalDBController()
+        semantic_db_controller = SemanticDBController(
+            milvus_config_path="configs/milvus_config.json", prepare_db=False
+        )
+        collection = text_data_db_controller.get_add_collection(
             collection_name=collection_name,
             created_by=organisation_user,
             collection_display_name=request.data.get("collection_display_name"),
@@ -85,7 +86,7 @@ class NewCollection(APIView):
             add_to_group=org_group,
         )
 
-        self.semantic_db_controller.get_add_collection(
+        semantic_db_controller.get_add_collection(
             collection_name=collection_name,
             collection_description=request.data.get("collection_description"),
             model_embedder=request.data.get("model_embedder"),
@@ -100,21 +101,21 @@ class NewCollection(APIView):
 
 
 class ListCollections(APIView):
-    db_controller = RelationalDBController()
-    semantic_db_controller = SemanticDBController(
-        milvus_config_path="configs/milvus_config.json", prepare_db=False
-    )
 
     @get_organisation_user
     @get_default_language
     def get(self, language, organisation_user, request, *args, **kwargs):
-        sem_collections = self.semantic_db_controller.collections()
+        db_controller = RelationalDBController()
+        semantic_db_controller = SemanticDBController(
+            milvus_config_path="configs/milvus_config.json", prepare_db=False
+        )
+        sem_collections = semantic_db_controller.collections()
         # User collections
-        user_collections = self.db_controller.get_user_collections(
+        user_collections = db_controller.get_user_collections(
             organisation_user, semantic_collections=sem_collections
         )
         # User Organisation collections
-        org_collections = self.db_controller.get_user_organisation_collections(
+        org_collections = db_controller.get_user_organisation_collections(
             organisation_user, semantic_collections=sem_collections
         )
 
@@ -152,8 +153,6 @@ class ListCollections(APIView):
 class UploadAndIndexFilesToCollection(APIView):
     required_params = ["files[]", "collection_name", "indexing_options"]
 
-    upl_controller = UploadDocumentsController(upload_dir="./upload_sse")
-
     @required_params_exists(required_params=required_params)
     @get_organisation_user
     @get_default_language
@@ -161,6 +160,8 @@ class UploadAndIndexFilesToCollection(APIView):
         files = request.FILES.getlist("files[]")
         collection_name = request.data.get("collection_name")
         indexing_options = json.loads(request.data.get("indexing_options"))
+
+        upl_controller = UploadDocumentsController(upload_dir="./upload_sse")
 
         collection = RelationalDBController.get_collection(
             collection_name=collection_name, created_by=organisation_user
@@ -173,7 +174,7 @@ class UploadAndIndexFilesToCollection(APIView):
                 response_body=None,
             )
 
-        upl_doc = self.upl_controller.store_and_index_files_rel_db_post_request(
+        upl_doc = upl_controller.store_and_index_files_rel_db_post_request(
             organisation_user=organisation_user,
             files=files,
             collection=collection,
@@ -348,32 +349,22 @@ class ListFilteringOptions(APIView):
             organisation=organisation_user.organisation
         )
 
-        mock_urls = [
-            {"id": 0, "url": "https://cam.waw.pl", "description": "Strona CAM"},
-            {
-                "id": 1,
-                "url": "https://waw4free.pl",
-                "description": "Strona waw4free",
-            },
-        ]
-
-        mock_categories = [
-            {
-                "id": 0,
-                "name": "Sport",
-                "description": "Wydarzenia z kategorii sport",
-            },
-            {
-                "id": 1,
-                "name": "Kultura",
-                "description": "Wydarzenia z kategorii kultura",
-            },
-            {
-                "id": 2,
-                "name": "Edukacja",
-                "description": "Wydarzenia z kategorii edukacja",
-            },
-        ]
+        # URLs are not modelled in this system yet — use empty list.
+        # Categories come from visible documents (use_in_search=True).
+        collections = CollectionOfDocuments.objects.filter(
+            created_by=organisation_user
+        ) | CollectionOfDocuments.objects.filter(
+            visible_to_groups__organisation=organisation_user.organisation
+        )
+        categories = list(
+            Document.objects.filter(
+                collection__in=collections,
+                use_in_search=True,
+                category__isnull=False,
+            )
+            .values_list("category", flat=True)
+            .distinct()
+        )
 
         templates = ListQuestionTemplates.prepare_ep_out(
             query_templates=org_templates
@@ -385,7 +376,7 @@ class ListFilteringOptions(APIView):
             error_name=None,
             response_body={
                 "templates": templates,
-                "urls": mock_urls,
-                "categories": mock_categories,
+                "urls": [],
+                "categories": categories,
             },
         )

@@ -35,7 +35,7 @@
     "ENGINE": "django.db.backends.postgresql",
     "NAME": "sse_backend",
     "USER": "admin",
-    "PASSWORD": "SuperSecretPassword123",
+    "PASSWORD": "",
     "HOST": "192.168.100.67",
     "PORT": "5457"
   },
