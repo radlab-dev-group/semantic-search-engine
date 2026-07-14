@@ -23,6 +23,15 @@ import json
 ALL_AVAILABLE_EMBEDDERS_MODELS = {}
 ALL_AVAILABLE_RERANKERS_MODELS = {}
 
+_config_instance = None
+
+
+def _ensure_config_loaded():
+    """Lazily load embedder/reranker configs on first access."""
+    global _config_instance
+    if _config_instance is None:
+        _config_instance = EmbeddingModelsConfig()
+
 
 class EmbeddingModelsConfig:
     """
@@ -158,26 +167,12 @@ class EmbeddingModelsConfig:
 
     @staticmethod
     def embedders():
-        """
-        List the names of all currently loaded embedder models.
-
-        Returns
-        -------
-        list[str]
-            Keys of ``ALL_AVAILABLE_EMBEDDERS_MODELS``.
-        """
+        _ensure_config_loaded()
         return list(ALL_AVAILABLE_EMBEDDERS_MODELS.keys())
 
     @staticmethod
     def rerankers():
-        """
-        List the names of all currently loaded reranker models.
-
-        Returns
-        -------
-        list[str]
-            Keys of ``ALL_AVAILABLE_RERANKERS_MODELS``.
-        """
+        _ensure_config_loaded()
         return list(ALL_AVAILABLE_RERANKERS_MODELS.keys())
 
     def _load_embedders_cfg(self):
