@@ -20,7 +20,7 @@ class DBTextSearchController:
     ) -> list:
         """
         Retrieve ``DocumentPageText`` objects for the given IDs and attach
-        their scores.
+        their scores, efficiently fetching surrounding context in batches.
 
         Parameters
         ----------
@@ -34,18 +34,97 @@ class DBTextSearchController:
         Returns
         -------
         list
-            List of dictionaries produced by ``_prepare_document_page``.
+            List of dictionaries containing the main text and its context.
         """
-        document_pages = DocumentPageText.objects.filter(id__in=texts_ids)
-        doc_results = []
-        for idx, doc_page in enumerate(document_pages):
-            text_score = float(texts_scores[idx])
-            doc_results.append(
-                self._prepare_document_page(
-                    doc_page, score=text_score, surrounding_chunks=surrounding_chunks
-                )
+        document_pages = list(
+            DocumentPageText.objects.filter(id__in=texts_ids).select_related(
+                "page__document"
             )
+        )
+        # Map IDs to objects to maintain order from texts_ids
+        pages_map = {page.id: page for page in document_pages}
+
+        # Identify all needed context chunks
+        context_map = {}
+        if surrounding_chunks > 0:
+            page_ids = set()
+            needed_context = []  # List of (page_id, text_number)
+            for page in document_pages:
+                page_ids.add(page.page_id)
+                tn = page.text_number
+                # Left context
+                for i in range(max(tn - surrounding_chunks, 0), tn):
+                    needed_context.append((page.page_id, i))
+                # Right context
+                for i in range(tn + 1, tn + surrounding_chunks + 1):
+                    needed_context.append((page.page_id, i))
+
+            # Batch fetch all potential context chunks for these pages
+            if page_ids:
+                all_possible_contexts = DocumentPageText.objects.filter(
+                    page_id__in=page_ids
+                ).values("page_id", "text_number", "text_str")
+                for ctx in all_possible_contexts:
+                    context_map[(ctx["page_id"], ctx["text_number"])] = ctx["text_str"]
+
+        doc_results = []
+        for text_id, score in zip(texts_ids, texts_scores):
+            doc_page = pages_map.get(text_id)
+            if doc_page:
+                doc_results.append(
+                    self._prepare_document_page_with_map(
+                        doc_page,
+                        score=float(score),
+                        surrounding_chunks=surrounding_chunks,
+                        context_map=context_map,
+                    )
+                )
         return doc_results
+
+    def _prepare_document_page_with_map(
+        self,
+        doc_page: DocumentPageText,
+        score: float,
+        surrounding_chunks: int,
+        context_map: dict,
+    ) -> dict:
+        """
+        Build the result dictionary using a pre-fetched context map.
+        """
+        main_text = {
+            "score": score,
+            "document_name": doc_page.page.document.name,
+            "relative_path": doc_page.page.document.relative_path,
+            "page_number": doc_page.page.page_number,
+            "text_number": doc_page.text_number,
+            "language": doc_page.language,
+            "text_str": doc_page.text_str,
+        }
+
+        left_context = []
+        right_context = []
+
+        if surrounding_chunks > 0:
+            tn = doc_page.text_number
+            pid = doc_page.page_id
+            # Left
+            for i in range(max(tn - surrounding_chunks, 0), tn):
+                val = context_map.get((pid, i))
+                if val is not None:
+                    left_context.append({"text_number": i, "text_str": val})
+            # Right
+            for i in range(tn + 1, tn + surrounding_chunks + 1):
+                val = context_map.get((pid, i))
+                if val is not None:
+                    right_context.append({"text_number": i, "text_str": val})
+
+        return {
+            "result": {
+                "left_context": left_context,
+                "text": main_text,
+                "right_context": right_context,
+            }
+        }
 
     @staticmethod
     def get_all_categories(collection: CollectionOfDocuments):
@@ -160,90 +239,3 @@ class DBTextSearchController:
                 all_doc_contains.extend(doc_contains)
         return list(set(all_doc_contains))
 
-    def _prepare_document_page(
-        self, doc_page: DocumentPageText, score: float, surrounding_chunks: int
-    ) -> dict:
-        """
-        Build the result dictionary for a single ``DocumentPageText``
-        instance, including surrounding context if requested.
-
-        Parameters
-        ----------
-        doc_page : DocumentPageText
-            The text fragment to process.
-        score : float
-            Relevance score associated with this fragment.
-        surrounding_chunks : int
-            Number of adjacent chunks to include as left/right context.
-
-        Returns
-        -------
-        dict
-            Structured representation of the fragment and its context.
-        """
-        main_text = {
-            "score": score,
-            "document_name": doc_page.page.document.name,
-            "relative_path": doc_page.page.document.relative_path,
-            "page_number": doc_page.page.page_number,
-            "text_number": doc_page.text_number,
-            "language": doc_page.language,
-            "text_str": doc_page.text_str,
-        }
-        left_context = self._prepare_text_context(
-            doc_page, surrounding_chunks, context="left"
-        )
-        right_context = self._prepare_text_context(
-            doc_page, surrounding_chunks, context="right"
-        )
-        return {
-            "result": {
-                "left_context": left_context,
-                "text": main_text,
-                "right_context": right_context,
-            }
-        }
-
-    def _prepare_text_context(self, doc_page, surrounding_chunks, context) -> list:
-        """
-        Retrieve surrounding text chunks for ``doc_page`` either to the
-        ``left`` or ``right`` of the current fragment.
-
-        Parameters
-        ----------
-        doc_page : DocumentPageText
-            Reference fragment.
-        surrounding_chunks : int
-            Number of neighbouring chunks to fetch.
-        context : str
-            Either ``"left"`` or ``"right"``.
-
-        Returns
-        -------
-        list
-            List of dictionaries ``{'text_number': int, 'text_str': str}``
-            representing the surrounding context.
-        """
-        text_num = doc_page.text_number
-        if context == "left":
-            beg_position = max(text_num - surrounding_chunks, 0)
-            ctx_nums = [x for x in range(beg_position, text_num)]
-        elif context == "right":
-            ctx_nums = [
-                x for x in range(text_num + 1, text_num + surrounding_chunks + 1)
-            ]
-        else:
-            raise Exception(f"Unknown context type {context}")
-
-        context_res = []
-        doc_pages = DocumentPageText.objects.filter(
-            text_number__in=ctx_nums, page=doc_page.page
-        )
-        for d_page in doc_pages:
-            context_res.append(
-                {
-                    "text_number": d_page.text_number,
-                    "text_str": d_page.text_str,
-                }
-            )
-        return context_res

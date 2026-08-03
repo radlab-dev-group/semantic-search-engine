@@ -195,8 +195,13 @@ class DBSemanticSearchController:
         collection : CollectionOfDocuments
             The collection to which the texts belong.
         """
+        if isinstance(all_texts, QuerySet):
+            all_texts = all_texts.select_related("page__document")
+
+        batch_texts = []
+        batch_metadata = []
+
         with tqdm.tqdm(total=len(all_texts), desc="Indexing documents") as pbar:
-            # batched_texts = []
             for text in all_texts:
                 str_text_to_index = text.text_str
                 if text.text_str_clear and len(text.text_str_clear):
@@ -222,10 +227,23 @@ class DBSemanticSearchController:
                         skip_special_tokens=True,
                     )
 
-                self._milvus_handler.add_single_text(
-                    text=str_text_to_index, metadata=text_metadata
-                )
+                batch_texts.append(str_text_to_index)
+                batch_metadata.append(text_metadata)
+
+                if len(batch_texts) >= self.batch_size:
+                    self._milvus_handler.add_texts(
+                        texts=batch_texts, metadata=batch_metadata
+                    )
+                    batch_texts = []
+                    batch_metadata = []
+
                 pbar.update()
+
+            # Final batch
+            if len(batch_texts) > 0:
+                self._milvus_handler.add_texts(
+                    texts=batch_texts, metadata=batch_metadata
+                )
         return None
 
     def search(
