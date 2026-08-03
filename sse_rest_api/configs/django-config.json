@@ -33,11 +33,11 @@
   },
   "database": {
     "ENGINE": "django.db.backends.postgresql",
-    "NAME": "sse_backend",
-    "USER": "admin",
-    "PASSWORD": "",
+    "NAME": "pkedzia_sse_test_20260717",
+    "USER": "postgres",
+    "PASSWORD": "alamakota",
     "HOST": "192.168.100.67",
-    "PORT": "5457"
+    "PORT": "5432"
   },
   "celery": {
     "broker_url": "amqp://***:***@***:***/"
