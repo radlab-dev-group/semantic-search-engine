@@ -51,7 +51,7 @@ The **Semantic Search Engine** provides a full‑stack solution for building sem
 | **Data Ingestion**                       | Convert raw text or annotation exports into a uniform JSON/JSONL format, optionally chunk, clean, and detect language. | `any_text_to_json.py`, `doccano_converter.py`                           |
 | **Storage**                              | Persist raw documents and metadata in PostgreSQL (relational) and Milvus (vector) databases.                           | `data.models`, `engine.models`, `semantic_search_engine/aws_handler.py` |
 | **Embedding & Reranking**                | Compute dense vector representations and optionally re‑rank using cross‑encoders.                                      | `embedders_rerankers.py`, `engine.controllers.embedders_rerankers`      |
-| **Search**                               | Retrieve nearest‑neighbor chunks with optional metadata filters, template‑based constraints, and pagination.           | `engine.controllers.search`, `data.controllers.relational_db`           |
+| **Search**                               | Retrieve results using **Hybrid Search** (Milvus vector + PostgreSQL text) with optional RRF merging, metadata filters, and templates. | `engine.controllers.search`, `engine.controllers.database.relational_db` |
 | **RAG (Retrieval‑Augmented Generation)** | Combine retrieved snippets with LLMs (local or cloud-hosted) to generate context‑aware answers.                        | `chat.controllers`, `engine.controllers.models`                         |
 | **API Layer**                            | Expose all functionality via a clean, versioned REST API built on Django Rest Framework.                               | `chat.api`, `data.api`, `engine.api`, `system.api`                      |
 | **Administration**                       | User, organisation, and group management, plus collection lifecycle utilities.                                         | `system.controllers`, `system.models`                                   |
@@ -82,24 +82,27 @@ Django‑powered service for end‑to‑end pipelines.
                                    +---------------+---------------+
                                                    |
                                                    v
-                                         +-------------------+
-                                         |   Milvus (Vector) |
-                                         +-------------------+
-                                                   |
-                                                   v
-                                         +-------------------+
-                                         |   Search Service  |
-                                         +-------------------+
-                                                   |
-                                                   v
-                                         +-------------------+
-                                         |   RAG (LLM)       |
-                                         +-------------------+
-                                                   |
-                                                   v
-                                         +-------------------+
-                                         |   REST API (Django)|
-                                         +-------------------+
+                                         +-------------------+          +-------------------+
+                                         |   Milvus (Vector) | <------> |  PostgreSQL (FTS) |
+                                         +-------------------+          +-------------------+
+                                                   |                              |
+                                                   +--------------+---------------+
+                                                                  |
+                                                                  v
+                                                        +-------------------+
+                                                        |   Hybrid Search   |
+                                                        |   (RRF Merge)     |
+                                                        +-------------------+
+                                                                  |
+                                                                  v
+                                                        +-------------------+
+                                                        |   RAG (LLM)       |
+                                                        +-------------------+
+                                                                  |
+                                                                  v
+                                                        +-------------------+
+                                                        |   REST API (Django)|
+                                                        +-------------------+
 ```
 
 ---  
@@ -484,7 +487,7 @@ each app.
 | `POST` | `/api/new_collection/`         | Create a new document collection (specify embedder, reranker, index type).      |
 | `GET`  | `/api/collections/`            | List all collections visible to the authenticated user.                         |
 | `POST` | `/api/upload_and_index_files/` | Upload files (multipart) and trigger indexing.                                  |
-| `POST` | `/api/search_with_options/`    | Perform a semantic search with rich filtering options.                          |
+| `POST` | `/api/search_with_options/`    | Perform a **Hybrid Search** (vector + text) with rich filtering options.       |
 | `POST` | `/api/generative_answer/`      | Generate a RAG answer for a previously stored query response.                   |
 | `GET`  | `/api/question_templates/`     | List available query‑template collections.                                      |
 | `GET`  | `/api/filter_options/`         | Retrieve mock filter metadata (URLs, categories) – useful for UI drop‑downs.    |
@@ -506,6 +509,8 @@ The `search_with_options` endpoint expects a JSON payload with:
   "collection_name": "MyCollection",
   "query_str": "Jakie są najnowsze regulacje podatkowe?",
   "options": {
+    "hybrid_search": true,
+    "max_results": 20,
     "categories": [
       "Prawo",
       "Finanse"

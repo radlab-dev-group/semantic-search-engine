@@ -91,10 +91,11 @@ class EmbeddingModelsConfig:
             Name of the embedder model as listed in ``ALL_AVAILABLE_EMBEDDERS_MODELS``.
 
         Returns
-        -------
+-------
         str
             Path to the model files.
         """
+        _ensure_config_loaded()
         return ALL_AVAILABLE_EMBEDDERS_MODELS[model_name]["path"]
 
     @staticmethod
@@ -112,6 +113,7 @@ class EmbeddingModelsConfig:
         int
             Vector size (dimensionality) for the specified model.
         """
+        _ensure_config_loaded()
         return ALL_AVAILABLE_EMBEDDERS_MODELS[model_name]["vector_size"]
 
     @staticmethod
@@ -129,6 +131,7 @@ class EmbeddingModelsConfig:
         str
             Device identifier used by the model.
         """
+        _ensure_config_loaded()
         return ALL_AVAILABLE_EMBEDDERS_MODELS[model_name]["device"]
 
     @staticmethod
@@ -146,6 +149,7 @@ class EmbeddingModelsConfig:
         str
             Path to the reranker model files.
         """
+        _ensure_config_loaded()
         return ALL_AVAILABLE_RERANKERS_MODELS[model_name]["path"]
 
     @staticmethod
@@ -163,6 +167,7 @@ class EmbeddingModelsConfig:
         str
             Device identifier (e.g., ``cpu`` or ``cuda``) for the reranker.
         """
+        _ensure_config_loaded()
         return ALL_AVAILABLE_RERANKERS_MODELS[model_name]["device"]
 
     @staticmethod

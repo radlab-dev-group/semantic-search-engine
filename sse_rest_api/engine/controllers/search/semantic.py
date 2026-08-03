@@ -306,6 +306,47 @@ class DBSemanticSearchController:
         )
         return milvus_search
 
+    def _rrf_merge(self, milvus_results, postgres_results, k=60, max_results=100):
+        """
+        Merge results using Reciprocal Rank Fusion.
+
+        Parameters
+        ----------
+        milvus_results : list
+            Results from vector search.
+        postgres_results : list
+            Results from text search (list of tuples (id, rank)).
+        k : int, default 60
+            RRF constant.
+        max_results : int, default 100
+            Maximum number of merged results to return.
+
+        Returns
+        -------
+        tuple
+            (sorted_ids, sorted_scores)
+        """
+        scores = {}
+
+        # Process Milvus results
+        for rank, hit in enumerate(milvus_results, 1):
+            try:
+                text_id = int(hit["metadata"]["external_text_id"])
+                scores[text_id] = scores.get(text_id, 0) + 1.0 / (k + rank)
+            except (KeyError, ValueError, TypeError):
+                continue
+
+        # Process Postgres results
+        for rank, (text_id, _) in enumerate(postgres_results, 1):
+            scores[text_id] = scores.get(text_id, 0) + 1.0 / (k + rank)
+
+        # Sort by RRF score
+        sorted_ids = sorted(
+            scores.keys(), key=lambda x: scores[x], reverse=True
+        )[:max_results]
+
+        return sorted_ids, [scores[tid] for tid in sorted_ids]
+
     def search_with_options(
         self,
         question_str: str,
@@ -523,9 +564,12 @@ class DBSemanticSearchController:
         )
 
         # Call search method
-        query_results = self.search(
+        max_results = int(search_params.get("max_results", 50))
+        hybrid_search = bool(search_params.get("hybrid_search", True))
+
+        milvus_results = self.search(
             search_text=question_str,
-            max_results=int(search_params.get("max_results", 50)),
+            max_results=max_results,
             rerank_results=bool(search_params.get("rerank_results", False)),
             language=lang_str,
             return_with_factored_fields=bool(
@@ -534,16 +578,40 @@ class DBSemanticSearchController:
             search_in_documents=docs_to_search,
             relative_paths=relative_paths,
         )[0]
-        if not len(query_results):
-            self._logger.warning("query_results is empty!")
-            return {}, {}, []
 
         # Prepare results to presents for user
         texts_ids = []
         texts_scores = []
-        for text_res in query_results:
-            texts_ids.append(int(text_res["metadata"]["external_text_id"]))
-            texts_scores.append(text_res["score"])
+
+        if hybrid_search:
+            postgres_results = textual_controller.search_texts(
+                query_str=question_str,
+                collection=collection,
+                max_results=max_results,
+                filters={
+                    "document_names": docs_to_search,
+                    "relative_paths": relative_paths,
+                    "language": lang_str
+                },
+                language=lang_str
+            )
+            texts_ids, texts_scores = self._rrf_merge(
+                milvus_results=milvus_results,
+                postgres_results=postgres_results,
+                max_results=max_results
+            )
+        else:
+            if not len(milvus_results):
+                self._logger.warning("milvus_results is empty!")
+                return {}, {}, []
+
+            for text_res in milvus_results:
+                texts_ids.append(int(text_res["metadata"]["external_text_id"]))
+                texts_scores.append(text_res["score"])
+
+        if not len(texts_ids):
+            self._logger.warning("No results found (hybrid_search=%s)" % hybrid_search)
+            return {}, {}, []
 
         postgres_docs = textual_controller.get_texts(
             texts_ids=texts_ids, texts_scores=texts_scores, surrounding_chunks=2

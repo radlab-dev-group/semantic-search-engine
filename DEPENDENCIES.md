@@ -81,6 +81,8 @@ Installed at deployment via `sse_rest_api/initialize.sh`:
 - **Database:** `sse_backend`
 - **Config:** `sse_rest_api/configs/django-config.json` (`database` section)
 
+Used for relational data storage and **Full-Text Search (FTS)**. The system utilizes `django.contrib.postgres` to perform weighted searches (`SearchVector`, `SearchRank`) over document text, which are then merged with vector results via RRF.
+
 ### Milvus — Vector Database
 
 - **Host:** `192.168.100.67`

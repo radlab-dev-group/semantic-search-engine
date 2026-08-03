@@ -50,6 +50,9 @@ przeszukiwaniem wyszukiwarki semantycznej. Słownik ten posiada pola:
   Włączenie tego przełącznika powoduje, że tylko dokumenty spełniający założenia templatek
   będą wykorzystywane do wuszkiwania. Jeżeli ustawiona na _False_ wtedy również inne
   mechanizmy filtrujące będą ogrniczały wyniki.
+* `hybrid_search` -- znacznik _boolowski_ (domyślnie _True_). Włącza wyszukiwanie hybrydowe,
+  łączące wyniki z Milvusa (wektorowe) z wynikami z PostgreSQL (Full-Text Search).
+* `max_results` -- maksymalna liczba wyników do zwrócenia (domyślnie 50).
 
 **Flow** filtrowania meta-informacjami jest nastepujący:
 
@@ -188,29 +191,42 @@ Konflikty zbrojne na Ukrainie. gt Konflikty zbrojne na Ukrainie. -> False
 125 eq 125 -> True
 ```
 
-Po wyżej przedstawionej procedurze uruchamiane jest wyszukiwanie:
+Po wyżej przedstawionej procedurze uruchamiane jest wyszukiwanie hybrydowe (lub tylko semantyczne, zależnie od flagi `hybrid_search`).
+
+Wyszukiwanie hybrydowe łączy dwa podejścia:
+1. **Wyszukiwanie semantyczne (Milvus)**: Znajduje fragmenty o podobnym znaczeniu wektorowym.
+2. **Wyszukiwanie tekstowe (PostgreSQL FTS)**: Znajduje fragmenty zawierające dokładnie te same słowa lub ich odmiany (wykorzystując wagi SearchVector i SearchRank).
+
+Wyniki z obu źródeł są łączone przy użyciu algorytmu **Reciprocal Rank Fusion (RRF)**, który pozwala na sprawiedliwe uszeregowanie wyników pochodzących z różnych systemów punktacji.
+
+Główna metoda wywołująca wyszukiwanie w `DBSemanticSearchController` wygląda obecnie tak:
 
 ```python
-query_results = self.search(
-    search_text=question_str,
-    max_results=search_params.get("max_results", 50),
-    rerank_results=search_params.get("rerank_results", False),
-    language=lang_str,
-    return_with_factored_fields=search_params.get(
-        "return_with_factored_fields", False
-    ),
-    search_in_documents=docs_to_search,
-    relative_paths=relative_paths,
-)[0]
+if hybrid_search:
+    # Pobranie wyników wektorowych z Milvus
+    milvus_results = self.search(...)
+    
+    # Pobranie wyników tekstowych z Postgres FTS
+    postgres_results = textual_controller.search_texts(...)
+    
+    # Połączenie wyników algorytmem RRF
+    texts_ids, texts_scores = self._rrf_merge(
+        milvus_results=milvus_results,
+        postgres_results=postgres_results,
+        max_results=max_results
+    )
+else:
+    # Tylko wyszukiwanie semantyczne
+    milvus_results = self.search(...)
+    # ... ekstrakcja ID i score ...
 ```
 
-W tej metodzie do przeszukiwania semantycznego wykorzystywany jest
-handler do Milvusa. Pamiętajmy, że tutaj przeszukujemy bazę semantyczną
+W metodzie `search` do przeszukiwania semantycznego wykorzystywany jest handler do Milvusa. Pamiętajmy, że tutaj przeszukujemy bazę semantyczną
 czyli określamy podobieństwo między dwoma _reprezentacjami embeddingowymi_
 tekstów -- pytania i fragmentu dokumentu. Dla embeddingu pytania
 odszukiwane są najbardziej podobne embeddingi z fragmentami tekstów.
 
-Tworzonyt jest słownik opcji do filtrowania
+Tworzony jest słownik opcji do filtrowania
 w Milvusie (po metadanych). Tworzony jest słownik `metadata_filter`
 a do niego wpisywane są trzy wartości:
 
@@ -220,4 +236,4 @@ a do niego wpisywane są trzy wartości:
 
 Jeżeli podano więcej niż jeden z ww wartości, to w odróżnieniu od bazy relacyjnej,
 w Milvusie wybierane są do przeszukiwania te embeddingi,
-które spełniają warunek połączomy `AND`, nie `OR 
+które spełniają warunek połączony `AND`, nie `OR`.

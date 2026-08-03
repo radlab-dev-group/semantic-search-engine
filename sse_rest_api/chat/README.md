@@ -39,7 +39,7 @@ chat/
 - **ChatLogicController** – Handles chat lifecycle: `new_chat()` creates a `Chat` with a random hash, and methods for
   retrieving chats.
 - **MessageLogicController** – Handles message logic: `add_user_message()` stores a user message, and
-  `generate_assistant_message_cs_rag()` runs the RAG pipeline.
+  `generate_assistant_message_cs_rag()` runs the hybrid RAG pipeline (combining vector and full-text search).
 - **ChatController** – A facade in `controllers/__init__.py` that combines both controllers for backward compatibility.
 - **MessageState creation** – Depending on request options (`use_rag_supervisor`, `use_content_supervisor`), the
   controller creates the appropriate state objects and links them to the message.
@@ -73,7 +73,7 @@ All endpoints use the common decorators:
 2. **User Message** – `POST /api/<version>/add_user_message/` with `chat_id`, `user_message`, and optional generation
    options (`search_options`, `system_prompt`). The controller: <br>a) Persists the user message. <br>b) Calls
    `generate_assistant_message_cs_rag()` which: <br>– Determines whether the message should trigger a semantic search (
-   RAG). <br>– Executes the search via `SearchQueryController`. <br>– Creates a `RAGMessageState` (and optional
+   RAG). <br>– Executes the hybrid search (Milvus + Postgres FTS via RRF) via `SearchQueryController`. <br>– Creates a `RAGMessageState` (and optional
    `ContentSupervisorState`). <br>– Generates an assistant reply using the selected generative model. <br>c) Stores the
    assistant message and returns the full updated history. |
 3. **Save / Retrieve** – When the user wants to keep the conversation, `POST /api/<version>/save_chat/` marks it as

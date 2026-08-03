@@ -1,3 +1,5 @@
+from django.db.models import F
+from django.contrib.postgres.search import SearchVector, SearchQuery, SearchRank
 from data.models import CollectionOfDocuments, DocumentPageText, Document
 
 
@@ -221,7 +223,7 @@ class DBTextSearchController:
             Restrict to documents marked ``use_in_search=True``.
 
         Returns
-        -------
+-------
         list[str]
             Unique document names matching at least one substring.
         """
@@ -238,4 +240,65 @@ class DBTextSearchController:
             if len(doc_contains):
                 all_doc_contains.extend(doc_contains)
         return list(set(all_doc_contains))
+
+    def search_texts(
+        self,
+        query_str: str,
+        collection: CollectionOfDocuments,
+        max_results: int = 100,
+        filters: dict = None,
+        language: str = None,
+    ) -> list:
+        """
+        Perform a full-text search in PostgreSQL using FTS functionality.
+
+        Parameters
+        ----------
+        query_str : str
+            The query string to search for.
+        collection : CollectionOfDocuments
+            The collection to search within.
+        max_results : int, default 100
+            Maximum number of results to return.
+        filters : dict, optional
+            Additional filters (e.g., document_names, relative_paths).
+        language : str, optional
+            Language for the FTS configuration (e.g., 'polish', 'english').
+
+        Returns
+        -------
+        list
+            List of tuples (text_id, rank).
+        """
+        queryset = DocumentPageText.objects.filter(page__document__collection=collection)
+
+        if filters:
+            if "document_names" in filters and filters["document_names"]:
+                queryset = queryset.filter(page__document__name__in=filters["document_names"])
+            if "relative_paths" in filters and filters["relative_paths"]:
+                queryset = queryset.filter(page__document__relative_path__in=filters["relative_paths"])
+            if "language" in filters and filters["language"]:
+                queryset = queryset.filter(language=filters["language"])
+        elif language:
+            queryset = queryset.filter(language=language)
+
+        # Map language code to Postgres FTS config name
+        lang_config = "simple"
+        if language == "pl":
+            lang_config = "polish"
+        elif language == "en":
+            lang_config = "english"
+
+        vector = SearchVector("text_str", weight="A", config=lang_config) + \
+                 SearchVector("text_str_clear", weight="B", config=lang_config)
+        
+        query = SearchQuery(query_str, config=lang_config)
+
+        results = (
+            queryset.annotate(rank=SearchRank(vector, query))
+            .filter(rank__gt=0.001)
+            .order_by("-rank")[:max_results]
+        )
+
+        return [(res.id, res.rank) for res in results]
 
