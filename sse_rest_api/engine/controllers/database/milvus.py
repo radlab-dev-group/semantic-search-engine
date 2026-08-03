@@ -132,6 +132,9 @@ class MilvusHandler:
             collection_name=collection_name
         )
 
+        if self._collection_name is None:
+            raise Exception("Collection name cannot be None!")
+
         if create_db_if_not_exists:
             self.__prepare_collection_index_params(params=collection_index_params)
             self._connect_to_milvus_db(check_db=True)
@@ -533,9 +536,7 @@ class MilvusHandler:
 
     def __add_index_to_collection(self):
         index_params = self._milvus_client.prepare_index_params(
-            field_name=self.DB_FIELD_EMBEDDING
-        )
-        index_params.add_index(
+            field_name=self.DB_FIELD_EMBEDDING,
             index_type="IVF_FLAT",
             metric_type="L2",
             params={"nlist": 1024},
@@ -543,7 +544,8 @@ class MilvusHandler:
         )
 
         self._milvus_client.create_index(
-            collection_name=self._collection_name, index_params=index_params
+            collection_name=self._collection_name,
+            index_params=index_params,
         )
 
     def __prepare_collection_schema(self):

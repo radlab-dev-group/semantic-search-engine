@@ -2,7 +2,7 @@
 
 export TOKENIZERS_PARALLELISM=true
 
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=
 
 export LLM_ROUTER_API="http://192.168.100.65:8080"
 
@@ -18,4 +18,4 @@ export ENV_USE_OAUTH_V2_AUTH=0
 export ENV_USE_INTROSPECT=0
 export ENV_INTROSPECT_EMAIL_VERIFICATION=0
 
-python3 manage.py runserver 0.0.0.0:8271
+python3.11 manage.py runserver 0.0.0.0:8271
