@@ -166,6 +166,7 @@ class MessageLogicController:
                 user_message=message,
                 history=history,
                 only_first_user_history_message=False,
+                options=message.options if message.options else {},
                 last_questions=last_questions_to_query,
                 instruction_str=instruction_str,
             )
@@ -221,9 +222,17 @@ class MessageLogicController:
         user_message: Message,
         history: List[Message],
         only_first_user_history_message: bool,
+        options: dict,
         last_questions: int = -1,
         instruction_str: str or None = None,
     ) -> str:
+        if options.get("use_intelligent_query_rewrite", False):
+            return self._rewrite_query_with_llm(
+                query=user_message.text,
+                history=history,
+                options=options
+            )
+
         if last_questions == 0:
             history = []
         elif last_questions > 0:
@@ -256,6 +265,51 @@ class MessageLogicController:
                 user_question += "\n" + instruction_str
 
         return user_question.strip()
+
+    def _rewrite_query_with_llm(
+        self, query: str, history: List[Message], options: dict
+    ) -> str:
+        """
+        Rewrite user query using LLM to make it a standalone question.
+        """
+        if not history:
+            return query
+
+        history_str = ""
+        # Take last 5 messages for context
+        for msg in history[-5:]:
+            role = "Użytkownik" if msg.role == self.USER_ROLE else "Asystent"
+            history_str += f"{role}: {msg.text}\n"
+
+        prompt = (
+            "Na podstawie poniższej historii rozmowy, przeformułuj ostatnie pytanie użytkownika w samodzielne zapytanie "
+            "do wyszukiwarki dokumentów. Zapytanie powinno być zwięzłe i zawierać wszystkie niezbędne konteksty z historii. "
+            "Zwróć TYLKO przeformułowane pytanie, bez żadnych dodatkowych komentarzy.\n\n"
+            f"Historia:\n{history_str}\n"
+            f"Ostatnie pytanie: {query}\n"
+            "Samodzielne zapytanie:"
+        )
+
+        model_name = options.get(
+            "query_rewrite_model", "google/gemini-2.5-flash-lite"
+        )
+        try:
+            rewritten_query, _ = self.gen_model_controller.gen_model_controller.conversation_with_local_model(
+                history=[],
+                last_user_message=prompt,
+                options={"max_new_tokens": 150, "temperature": 0.0},
+                model_name_path=model_name,
+            )
+            if (
+                rewritten_query
+                and not isinstance(rewritten_query, dict)
+                and len(rewritten_query.strip()) > 5
+            ):
+                return rewritten_query.strip()
+        except Exception as e:
+            logging.error(f"Error during query rewriting: {e}")
+
+        return query
 
     def _prepare_content_supervisor_state(
         self, user_message: Message

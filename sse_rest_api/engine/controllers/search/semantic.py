@@ -347,6 +347,61 @@ class DBSemanticSearchController:
 
         return sorted_ids, [scores[tid] for tid in sorted_ids]
 
+    def rerank_results(
+        self, question_str: str, results: list, max_results: int
+    ) -> list:
+        """
+        Rerank provided results using cross-encoder model.
+
+        Parameters
+        ----------
+        question_str : str
+            The query string.
+        results : list
+            List of dictionaries containing search hits.
+        max_results : int
+            Maximum number of results to return after reranking.
+
+        Returns
+        -------
+        list
+            Reranked and truncated list of results.
+        """
+        if not len(results):
+            return results
+
+        self._logger.info("Reranking %d results" % len(results))
+
+        # Format for MilvusHandler._rerank_search_results
+        formatted_results = []
+        for res in results:
+            formatted_results.append(
+                {
+                    self._milvus_handler.DB_FIELD_TEXT: res.get("text_str", ""),
+                    "original_data": res,
+                }
+            )
+
+        try:
+            self._milvus_handler._load_reranker_model_from_path()
+            # _rerank_search_results returns list[list[dict]]
+            reranked_all = self._milvus_handler._rerank_search_results(
+                question_str, [formatted_results]
+            )
+
+            reranked_hits = reranked_all[0]
+
+            final_results = []
+            for hit in reranked_hits:
+                original_data = hit["original_data"]
+                original_data["score"] = float(hit["score"])
+                final_results.append(original_data)
+
+            return final_results[:max_results]
+        except Exception as e:
+            self._logger.error("Reranking failed: %s" % e)
+            return results[:max_results]
+
     def search_with_options(
         self,
         question_str: str,
@@ -566,11 +621,18 @@ class DBSemanticSearchController:
         # Call search method
         max_results = int(search_params.get("max_results", 50))
         hybrid_search = bool(search_params.get("hybrid_search", True))
+        do_rerank = bool(search_params.get("rerank_results", False))
+        rerank_max_results = int(search_params.get("rerank_max_results", max_results * 2))
+        rrf_k = int(search_params.get("rrf_k", 60))
+
+        milvus_max_results = max_results
+        if hybrid_search and do_rerank:
+            milvus_max_results = rerank_max_results
 
         milvus_results = self.search(
             search_text=question_str,
-            max_results=max_results,
-            rerank_results=bool(search_params.get("rerank_results", False)),
+            max_results=milvus_max_results,
+            rerank_results=do_rerank if not hybrid_search else False,
             language=lang_str,
             return_with_factored_fields=bool(
                 search_params.get("return_with_factored_fields", False)
@@ -598,7 +660,8 @@ class DBSemanticSearchController:
             texts_ids, texts_scores = self._rrf_merge(
                 milvus_results=milvus_results,
                 postgres_results=postgres_results,
-                max_results=max_results
+                k=rrf_k,
+                max_results=rerank_max_results if do_rerank else max_results,
             )
         else:
             if not len(milvus_results):
@@ -616,6 +679,13 @@ class DBSemanticSearchController:
         postgres_docs = textual_controller.get_texts(
             texts_ids=texts_ids, texts_scores=texts_scores, surrounding_chunks=2
         )
+
+        if hybrid_search and do_rerank:
+            postgres_docs = self.rerank_results(
+                question_str=question_str,
+                results=postgres_docs,
+                max_results=max_results,
+            )
 
         results = {
             "query": question_str,

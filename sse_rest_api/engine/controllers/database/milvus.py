@@ -288,7 +288,7 @@ class MilvusHandler:
             and post_search_options["rerank_results"]
             and len(all_queries_results)
         ):
-            self.__load_reranker_model_from_path()
+            self._load_reranker_model_from_path()
             all_queries_results = self._rerank_search_results(
                 search_text, all_queries_results
             )
@@ -612,7 +612,7 @@ class MilvusHandler:
 
         return self._embedder_model
 
-    def __load_reranker_model_from_path(self):
+    def _load_reranker_model_from_path(self):
         if self.reranker_model_path is None:
             raise Exception("Reranker model path must be set!")
 
