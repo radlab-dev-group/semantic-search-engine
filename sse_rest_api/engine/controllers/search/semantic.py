@@ -40,10 +40,11 @@ from data.controllers.template import QueryTemplateController
 
 from engine.models import UserQuery
 from engine.controllers.database.milvus import MilvusHandler
+from engine.database.vector_store_adapter import MilvusVectorStoreAdapter
 from engine.controllers.search.relational import DBTextSearchController
 from engine.controllers.database.relational_db import RelationalDBController
-from engine.controllers.models_logic.embedders_rerankers import EmbeddingModelsConfig
-
+from engine.engine_core.config.models_config import EmbeddingModelsConfig
+from engine.engine_core.protocols import VectorStoreProtocol
 
 class DBSemanticSearchController:
     """
@@ -64,12 +65,13 @@ class DBSemanticSearchController:
 
     def __init__(
         self,
-        jsonl_config_path: str,
-        collection_name: str,
-        index_name: str | None,
+        jsonl_config_path: str | None = None,
+        collection_name: str | None = None,
+        index_name: str | None = None,
         batch_size: int = 10,
         embedder_model: str | None = None,
         cross_encoder_model: str | None = None,
+        vector_store: VectorStoreProtocol | None = None,
     ):
         """
         Initialise the controller with configuration for Milvus, embedder
@@ -77,9 +79,9 @@ class DBSemanticSearchController:
 
         Parameters
         ----------
-        jsonl_config_path : str
+        jsonl_config_path : str | None
             Path to the JSONL configuration for Milvus collections.
-        collection_name : str
+        collection_name : str | None
             Name of the Milvus collection.
         index_name : str | None
             Optional name of the Milvus index to use.
@@ -89,12 +91,24 @@ class DBSemanticSearchController:
             Identifier of the transformer model used for embedding texts.
         cross_encoder_model : str | None, optional
             Identifier of the cross‑encoder model used for reranking.
+        vector_store : VectorStoreProtocol | None, optional
+            Optional protocol‑based vector store.  When supplied this object
+            is used for search / ``add_texts`` instead of a raw ``MilvusHandler``.
         """
         self._logger = get_logger()
 
         self.batch_size = batch_size
         self.max_tokens_in_text = 508
+        self._vector_store = vector_store  # Protocol-based (may be None)
+        self._milvus_handler: MilvusHandler | None = None  # Legacy concrete (may be None)
 
+        if vector_store is not None:
+            # Protocol mode — no need to instantiate MilvusHandler.
+            self._text_db_controller = RelationalDBController()
+            self._template_controller = QueryTemplateController()
+            return
+
+        # ---------- legacy mode: create a concrete MilvusHandler ----------
         embedder_device = ""
         embedder_model_path = None
         embedder_vector_size = -1
@@ -123,8 +137,8 @@ class DBSemanticSearchController:
 
         self._milvus_handler = MilvusHandler(
             jsonl_config_path=jsonl_config_path,
-            collection_name=collection_name,
-            collection_description=collection_name,
+            collection_name=collection_name or "",
+            collection_description=collection_name or "",
             embedder_model_path=embedder_model_path,
             embedding_size=embedder_vector_size,
             index_name=index_name,
@@ -164,6 +178,39 @@ class DBSemanticSearchController:
             batch_size=10,
             embedder_model=collection.model_embedder,
             cross_encoder_model=collection.model_reranker,
+        )
+
+    @staticmethod
+    def from_protocol(
+        vector_store: VectorStoreProtocol,
+        jsonl_config_path: str | None = None,
+        collection_name: str | None = None,
+    ) -> "DBSemanticSearchController":
+        """
+        Create a protocol‑based ``DBSemanticSearchController``.
+
+        Use this factory when you want to inject your own vector‑store
+        implementation (e.g. for testing or multi‑backend support).
+
+        Parameters
+        ----------
+        vector_store : VectorStoreProtocol
+            Any object implementing the VectorStoreProtocol interface.
+        jsonl_config_path : str | None, optional
+            Passed through to ``MilvusHandler`` as fallback config.
+        collection_name : str | None, optional
+            Passed through to ``MilvusHandler`` as fallback config.
+
+        Returns
+        -------
+        DBSemanticSearchController
+            A controller that delegates all vector operations to the
+            supplied protocol implementation.
+        """
+        return DBSemanticSearchController(
+            vector_store=vector_store,
+            jsonl_config_path=jsonl_config_path,
+            collection_name=collection_name,
         )
 
     def index_texts(self, from_collection: CollectionOfDocuments) -> None:
@@ -297,6 +344,24 @@ class DBSemanticSearchController:
             "return_with_factored_fields": return_with_factored_fields,
         }
 
+        # ------------------------------------------------------------------
+        # Protocol-based path (new): returns a flat list[dict]
+        # Legacy path (old):  returns a list[list[dict]] from MilvusHandler.
+        # ------------------------------------------------------------------
+        if self._vector_store is not None:
+            results = self._vector_store.search(
+                query_text=search_text,
+                max_results=max_results,
+                metadata_filter=metadata_filter if metadata_filter else None,
+            )
+            # Apply reranking via protocol if requested.
+            if rerank_results and results:
+                results = self._vector_store.rerank(
+                    search_text, results, max_results
+                )
+            return results
+
+        # Legacy path — MilvusHandler returns list[list[dict]].
         milvus_search = self._milvus_handler.search(
             search_text=search_text,
             max_results=max_results,
@@ -372,7 +437,20 @@ class DBSemanticSearchController:
 
         self._logger.info("Reranking %d results" % len(results))
 
-        # Format for MilvusHandler._rerank_search_results
+        # Protocol-based path — delegates to vector_store protocol.
+        if self._vector_store is not None:
+            try:
+                reranked = self._vector_store.rerank(
+                    query_text=question_str,
+                    results=list(results),
+                    max_results=max_results,
+                )
+                return reranked
+            except Exception as e:
+                self._logger.error("Reranking failed (protocol): %s" % e)
+                return results[:max_results]
+
+        # Legacy path — MilvusHandler internals.
         formatted_results = []
         for res in results:
             formatted_results.append(
@@ -384,7 +462,6 @@ class DBSemanticSearchController:
 
         try:
             self._milvus_handler._load_reranker_model_from_path()
-            # _rerank_search_results returns list[list[dict]]
             reranked_all = self._milvus_handler._rerank_search_results(
                 question_str, [formatted_results]
             )

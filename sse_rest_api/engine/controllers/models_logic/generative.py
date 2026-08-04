@@ -9,9 +9,14 @@ from radlab_data.text.utils import TextUtils
 
 from llm_router_lib.client import LLMRouterClient
 
+from system.models import OrganisationUser
 from chat.models import MessageState
 from engine.models import UserQueryResponse, UserQueryResponseAnswer
-from engine.controllers.search.semantic import DBSemanticSearchController
+# Import from engine_core where possible (pure computation functions)
+from engine.engine_core import convert_search_results_to_doc2answer, get_accumulated_docs_by_rank_perc
+
+# Keep DBSemanticSearchController import for backward-compat callers that still need it
+from engine.controllers.search.semantic import DBSemanticSearchController  # noqa: F401
 
 
 class GenerativeModelConfig:
@@ -218,7 +223,7 @@ class GenerativeModelControllerApi:
         request_data["question_str"] = question_str
         request_data["question_prompt"] = question_prompt
         request_data["texts"] = (
-            DBSemanticSearchController.convert_search_results_to_doc2answer(
+            convert_search_results_to_doc2answer(
                 search_results=search_results,
                 which_docs=which_docs,
                 use_doc_names_in_response=use_doc_names_in_response,
@@ -333,23 +338,28 @@ class GenerativeModelController:
 
     @staticmethod
     def get_user_query_response_answer(
-        user_query_response_id: int,
+        user_query_response_id: int, organisation_user: OrganisationUser
     ) -> UserQueryResponseAnswer | None:
         """
-        Retrieve a stored ``UserQueryResponseAnswer`` by its primary key.
+        Retrieve a stored ``UserQueryResponseAnswer`` by its primary key and verify owner.
 
         Parameters
         ----------
         user_query_response_id : int
             Database identifier.
+        organisation_user : OrganisationUser
+            The user whose ownership is verified.
 
         Returns
         -------
         UserQueryResponseAnswer | None
-            The answer instance, or ``None`` if it does not exist.
+            The answer instance, or ``None`` if it does not exist or access denied.
         """
         try:
-            return UserQueryResponseAnswer.objects.get(id=user_query_response_id)
+            return UserQueryResponseAnswer.objects.get(
+                id=user_query_response_id,
+                user_response__user_query__organisation_user=organisation_user,
+            )
         except UserQueryResponseAnswer.DoesNotExist:
             return None
 
@@ -517,15 +527,6 @@ class GenerativeModelController:
         UserQueryResponseAnswer | None
             The newly created answer record, or ``None`` on failure.
         """
-        generated_answer = []
-        query_response_answer = UserQueryResponseAnswer.objects.create(
-            user_response=user_response,
-            is_generative=True,
-            answer_options=query_options,
-            query_instruction_prompt=query_instruction,
-            generated_answer=json.dumps(generated_answer),
-        )
-
         generation_options = self._prepare_generation_options(query_options)
 
         generated_answer, generation_time = (
@@ -543,10 +544,15 @@ class GenerativeModelController:
         if generated_answer is None:
             return None
 
-        query_response_answer.generation_time = datetime.timedelta(
-            seconds=generation_time
+        query_response_answer = UserQueryResponseAnswer(
+            user_response=user_response,
+            is_generative=True,
+            answer_options=query_options,
+            query_instruction_prompt=query_instruction,
+            generated_answer=generated_answer,
+            generation_time=datetime.timedelta(seconds=generation_time),
         )
-        query_response_answer.generated_answer = generated_answer
+
         if self.store_to_db:
             query_response_answer.save()
 
@@ -609,9 +615,9 @@ class GenerativeModelController:
             string (or ``None`` on error) and ``generation_time`` is the elapsed
             time in seconds.
         """
-        which_docs = DBSemanticSearchController.get_accumulated_docs_by_rank_perc(
+        which_docs = get_accumulated_docs_by_rank_perc(
             results={"stats": user_response.general_stats_json},
-            perc_rank_gen_qa=percentage_rank_mass,
+            perc_rank_gen_qa=percentage_rank_gen_qa,
         )
         logging.info(f"Number of documents to generate response: {len(which_docs)}")
         logging.info(f"generative model to generate answer: {generative_model}")

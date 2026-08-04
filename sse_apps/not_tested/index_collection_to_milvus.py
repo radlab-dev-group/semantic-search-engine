@@ -3,10 +3,17 @@ import os
 import django
 import argparse
 
+import sys
+
+# Add project root to sys.path to allow imports from sse_rest_api
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../sse_rest_api"))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "main.settings")
 django.setup()
 
-from data.controllers import DBSemanticSearchController
+from engine.controllers.search.semantic import DBSemanticSearchController
 
 
 def prepare_parser(desc=""):

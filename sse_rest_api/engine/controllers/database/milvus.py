@@ -311,9 +311,8 @@ class MilvusHandler:
         :param json_config_path: Path to json file
         :return:
         """
-        self._connection_config = json.load(open(json_config_path, "r"))[
-            self.DB_CONNECTION_JSON_FIELD
-        ]
+        with open(json_config_path, "r") as f:
+            self._connection_config = json.load(f)[self.DB_CONNECTION_JSON_FIELD]
         self.__get_connection_from_env()
         self.__check_connection_configuration()
         return self._connection_config
@@ -408,17 +407,25 @@ class MilvusHandler:
         :param check_db: Check if database exists, if not then create
         :return: connection
         """
-        if check_db:
-            db_name = self._connection_config["db_name"]
+        db_name = self._connection_config["db_name"]
+        try:
             connections.connect(
                 host=self._connection_config["host"],
                 port=self._connection_config["port"],
+                user=self._connection_config.get("user", ""),
+                password=self._connection_config.get("password", ""),
             )
 
-            all_databases = db.list_database()
-            if check_db and db_name not in all_databases:
-                db.create_database(db_name)
-        self._is_connected = self._database is not None
+            if check_db:
+                all_databases = db.list_database()
+                if db_name not in all_databases:
+                    db.create_database(db_name)
+
+            self._is_connected = True
+        except Exception as e:
+            print(f"Failed to connect to Milvus: {e}")
+            self._is_connected = False
+        return self._is_connected
 
     def _disconnect_from_milvus_db(self):
         if self._milvus_client is not None:

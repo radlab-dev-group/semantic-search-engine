@@ -1,10 +1,12 @@
 import json
+import os
 
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from main.src.response import response_with_status
 from main.src.decorators import required_params_exists, get_default_language
+from main.src.constants import CONFIG_DIR
 
 from system.core.decorators import get_organisation_user
 from engine.controllers.search.query import SearchQueryController
@@ -49,14 +51,20 @@ class SearchWithOptions(APIView):
             collection_name=collection_name, created_by=organisation_user
         )
         if collection is None:
-            raise Exception("Collection is not found!")
+            return response_with_status(
+                status=False,
+                language=language,
+                error_name="Collection not found or access denied!",
+                response_body={},
+            )
 
+        sse_engin_config_path = os.path.join(CONFIG_DIR, "milvus_config.json")
         results = SearchQueryController.new_query(
             query_str=query_str,
             search_options_dict=options_dict,
             collection=collection,
             organisation_user=organisation_user,
-            sse_engin_config_path="./configs/milvus_config.json",
+            sse_engin_config_path=sse_engin_config_path,
             ignore_question_lang_detect=ignore_question_lang_detect,
         )
 
@@ -97,11 +105,17 @@ class GenerativeAnswerForQuestion(APIView):
             system_prompt = None
 
         user_response = SearchQueryController.get_user_response_by_id(
-            query_response_id=query_response_id
+            query_response_id=query_response_id, organisation_user=organisation_user
         )
 
-        # TODO: trzeba sprawdzić czy organisation_user
-        # może odczytać wyniki z query_response_id
+        if user_response is None:
+            return response_with_status(
+                status=False,
+                language=language,
+                error_name="Response not found or access denied!",
+                response_body={},
+            )
+
         gen_model_controller = GenerativeModelController(store_to_db=True)
         query_response = gen_model_controller.generative_answer_for_response(
             user_response=user_response,
@@ -114,8 +128,11 @@ class GenerativeAnswerForQuestion(APIView):
             which_key = "DEEPL_AUTH_KEY"
             if "openai" in query_options["generative_model"]:
                 which_key = "OPENAI_API_KEY"
-            return Response(
-                {"status": False, "errors": {"msg": f"{which_key} is not set!"}}
+            return response_with_status(
+                status=False,
+                language=language,
+                error_name=f"{which_key} is not set or model error occurred!",
+                response_body={},
             )
 
         return response_with_status(
@@ -182,9 +199,18 @@ class SetRateForQueryResponseAnswer(APIView):
 
         query_response_answer = (
             GenerativeModelController.get_user_query_response_answer(
-                user_query_response_id=answer_response_id
+                user_query_response_id=answer_response_id,
+                organisation_user=organisation_user,
             )
         )
+
+        if query_response_answer is None:
+            return response_with_status(
+                status=False,
+                language=language,
+                error_name="Answer not found or access denied!",
+                response_body={},
+            )
 
         engine_controller = EngineSystemController(store_to_db=True)
         engine_controller.set_rating(

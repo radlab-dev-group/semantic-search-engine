@@ -99,21 +99,27 @@ class SearchQueryController:
         return query_response_result
 
     @staticmethod
-    def get_user_response_by_id(query_response_id) -> UserQueryResponse | None:
+    def get_user_response_by_id(
+        query_response_id: int, organisation_user: OrganisationUser
+    ) -> UserQueryResponse | None:
         """
-        Retrieve a ``UserQueryResponse`` instance by its primary key.
+        Retrieve a ``UserQueryResponse`` instance by its primary key and verify owner.
 
         Parameters
         ----------
         query_response_id : int
             Primary key of the ``UserQueryResponse`` to fetch.
+        organisation_user : OrganisationUser
+            The user whose ownership is verified.
 
         Returns
         -------
         UserQueryResponse | None
-            The matching response object, or ``None`` if it does not exist.
+            The matching response object, or ``None`` if it does not exist or access denied.
         """
         try:
-            return UserQueryResponse.objects.get(id=query_response_id)
+            return UserQueryResponse.objects.get(
+                id=query_response_id, user_query__organisation_user=organisation_user
+            )
         except UserQueryResponse.DoesNotExist:
             return None
