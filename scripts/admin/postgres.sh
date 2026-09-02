@@ -9,13 +9,13 @@
 set -euo pipefail   # Bezpieczne ustawienia Bash
 
 # ------------------- Konfiguracja -------------------
-CONTAINER_NAME="pg_sse_backend"
-HOST_DATA_DIR="/var/lib/postgresql_data"
+CONTAINER_NAME="pg_sse_backend_engine"
+HOST_DATA_DIR="/var/lib/postgresql_data_sse"
 POSTGRES_PASSWORD="SuperSecretPassword123"
 POSTGRES_USER="admin"
 POSTGRES_DB="sse_backend"
 # port dostępny w sieci
-HOST_PORT=5468
+HOST_PORT=5471
 DOCKER_IMAGE="postgres:latest"
 
 # ------------------- Funkcje pomocnicze -------------------

@@ -37,7 +37,7 @@
     "USER": "admin",
     "PASSWORD": "SuperSecretPassword123",
     "HOST": "localhost",
-    "PORT": "5468"
+    "PORT": "5471"
   },
   "celery": {
     "broker_url": "amqp://***:***@***:***/"
