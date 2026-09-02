@@ -527,6 +527,7 @@ The `search_with_options` endpoint expects a JSON payload with:
     ],
     "only_template_documents": false,
     "max_results": 40,
+    "min_similarity": 0.5,
     "rerank_results": true,
     "return_with_factored_fields": false,
     "relative_path_contains": [
@@ -553,6 +554,8 @@ Key concepts:
 - **Metadata filters** – low‑level JSON‑logic style filters (`in`, `eq`, `gt`, `hse`, …) applied directly on the
   `metadata_json` column.
 - **`use_and_operator`** – determines whether multiple filter lists are intersected (`true`) or unioned (`false`).
+- **`min_similarity`** – cosine similarity cutoff for the vector search (default `0.5`); hits scoring
+  below this value are dropped, so a query can legitimately return zero results.
 
 The response contains:
 

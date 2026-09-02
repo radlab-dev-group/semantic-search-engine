@@ -53,6 +53,9 @@ przeszukiwaniem wyszukiwarki semantycznej. Słownik ten posiada pola:
 * `hybrid_search` -- znacznik _boolowski_ (domyślnie _True_). Włącza wyszukiwanie hybrydowe,
   łączące wyniki z Milvusa (wektorowe) z wynikami z PostgreSQL (Full-Text Search).
 * `max_results` -- maksymalna liczba wyników do zwrócenia (domyślnie 50).
+* `min_similarity` -- próg odcięcia podobieństwa cosine (domyślnie `0.5`).
+  Wyniki z podobieństwem poniżej tego progu są odrzucane, dlatego zapytanie
+  może zwrócić pusty zbiór wyników.
 
 **Flow** filtrowania meta-informacjami jest nastepujący:
 
