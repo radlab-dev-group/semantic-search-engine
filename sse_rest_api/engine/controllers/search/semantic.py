@@ -35,7 +35,7 @@ from data.models import (
     CollectionOfDocuments,
     QueryTemplate,
 )
-from data.controllers.constants import NORMALIZE_EMBEDDINGS
+from data.controllers.constants import NORMALIZE_EMBEDDINGS, DEFAULT_MIN_SIMILARITY
 from data.controllers.template import QueryTemplateController
 
 from engine.models import UserQuery
@@ -45,6 +45,7 @@ from engine.controllers.search.relational import DBTextSearchController
 from engine.controllers.database.relational_db import RelationalDBController
 from engine.engine_core.config.models_config import EmbeddingModelsConfig
 from engine.engine_core.protocols import VectorStoreProtocol
+
 
 class DBSemanticSearchController:
     """
@@ -100,7 +101,9 @@ class DBSemanticSearchController:
         self.batch_size = batch_size
         self.max_tokens_in_text = 508
         self._vector_store = vector_store  # Protocol-based (may be None)
-        self._milvus_handler: MilvusHandler | None = None  # Legacy concrete (may be None)
+        self._milvus_handler: MilvusHandler | None = (
+            None  # Legacy concrete (may be None)
+        )
 
         if vector_store is not None:
             # Protocol mode — no need to instantiate MilvusHandler.
@@ -303,6 +306,7 @@ class DBSemanticSearchController:
         return_with_factored_fields: bool = False,
         search_in_documents: list = None,
         relative_paths: list = None,
+        min_similarity: float | None = None,
     ) -> []:
         """
         Perform a vector search in Milvus with optional metadata filters.
@@ -325,6 +329,9 @@ class DBSemanticSearchController:
             List of document names to restrict the search to.
         relative_paths : list, optional
             List of relative file paths to restrict the search to.
+        min_similarity : float | None, optional
+            Cosine similarity cutoff. Hits scoring below this value are
+            dropped. ``None`` means no cutoff.
 
         Returns
         -------
@@ -353,6 +360,7 @@ class DBSemanticSearchController:
                 query_text=search_text,
                 max_results=max_results,
                 metadata_filter=metadata_filter if metadata_filter else None,
+                min_similarity=min_similarity,
             )
             # Apply reranking via protocol if requested.
             if rerank_results and results:
@@ -368,6 +376,7 @@ class DBSemanticSearchController:
             additional_output_fields=additional_output_fields,
             metadata_filter=metadata_filter,
             post_search_options=post_search_options,
+            min_similarity=min_similarity,
         )
         return milvus_search
 
@@ -406,9 +415,9 @@ class DBSemanticSearchController:
             scores[text_id] = scores.get(text_id, 0) + 1.0 / (k + rank)
 
         # Sort by RRF score
-        sorted_ids = sorted(
-            scores.keys(), key=lambda x: scores[x], reverse=True
-        )[:max_results]
+        sorted_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)[
+            :max_results
+        ]
 
         return sorted_ids, [scores[tid] for tid in sorted_ids]
 
@@ -455,7 +464,9 @@ class DBSemanticSearchController:
         for res in results:
             formatted_results.append(
                 {
-                    self._milvus_handler.DB_FIELD_TEXT: res.get("text_str", ""),
+                    self._milvus_handler.DB_FIELD_TEXT: self._extract_rerank_text(
+                        res
+                    ),
                     "original_data": res,
                 }
             )
@@ -471,13 +482,59 @@ class DBSemanticSearchController:
             final_results = []
             for hit in reranked_hits:
                 original_data = hit["original_data"]
-                original_data["score"] = float(hit["score"])
+                self._write_rerank_score(original_data, float(hit["score"]))
                 final_results.append(original_data)
 
+            final_results.sort(
+                key=lambda item: self._read_result_score(item),
+                reverse=True,
+            )
             return final_results[:max_results]
         except Exception as e:
             self._logger.error("Reranking failed: %s" % e)
             return results[:max_results]
+
+    @staticmethod
+    def _extract_rerank_text(res: dict) -> str:
+        """
+        Extract the text to be scored by the reranker from a result item.
+
+        Supports both the flat hit shape (``{"text_str": ...}``) and the
+        nested ``get_texts`` shape (``{"result": {"text": {"text_str": ...}}}``).
+
+        Returns an empty string when no text is found.
+        """
+        if "text_str" in res:
+            return res["text_str"]
+        inner = res.get("result") or {}
+        text_info = inner.get("text") or {}
+        return text_info.get("text_str", "")
+
+    @staticmethod
+    def _write_rerank_score(res: dict, score: float) -> None:
+        """
+        Store a reranker score on a result item, in the location the
+        downstream statistics actually read.
+        """
+        inner = res.get("result")
+        if isinstance(inner, dict) and "text" in inner:
+            inner["text"]["score"] = score
+        else:
+            res["score"] = score
+
+    @staticmethod
+    def _read_result_score(res: dict) -> float:
+        """Read back the score of a result item (nested or flat shape)."""
+        inner = res.get("result")
+        if isinstance(inner, dict) and "text" in inner:
+            try:
+                return float(inner["text"].get("score", 0.0))
+            except (TypeError, ValueError):
+                return 0.0
+        try:
+            return float(res.get("score", 0.0))
+        except (TypeError, ValueError):
+            return 0.0
 
     def search_with_options(
         self,
@@ -699,8 +756,25 @@ class DBSemanticSearchController:
         max_results = int(search_params.get("max_results", 50))
         hybrid_search = bool(search_params.get("hybrid_search", True))
         do_rerank = bool(search_params.get("rerank_results", False))
-        rerank_max_results = int(search_params.get("rerank_max_results", max_results * 2))
+        rerank_max_results = int(
+            search_params.get("rerank_max_results", max_results * 2)
+        )
         rrf_k = int(search_params.get("rrf_k", 60))
+
+        # Cosine similarity cutoff. Accept a number in [0, 1]; anything else
+        # (including booleans and non-numeric values) falls back to the default.
+        min_similarity = search_params.get("min_similarity", DEFAULT_MIN_SIMILARITY)
+        if (
+            isinstance(min_similarity, bool)
+            or not isinstance(min_similarity, (int, float))
+            or not (0.0 <= float(min_similarity) <= 1.0)
+        ):
+            self._logger.warning(
+                "Invalid min_similarity=%r; falling back to default %s",
+                min_similarity,
+                DEFAULT_MIN_SIMILARITY,
+            )
+            min_similarity = DEFAULT_MIN_SIMILARITY
 
         milvus_max_results = max_results
         if hybrid_search and do_rerank:
@@ -716,6 +790,7 @@ class DBSemanticSearchController:
             ),
             search_in_documents=docs_to_search,
             relative_paths=relative_paths,
+            min_similarity=min_similarity,
         )[0]
 
         # Prepare results to presents for user
@@ -730,9 +805,9 @@ class DBSemanticSearchController:
                 filters={
                     "document_names": docs_to_search,
                     "relative_paths": relative_paths,
-                    "language": lang_str
+                    "language": lang_str,
                 },
-                language=lang_str
+                language=lang_str,
             )
             texts_ids, texts_scores = self._rrf_merge(
                 milvus_results=milvus_results,
@@ -750,7 +825,9 @@ class DBSemanticSearchController:
                 texts_scores.append(text_res["score"])
 
         if not len(texts_ids):
-            self._logger.warning("No results found (hybrid_search=%s)" % hybrid_search)
+            self._logger.warning(
+                "No results found (hybrid_search=%s)" % hybrid_search
+            )
             return {}, {}, []
 
         postgres_docs = textual_controller.get_texts(
@@ -1253,6 +1330,9 @@ class DBSemanticSearchController:
         dict
             Mapping ``{document_name: stats_dict}``.
         """
+        if not postgres_docs:
+            return dict()
+
         doc_stats = dict()
         for result in postgres_docs:
             result = result["result"]
@@ -1277,8 +1357,11 @@ class DBSemanticSearchController:
             res["score"] = res["score"] / res["hits"]
             res["pages"] = sorted(set(res["pages"]))
             res["pages_count"] = len(res["pages"])
+            # Clamp the mean score so that non-positive cosine similarity
+            # values (possible for unrelated texts) do not break math.log.
+            score_base = max(float(res["score"]), smooth_factor)
             res["score_weighted"] = math.log(
-                float(res["score"] * res["hits"] * res["pages_count"])
+                float(score_base * res["hits"] * res["pages_count"])
             )
             w_scores.append(res["score_weighted"])
         # percentage-like scaling with a smooth factor
