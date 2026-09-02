@@ -46,8 +46,12 @@ class MilvusVectorStoreAdapter(VectorStoreProtocol):
         query_text: str,
         max_results: int,
         metadata_filter: Optional[Dict[str, Any]] = None,
+        min_similarity: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
-        """Search for similar vectors.  Returns a flat list of hit dicts."""
+        """Search for similar vectors.  Returns a flat list of hit dicts.
+
+        ``min_similarity`` (optional) is the cosine similarity cutoff.
+        """
         # MilvusHandler.search returns list[list[dict]] — flatten to single list
         all_hits = self._handler.search(
             search_text=query_text,
@@ -55,6 +59,7 @@ class MilvusVectorStoreAdapter(VectorStoreProtocol):
             additional_output_fields=None,
             post_search_options=None,
             metadata_filter=metadata_filter,
+            min_similarity=min_similarity,
         )
 
         # Flatten: MilvusHandler returns one hit-list per query; we take the first (and usually only) one.

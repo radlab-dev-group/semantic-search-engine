@@ -15,7 +15,9 @@ from data.models import CollectionOfDocuments, DocumentPageText, Document
 
 # Import original controllers for the adapter layer.
 from engine.controllers.database.relational_db import RelationalDBController
-from engine.database.milvus_impl import MilvusHandler  # noqa: F401 — exposed for adapter usage
+from engine.database.milvus_impl import (
+    MilvusHandler,
+)  # noqa: F401 — exposed for adapter usage
 from engine.controllers.search.relational import DBTextSearchController
 
 
@@ -56,7 +58,11 @@ class RelationalDataAdapter:
             categories=categories,
             only_used_to_search=only_used_to_search,
         )
-        return list(result) if hasattr(result, "__iter__") and not isinstance(result, str) else [result]
+        return (
+            list(result)
+            if hasattr(result, "__iter__") and not isinstance(result, str)
+            else [result]
+        )
 
     def document_names_relative_path_contains(
         self,
@@ -71,7 +77,11 @@ class RelationalDataAdapter:
             substrings=substrings,
             only_used_to_search=only_used_to_search,
         )
-        return list(result) if hasattr(result, "__iter__") and not isinstance(result, str) else [result]
+        return (
+            list(result)
+            if hasattr(result, "__iter__") and not isinstance(result, str)
+            else [result]
+        )
 
     def fts_search(
         self,
@@ -98,7 +108,8 @@ class RelationalDataAdapter:
         """Get text chunks by ID with surrounding context."""
         return DBTextSearchController.get_texts(
             texts_ids=text_ids,
-            texts_scores=[1.0] * len(text_ids),  # scores ignored for ordering since we pass ids
+            texts_scores=[1.0]
+            * len(text_ids),  # scores ignored for ordering since we pass ids
             surrounding_chunks=surrounding_chunks,
         )
 
