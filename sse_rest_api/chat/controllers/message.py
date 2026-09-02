@@ -228,9 +228,7 @@ class MessageLogicController:
     ) -> str:
         if options.get("use_intelligent_query_rewrite", False):
             return self._rewrite_query_with_llm(
-                query=user_message.text,
-                history=history,
-                options=options
+                query=user_message.text, history=history, options=options
             )
 
         if last_questions == 0:
@@ -294,11 +292,13 @@ class MessageLogicController:
             "query_rewrite_model", "google/gemini-2.5-flash-lite"
         )
         try:
-            rewritten_query, _ = self.gen_model_controller.gen_model_controller.conversation_with_local_model(
-                history=[],
-                last_user_message=prompt,
-                options={"max_new_tokens": 150, "temperature": 0.0},
-                model_name_path=model_name,
+            rewritten_query, _ = (
+                self.gen_model_controller.gen_model_controller.conversation_with_local_model(
+                    history=[],
+                    last_user_message=prompt,
+                    options={"max_new_tokens": 150, "temperature": 0.0},
+                    model_name_path=model_name,
+                )
             )
             if (
                 rewritten_query

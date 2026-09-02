@@ -346,7 +346,9 @@ class QueryTemplateFilterer:
                 continue
 
             for expression, doc_value in zip(expressions, doc_values):
-                accept_document = safe_evaluate_template_filter(expression, doc_value)
+                accept_document = safe_evaluate_template_filter(
+                    expression, doc_value
+                )
                 if not accept_document:
                     return False
 
