@@ -17,6 +17,7 @@ from engine.engine_core.protocols import (
     RelationalDataProtocol,
     ModelConfigProtocol,
 )
+from data.controllers.constants import DEFAULT_MIN_SIMILARITY
 from engine.engine_core.search_engine import SearchEngineCore
 
 
@@ -67,6 +68,7 @@ class QueryPipeline:
         max_results = int(search_options.get("max_results", 40))
         hybrid_search = bool(search_options.get("hybrid_search", True))
         rerank_results_flag = bool(search_options.get("rerank_results", False))
+        min_similarity = search_options.get("min_similarity", DEFAULT_MIN_SIMILARITY)
 
         # Detect language if needed
         language: Optional[str] = None
@@ -114,6 +116,7 @@ class QueryPipeline:
             rerank=rerank_results_flag,
             language=language,
             hybrid_search=hybrid_search,
+            min_similarity=min_similarity,
         )
 
         return {

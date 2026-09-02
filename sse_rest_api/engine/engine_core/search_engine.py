@@ -124,6 +124,9 @@ def prepare_documents_stats(
     dict
         Mapping ``{document_name: stats_dict}``.
     """
+    if not postgres_docs:
+        return {}
+
     doc_stats: dict[str, dict] = {}
     for result in postgres_docs:
         result_inner = result["result"]
@@ -151,8 +154,11 @@ def prepare_documents_stats(
         res["score"] /= res["hits"]
         res["pages"] = sorted(set(res["pages"]))
         res["pages_count"] = len(res["pages"])
+        # Clamp the mean score so that non-positive cosine similarity
+        # values (possible for unrelated texts) do not break math.log.
+        score_base = max(float(res["score"]), smooth_factor)
         res["score_weighted"] = math.log(
-            float(res["score"] * res["hits"] * res["pages_count"])
+            float(score_base * res["hits"] * res["pages_count"])
         )
         w_scores.append(res["score_weighted"])
 
@@ -195,7 +201,8 @@ def filter_stats_to_display_results(
     return {
         doc: res
         for doc, res in doc_stats.items()
-        if res["hits"] >= remove_under_hits and res["pages_count"] >= remove_under_pages
+        if res["hits"] >= remove_under_hits
+        and res["pages_count"] >= remove_under_pages
     }
 
 
@@ -238,7 +245,9 @@ def convert_search_results_to_doc2answer(
     return doc2answers
 
 
-def get_accumulated_docs_by_rank_perc(results: dict, perc_rank_gen_qa: float) -> list:
+def get_accumulated_docs_by_rank_perc(
+    results: dict, perc_rank_gen_qa: float
+) -> list:
     """
     Return document names whose cumulative weighted score reaches the
     given percentage of the total.
@@ -368,6 +377,7 @@ class SearchEngineCore:
         language: str | None = None,
         rrf_k: int = 60,
         hybrid_search: bool = True,
+        min_similarity: float | None = None,
     ) -> dict:
         """
         Execute the full hybrid search pipeline.
@@ -390,6 +400,8 @@ class SearchEngineCore:
             RRF constant for rank fusion.
         hybrid_search : bool, default True
             Enable PostgreSQL full‑text search in addition to vector search.
+        min_similarity : float | None, default None
+            Optional cosine similarity cutoff for the vector search.
 
         Returns
         -------
@@ -405,6 +417,7 @@ class SearchEngineCore:
             query_text=query_text,
             max_results=max_results * 10,
             metadata_filter=metadata_filter,
+            min_similarity=min_similarity,
         )
 
         # Step 2: FTS search (via data source protocol)
@@ -420,15 +433,22 @@ class SearchEngineCore:
         # Step 3: RRF merge
         if hybrid_search and postgres_fts_results:
             texts_ids, texts_scores = rrf_merge(
-                milvus_results, postgres_fts_results, k=rrf_k, max_results=max_results * 10
+                milvus_results,
+                postgres_fts_results,
+                k=rrf_k,
+                max_results=max_results * 10,
             )
         else:
-            texts_ids = [int(hit["metadata"]["external_text_id"]) for hit in milvus_results]
+            texts_ids = [
+                int(hit["metadata"]["external_text_id"]) for hit in milvus_results
+            ]
             texts_scores = [hit["score"] for hit in milvus_results]
 
         # Step 4: Get text details via data source protocol
         if texts_ids:
-            texts_with_context = self._data_source.get_text_for_id(texts_ids, surrounding_chunks=2)
+            texts_with_context = self._data_source.get_text_for_id(
+                texts_ids, surrounding_chunks=2
+            )
         else:
             texts_with_context = []
 
@@ -460,22 +480,28 @@ class SearchEngineCore:
         if not self._data_source:
             return
 
-        chunks = self._data_source.get_collection_chunks(collection_id, min_char_len=300)
+        chunks = self._data_source.get_collection_chunks(
+            collection_id, min_char_len=300
+        )
         texts: list[str] = []
         metadatas: list[dict[str, Any]] = []
 
         for chunk in chunks:
             # The data source returns ORM objects; access their attributes.
             texts.append(chunk.text_str)
-            metadatas.append({
-                "external_text_id": str(chunk.id),
-                "external_document_id": str(chunk.page.document.pk),
-                "page_number": getattr(chunk, "page_number", 1),
-                "text_number": getattr(chunk, "text_number", 0),
-                "document_name": chunk.page.document.name,
-                "relative_path": getattr(chunk.page.document, "relative_path", ""),
-                "text_language": getattr(chunk, "language", ""),
-            })
+            metadatas.append(
+                {
+                    "external_text_id": str(chunk.id),
+                    "external_document_id": str(chunk.page.document.pk),
+                    "page_number": getattr(chunk, "page_number", 1),
+                    "text_number": getattr(chunk, "text_number", 0),
+                    "document_name": chunk.page.document.name,
+                    "relative_path": getattr(
+                        chunk.page.document, "relative_path", ""
+                    ),
+                    "text_language": getattr(chunk, "language", ""),
+                }
+            )
 
         if texts:
             self._vector_store.add_texts(texts, metadatas)

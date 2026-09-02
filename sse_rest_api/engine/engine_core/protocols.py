@@ -23,8 +23,13 @@ class VectorStoreProtocol(Protocol):
         query_text: str,
         max_results: int,
         metadata_filter: Optional[Dict[str, Any]] = None,
+        min_similarity: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
-        """Search for similar vectors.  Returns hit dicts with ``score``, ``text_str``, ``metadata``."""
+        """Search for similar vectors.  Returns hit dicts with ``score``, ``text_str``, ``metadata``.
+
+        ``min_similarity`` is an optional cosine similarity cutoff; hits
+        scoring below it are dropped.  ``None`` means no cutoff.
+        """
 
     def rerank(
         self,
@@ -85,27 +90,20 @@ class ModelConfigProtocol(Protocol):
     """Interface for embedder/reranker model configuration."""
 
     @property
-    def embedders(self) -> List[str]:
-        ...
+    def embedders(self) -> List[str]: ...
 
     @property
-    def rerankers(self) -> List[str]:
-        ...
+    def rerankers(self) -> List[str]: ...
 
-    def get_embedder_path(self, model_name: str) -> str:
-        ...
+    def get_embedder_path(self, model_name: str) -> str: ...
 
-    def get_reranker_path(self, model_name: str) -> str:
-        ...
+    def get_reranker_path(self, model_name: str) -> str: ...
 
-    def get_embedder_vector_size(self, model_name: str) -> int:
-        ...
+    def get_embedder_vector_size(self, model_name: str) -> int: ...
 
-    def get_embedder_device(self, model_name: str) -> str:
-        ...
+    def get_embedder_device(self, model_name: str) -> str: ...
 
-    def get_reranker_device(self, model_name: str) -> str:
-        ...
+    def get_reranker_device(self, model_name: str) -> str: ...
 
 
 class GenerativeServiceProtocol(Protocol):
@@ -117,12 +115,12 @@ class GenerativeServiceProtocol(Protocol):
         query_instruction: str,
         query_options: Dict[str, Any],
         system_prompt: Optional[str] = None,
-    ) -> Any:
-        ...
+    ) -> Any: ...
 
 
 class ExtractiveQAProtocol(Protocol):
     """Interface for extractive question‑answering services."""
 
-    def run_extractive_qa(self, question_str: str, search_results: Dict[str, Any]) -> Dict[str, Any]:
-        ...
+    def run_extractive_qa(
+        self, question_str: str, search_results: Dict[str, Any]
+    ) -> Dict[str, Any]: ...
