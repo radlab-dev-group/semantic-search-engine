@@ -1,5 +1,6 @@
 import hashlib
 
+
 def compute_text_hash(text: str) -> str:
     """
     Computes MD5 hash of the given text.
