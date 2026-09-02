@@ -15,7 +15,7 @@ POSTGRES_PASSWORD="SuperSecretPassword123"
 POSTGRES_USER="admin"
 POSTGRES_DB="sse_backend"
 # port dostępny w sieci
-HOST_PORT=5457
+HOST_PORT=5468
 DOCKER_IMAGE="postgres:latest"
 
 # ------------------- Funkcje pomocnicze -------------------
