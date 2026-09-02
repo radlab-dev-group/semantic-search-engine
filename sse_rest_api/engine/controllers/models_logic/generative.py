@@ -12,11 +12,17 @@ from llm_router_lib.client import LLMRouterClient
 from system.models import OrganisationUser
 from chat.models import MessageState
 from engine.models import UserQueryResponse, UserQueryResponseAnswer
+
 # Import from engine_core where possible (pure computation functions)
-from engine.engine_core import convert_search_results_to_doc2answer, get_accumulated_docs_by_rank_perc
+from engine.engine_core import (
+    convert_search_results_to_doc2answer,
+    get_accumulated_docs_by_rank_perc,
+)
 
 # Keep DBSemanticSearchController import for backward-compat callers that still need it
-from engine.controllers.search.semantic import DBSemanticSearchController  # noqa: F401
+from engine.controllers.search.semantic import (
+    DBSemanticSearchController,
+)  # noqa: F401
 
 
 class GenerativeModelConfig:
@@ -222,12 +228,10 @@ class GenerativeModelControllerApi:
         )
         request_data["question_str"] = question_str
         request_data["question_prompt"] = question_prompt
-        request_data["texts"] = (
-            convert_search_results_to_doc2answer(
-                search_results=search_results,
-                which_docs=which_docs,
-                use_doc_names_in_response=use_doc_names_in_response,
-            )
+        request_data["texts"] = convert_search_results_to_doc2answer(
+            search_results=search_results,
+            which_docs=which_docs,
+            use_doc_names_in_response=use_doc_names_in_response,
         )
         request_data["model_name"] = qa_gen_model
 

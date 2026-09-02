@@ -83,17 +83,17 @@ class EmbeddingModelsConfig:
     @staticmethod
     def get_embedder_path(model_name):
         """
-         Return the filesystem path for the given embedder model.
+                 Return the filesystem path for the given embedder model.
 
-        Parameters
-        ----------
-        model_name : str
-            Name of the embedder model as listed in ``ALL_AVAILABLE_EMBEDDERS_MODELS``.
+                Parameters
+                ----------
+                model_name : str
+                    Name of the embedder model as listed in ``ALL_AVAILABLE_EMBEDDERS_MODELS``.
 
-        Returns
--------
-        str
-            Path to the model files.
+                Returns
+        -------
+                str
+                    Path to the model files.
         """
         _ensure_config_loaded()
         return ALL_AVAILABLE_EMBEDDERS_MODELS[model_name]["path"]
