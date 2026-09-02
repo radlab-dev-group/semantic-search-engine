@@ -67,7 +67,9 @@ class DBTextSearchController:
                     page_id__in=page_ids
                 ).values("page_id", "text_number", "text_str")
                 for ctx in all_possible_contexts:
-                    context_map[(ctx["page_id"], ctx["text_number"])] = ctx["text_str"]
+                    context_map[(ctx["page_id"], ctx["text_number"])] = ctx[
+                        "text_str"
+                    ]
 
         doc_results = []
         for text_id, score in zip(texts_ids, texts_scores):
@@ -210,22 +212,22 @@ class DBTextSearchController:
         only_used_to_search: bool = True,
     ) -> list[str]:
         """
-        Find document names whose relative path contains any of the given
-        substrings.
+                Find document names whose relative path contains any of the given
+                substrings.
 
-        Parameters
-        ----------
-        collection : CollectionOfDocuments
-            The collection to search.
-        texts : list[str]
-            Substrings to look for in ``relative_path``.
-        only_used_to_search : bool, default True
-            Restrict to documents marked ``use_in_search=True``.
+                Parameters
+                ----------
+                collection : CollectionOfDocuments
+                    The collection to search.
+                texts : list[str]
+                    Substrings to look for in ``relative_path``.
+                only_used_to_search : bool, default True
+                    Restrict to documents marked ``use_in_search=True``.
 
-        Returns
--------
-        list[str]
-            Unique document names matching at least one substring.
+                Returns
+        -------
+                list[str]
+                    Unique document names matching at least one substring.
         """
         all_doc_contains = []
         for text in texts:
@@ -270,13 +272,19 @@ class DBTextSearchController:
         list
             List of tuples (text_id, rank).
         """
-        queryset = DocumentPageText.objects.filter(page__document__collection=collection)
+        queryset = DocumentPageText.objects.filter(
+            page__document__collection=collection
+        )
 
         if filters:
             if "document_names" in filters and filters["document_names"]:
-                queryset = queryset.filter(page__document__name__in=filters["document_names"])
+                queryset = queryset.filter(
+                    page__document__name__in=filters["document_names"]
+                )
             if "relative_paths" in filters and filters["relative_paths"]:
-                queryset = queryset.filter(page__document__relative_path__in=filters["relative_paths"])
+                queryset = queryset.filter(
+                    page__document__relative_path__in=filters["relative_paths"]
+                )
             if "language" in filters and filters["language"]:
                 queryset = queryset.filter(language=filters["language"])
         elif language:
@@ -289,9 +297,10 @@ class DBTextSearchController:
         elif language == "en":
             lang_config = "english"
 
-        vector = SearchVector("text_str", weight="A", config=lang_config) + \
-                 SearchVector("text_str_clear", weight="B", config=lang_config)
-        
+        vector = SearchVector(
+            "text_str", weight="A", config=lang_config
+        ) + SearchVector("text_str_clear", weight="B", config=lang_config)
+
         query = SearchQuery(query_str, config=lang_config)
 
         results = (
@@ -301,4 +310,3 @@ class DBTextSearchController:
         )
 
         return [(res.id, res.rank) for res in results]
-

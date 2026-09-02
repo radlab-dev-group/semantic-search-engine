@@ -20,25 +20,25 @@ from pymilvus import (
 INDEX_QUERY_PARAMS = {
     "HNSW": {
         "INDEX_PARAMS": {
-            "metric_type": "L2",
+            "metric_type": "COSINE",
             "index_type": "HNSW",
             "params": {"M": 8, "efConstruction": 64},
             "index_name": "emb_idx",
         },
         "QUERY_PARAMS": {
-            "metric_type": "L2",
+            "metric_type": "COSINE",
             "params": {"ef": 100},
         },
     },
     "IVF_FLAT": {
         "INDEX_PARAMS": {
             "index_type": "IVF_FLAT",
-            "metric_type": "L2",
+            "metric_type": "COSINE",
             "params": {"nlist": 1536},
             "index_name": "emb_idx",
         },
         "QUERY_PARAMS": {
-            "metric_type": "L2",
+            "metric_type": "COSINE",
             "params": {"nprobe": 128},
             "offset": 0,
         },
@@ -58,8 +58,10 @@ class MilvusHandler:
     DB_FIELD_IS_ACTIVE = "is_active"
     DB_FIELD_EMBEDDING = "embedding"
 
-    DEFAULT_INDEX_PARAMS = INDEX_QUERY_PARAMS[DEFAULT_INDEX_TYPE]["INDEX_PARAMS"]
-    DEFAULT_INDEX_PARAMS["field_name"] = DB_FIELD_EMBEDDING
+    DEFAULT_INDEX_PARAMS = {
+        **INDEX_QUERY_PARAMS[DEFAULT_INDEX_TYPE]["INDEX_PARAMS"],
+        "field_name": DB_FIELD_EMBEDDING,
+    }
 
     BASE_FILTER_EXPR = f"{DB_FIELD_IS_ACTIVE} == true"
     SEARCH_FIELDS = [DB_FIELD_TEXT, DB_FIELD_METADATA]
@@ -239,6 +241,7 @@ class MilvusHandler:
         additional_output_fields: list | None = None,
         post_search_options: dict | None = None,
         metadata_filter: dict | None = None,
+        min_similarity: float | None = None,
     ) -> list:
         """
         Main search function for milvus collection.
@@ -249,6 +252,8 @@ class MilvusHandler:
         :param post_search_options: Additional options to pass after db
         search is finished, like reranking
         :param metadata_filter: Filtering options
+        :param min_similarity: Optional cosine similarity cutoff. Hits with
+        score lower than this value are dropped. ``None`` means no cutoff.
         :return: List of results
         """
         self.__prepare_milvus_client()
@@ -278,6 +283,8 @@ class MilvusHandler:
             query_results = []
             for hit in results:
                 res_dict = {"score": hit["distance"]}
+                if min_similarity is not None and res_dict["score"] < min_similarity:
+                    continue
                 for q_param in return_fields:
                     res_dict[q_param] = hit["entity"].get(q_param, "")
                 query_results.append(res_dict)
@@ -544,7 +551,7 @@ class MilvusHandler:
         )
         index_params.add_index(
             index_type="IVF_FLAT",
-            metric_type="L2",
+            metric_type="COSINE",
             params={"nlist": 1024},
             index_name="emb_idx",
         )
