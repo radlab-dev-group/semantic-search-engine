@@ -1,0 +1,22 @@
+# Development / CI toolchain for the Semantic Search Engine.
+# Runtime dependencies live in requirements.txt — this file is deliberately NOT
+# installed into the production image (see Dockerfile and .dockerignore).
+#
+# Install into a separate venv:  pip install -r sse_rest_api/requirements-dev.txt
+
+# --- tests -------------------------------------------------------------------
+# pytest-django is what makes the DJANGO_SETTINGS_MODULE option in
+# pyproject.toml a recognised pytest option. The tests in sse_rest_api/tests
+# run without Django; the ones in sse_rest_api/engine need the ML stack and run
+# inside the application image.
+pytest>=8.0,<10.0
+pytest-django>=4.8,<5.0
+
+# --- formatting / static analysis -------------------------------------------
+# Pinned so that local runs (check-dev.sh) and CI agree on the verdict.
+black>=24.1,<26.0
+flake8>=7.0,<8.0
+bandit>=1.7,<2.0
+# Optional, broader sweeps (slow; not enforced in CI):
+pylint>=3.2,<4.0
+mypy>=1.10,<2.0

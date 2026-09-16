@@ -1,0 +1,52 @@
+# Version control, editors, agent config
+.git
+.gitignore
+.github
+.idea
+.vscode
+.agents
+.codex
+
+# Python artefacts
+**/__pycache__
+*.py[cod]
+*.egg-info
+.venv
+venv
+.pytest_cache
+.mypy_cache
+.coverage
+htmlcov
+
+# Local state, logs, scratch files
+*.log
+tmp/
+staticfiles/
+
+# Secrets — injected at run time, never baked into an image
+.env
+.env.*
+!.env.example
+sse_rest_api/upload_sse
+sse_rest_api/configs/*.json
+!sse_rest_api/configs/*.example.json
+!sse_rest_api/configs/embedders.json
+!sse_rest_api/configs/generative-models.json
+!sse_rest_api/configs/models.json
+!sse_rest_api/configs/query-templates.json
+!sse_rest_api/configs/rerankers.json
+sse_rest_api/configs/not_tested
+sse_rest_api/configs/secret-key.txt
+!sse_rest_api/configs/secret-key.example.txt
+
+# TLS material (mounted into the nginx container at run time)
+nginx/certs
+
+# Documentation
+DEPENDENCIES.md
+EVALUATE.md
+README.md
+README-pl.md
+SETUP.md
+URUCHOMIENIE.md
+LICENSE
