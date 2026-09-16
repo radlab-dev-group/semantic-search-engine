@@ -44,6 +44,7 @@ if not settings.configured:
             "data",
             "system",
             "engine",
+            "chat",
         ],
         DATABASES={
             "default": {
