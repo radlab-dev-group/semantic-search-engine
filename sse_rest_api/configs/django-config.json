@@ -36,8 +36,8 @@
     "NAME": "sse_backend",
     "USER": "admin",
     "PASSWORD": "SuperSecretPassword123",
-    "HOST": "192.168.100.67",
-    "PORT": "5457"
+    "HOST": "localhost",
+    "PORT": "5471"
   },
   "celery": {
     "broker_url": "amqp://***:***@***:***/"

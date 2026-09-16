@@ -1,10 +1,12 @@
 import json
+import os
 
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from main.src.response import response_with_status
 from main.src.decorators import required_params_exists, get_default_language
+from main.src.constants import CONFIG_DIR
 
 from system.core.decorators import get_organisation_user
 from engine.controllers.search.query import SearchQueryController
@@ -49,14 +51,20 @@ class SearchWithOptions(APIView):
             collection_name=collection_name, created_by=organisation_user
         )
         if collection is None:
-            raise Exception("Collection is not found!")
+            return response_with_status(
+                status=False,
+                language=language,
+                error_name="Collection not found or access denied!",
+                response_body={},
+            )
 
+        sse_engin_config_path = os.path.join(CONFIG_DIR, "milvus_config.json")
         results = SearchQueryController.new_query(
             query_str=query_str,
             search_options_dict=options_dict,
             collection=collection,
             organisation_user=organisation_user,
-            sse_engin_config_path="./configs/milvus_config.json",
+            sse_engin_config_path=sse_engin_config_path,
             ignore_question_lang_detect=ignore_question_lang_detect,
         )
 
@@ -81,8 +89,6 @@ class GenerativeAnswerForQuestion(APIView):
     required_params = ["query_response_id", "query_options"]
     optional_params = ["system_prompt"]
 
-    gen_model_controller = GenerativeModelController(store_to_db=True)
-
     @required_params_exists(required_params=required_params)
     @get_organisation_user
     @get_default_language
@@ -99,12 +105,19 @@ class GenerativeAnswerForQuestion(APIView):
             system_prompt = None
 
         user_response = SearchQueryController.get_user_response_by_id(
-            query_response_id=query_response_id
+            query_response_id=query_response_id, organisation_user=organisation_user
         )
 
-        # TODO: trzeba sprawdzić czy organisation_user
-        # może odczytać wyniki z query_response_id
-        query_response = self.gen_model_controller.generative_answer_for_response(
+        if user_response is None:
+            return response_with_status(
+                status=False,
+                language=language,
+                error_name="Response not found or access denied!",
+                response_body={},
+            )
+
+        gen_model_controller = GenerativeModelController(store_to_db=True)
+        query_response = gen_model_controller.generative_answer_for_response(
             user_response=user_response,
             query_instruction=query_instruction,
             query_options=query_options,
@@ -115,8 +128,11 @@ class GenerativeAnswerForQuestion(APIView):
             which_key = "DEEPL_AUTH_KEY"
             if "openai" in query_options["generative_model"]:
                 which_key = "OPENAI_API_KEY"
-            return Response(
-                {"status": False, "errors": {"msg": f"{which_key} is not set!"}}
+            return response_with_status(
+                status=False,
+                language=language,
+                error_name=f"{which_key} is not set or model error occurred!",
+                response_body={},
             )
 
         return response_with_status(
@@ -133,50 +149,42 @@ class GenerativeAnswerForQuestion(APIView):
 
 
 class ListGenerativeModels(APIView):
-    gam_controller = GenerativeModelControllerApi(deepl_api_key="")
-
     @get_default_language
     def get(self, language, request):
-
+        gam_controller = GenerativeModelControllerApi(deepl_api_key="")
         return response_with_status(
             status=True,
             language=language,
             error_name=None,
-            response_body=self.gam_controller.models_config.active_local_models_hosts,
+            response_body=gam_controller.models_config.active_local_models_hosts,
         )
 
 
 class ListEmbeddersModels(APIView):
-    e_cfg = EmbeddingModelsConfig()
-
     @get_default_language
     def get(self, language, request):
         return response_with_status(
             status=True,
             language=language,
             error_name=None,
-            response_body={"models": self.e_cfg.embedders()},
+            response_body={"models": EmbeddingModelsConfig.embedders()},
         )
 
 
 class ListRerankersModels(APIView):
-    e_cfg = EmbeddingModelsConfig()
-
     @get_default_language
     def get(self, language, request):
         return response_with_status(
             status=True,
             language=language,
             error_name=None,
-            response_body={"models": self.e_cfg.rerankers()},
+            response_body={"models": EmbeddingModelsConfig.rerankers()},
         )
 
 
 class SetRateForQueryResponseAnswer(APIView):
     required_params = ["answer_response_id", "rate_value", "rate_value_max"]
     optional_params = ["rate_comment"]
-
-    engine_controller = EngineSystemController(store_to_db=True)
 
     @required_params_exists(
         required_params=required_params, optional_params=optional_params
@@ -191,11 +199,21 @@ class SetRateForQueryResponseAnswer(APIView):
 
         query_response_answer = (
             GenerativeModelController.get_user_query_response_answer(
-                user_query_response_id=answer_response_id
+                user_query_response_id=answer_response_id,
+                organisation_user=organisation_user,
             )
         )
 
-        self.engine_controller.set_rating(
+        if query_response_answer is None:
+            return response_with_status(
+                status=False,
+                language=language,
+                error_name="Answer not found or access denied!",
+                response_body={},
+            )
+
+        engine_controller = EngineSystemController(store_to_db=True)
+        engine_controller.set_rating(
             query_response_answer,
             rating_value=rate_value,
             rating_value_max=rate_value_max,

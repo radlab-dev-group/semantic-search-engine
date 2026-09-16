@@ -1,7 +1,6 @@
 import os
 import json
 import tqdm
-import hashlib
 
 from typing import List, Dict, Any
 from django.db.models import QuerySet
@@ -20,6 +19,7 @@ from data.models import (
 )
 from data.controllers.denoiser import DenoiserController
 from engine.controllers.models_logic.embedders_rerankers import EmbeddingModelsConfig
+from main.src.utils import compute_text_hash
 
 
 class RelationalDBController:
@@ -222,16 +222,16 @@ class RelationalDBController:
                 name=os.path.basename(document_dict["filepath"]),
                 collection=collection,
                 path=document_dict["filepath"],
-                document_hash=self.hash_from_text(
-                    text_str=metadata_as_str + document_dict["filepath"]
+                document_hash=compute_text_hash(
+                    metadata_as_str + document_dict["filepath"]
                 ),
             )
             cr = False
         except Document.DoesNotExist:
             document, cr = Document.objects.get_or_create(
                 name=os.path.basename(document_dict["filepath"]),
-                document_hash=self.hash_from_text(
-                    text_str=metadata_as_str + document_dict["filepath"]
+                document_hash=compute_text_hash(
+                    metadata_as_str + document_dict["filepath"]
                 ),
                 collection=collection,
                 path=document_dict["filepath"],
@@ -300,7 +300,7 @@ class RelationalDBController:
         self, page: DocumentPage, doc_page: dict, use_text_denoiser: bool = False
     ) -> DocumentPageText:
         metadata = doc_page["metadata"]
-        text_hash = self.hash_from_text(doc_page["page_content"])
+        text_hash = compute_text_hash(doc_page["page_content"])
         denoised_page_content = None
         if use_text_denoiser:
             denoised_page_content = self._run_denoiser(
@@ -449,10 +449,6 @@ class RelationalDBController:
     @staticmethod
     def upload_documents_to_dir(destination_dir):
         return destination_dir
-
-    @staticmethod
-    def hash_from_text(text_str):
-        return hashlib.md5(text_str.encode("utf8")).hexdigest()
 
     @staticmethod
     def exists_document_in_db(

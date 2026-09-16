@@ -1,5 +1,4 @@
 import os
-import hashlib
 import zipfile
 import datetime
 
@@ -15,6 +14,7 @@ from data.models import UploadedDocuments, DocumentPageText, CollectionOfDocumen
 
 from engine.controllers.search.semantic import DBSemanticSearchController
 from engine.controllers.database.relational_db import RelationalDBController
+from main.src.utils import compute_text_hash
 
 
 class UploadDocumentsController:
@@ -120,15 +120,11 @@ class UploadDocumentsController:
     def get_add_uploaded_documents(
         self, dir_path: str, organisation_user: OrganisationUser
     ) -> UploadedDocuments:
-        dir_hash = self.hash_from_text(dir_path)
+        dir_hash = compute_text_hash(dir_path)
         upl_doc, _ = UploadedDocuments.objects.get_or_create(
             dir_path=dir_path, dir_hash=dir_hash, uploaded_by=organisation_user
         )
         return upl_doc
-
-    @staticmethod
-    def hash_from_text(text_str):
-        return hashlib.md5(text_str.encode("utf8")).hexdigest()
 
     @staticmethod
     def unzip_uploaded_zip_file(full_upload_path, zip_file_obj) -> list:

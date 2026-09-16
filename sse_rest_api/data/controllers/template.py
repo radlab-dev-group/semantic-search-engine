@@ -33,7 +33,7 @@ from data.models import (
     QueryTemplateGrammar,
     QueryTemplate,
 )
-from data.controllers.constants import VALUE_OF_DATA_EVAL_EXPRESSION
+from data.controllers.filter_expr import safe_evaluate_template_filter
 
 
 class QueryTemplatesSearchGrammar:
@@ -346,17 +346,9 @@ class QueryTemplateFilterer:
                 continue
 
             for expression, doc_value in zip(expressions, doc_values):
-                expression_to_eval = expression.replace(
-                    VALUE_OF_DATA_EVAL_EXPRESSION, doc_value
+                accept_document = safe_evaluate_template_filter(
+                    expression, doc_value
                 )
-                try:
-                    accept_document = eval(expression_to_eval)
-                except Exception as e:
-                    accept_document = False
-                    print("=" * 100)
-                    print(e)
-                    print("Error while eval:", expression_to_eval)
-                    print("=" * 100)
                 if not accept_document:
                     return False
 

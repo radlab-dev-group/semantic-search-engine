@@ -1,6 +1,7 @@
 """
-embedders_rerankers.py
----------------------------------
+models_config.py
+-----------------
+
 Utility module for loading and accessing configuration of embedding and
 reranking models.
 
@@ -81,25 +82,25 @@ class EmbeddingModelsConfig:
             self._load_rerankers_cfg()
 
     @staticmethod
-    def get_embedder_path(model_name):
+    def get_embedder_path(model_name: str) -> str:
         """
-                 Return the filesystem path for the given embedder model.
+         Return the filesystem path for the given embedder model.
 
-                Parameters
-                ----------
-                model_name : str
-                    Name of the embedder model as listed in ``ALL_AVAILABLE_EMBEDDERS_MODELS``.
+        Parameters
+        ----------
+        model_name : str
+            Name of the embedder model as listed in ``ALL_AVAILABLE_EMBEDDERS_MODELS``.
 
-                Returns
+        Returns
         -------
-                str
-                    Path to the model files.
+        str
+            Path to the model files.
         """
         _ensure_config_loaded()
         return ALL_AVAILABLE_EMBEDDERS_MODELS[model_name]["path"]
 
     @staticmethod
-    def get_embedder_vector_size(model_name):
+    def get_embedder_vector_size(model_name: str) -> int:
         """
         Return the dimensionality of the vectors produced by an embedder.
 
@@ -117,7 +118,7 @@ class EmbeddingModelsConfig:
         return ALL_AVAILABLE_EMBEDDERS_MODELS[model_name]["vector_size"]
 
     @staticmethod
-    def get_embedder_device(model_name):
+    def get_embedder_device(model_name: str) -> str:
         """
         Return the compute device (e.g., ``cpu`` or ``cuda``) for an embedder.
 
@@ -135,7 +136,7 @@ class EmbeddingModelsConfig:
         return ALL_AVAILABLE_EMBEDDERS_MODELS[model_name]["device"]
 
     @staticmethod
-    def get_reranker_path(model_name):
+    def get_reranker_path(model_name: str) -> str:
         """
         Return the filesystem path for the given reranker model.
 
@@ -153,7 +154,7 @@ class EmbeddingModelsConfig:
         return ALL_AVAILABLE_RERANKERS_MODELS[model_name]["path"]
 
     @staticmethod
-    def get_reranker_device(model_name):
+    def get_reranker_device(model_name: str) -> str:
         """
         Return the compute device for a reranker model.
 
@@ -171,16 +172,16 @@ class EmbeddingModelsConfig:
         return ALL_AVAILABLE_RERANKERS_MODELS[model_name]["device"]
 
     @staticmethod
-    def embedders():
+    def embedders() -> list:
         _ensure_config_loaded()
         return list(ALL_AVAILABLE_EMBEDDERS_MODELS.keys())
 
     @staticmethod
-    def rerankers():
+    def rerankers() -> list:
         _ensure_config_loaded()
         return list(ALL_AVAILABLE_RERANKERS_MODELS.keys())
 
-    def _load_embedders_cfg(self):
+    def _load_embedders_cfg(self) -> None:
         """
         Load embedder configuration from ``self._embedders_config``.
 
@@ -198,7 +199,7 @@ class EmbeddingModelsConfig:
         for a_model in whole_emb["active_models"]:
             ALL_AVAILABLE_EMBEDDERS_MODELS[a_model] = m2config[a_model]
 
-    def _load_rerankers_cfg(self):
+    def _load_rerankers_cfg(self) -> None:
         """
         Load reranker configuration from ``self._rerankers_config``.
 

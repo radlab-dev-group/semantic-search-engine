@@ -3,7 +3,7 @@
     {
       "name": "radlab/polish-cross-encoder",
       "path": "/mnt/data2/llms/models/radlab-open/rerankers/radlab_polish-cross-encoder",
-      "device": "cuda:0"
+      "device": "cpu"
     }
   ],
   "active_models": [

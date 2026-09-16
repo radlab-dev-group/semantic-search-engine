@@ -1,3 +1,5 @@
+from django.db.models import F
+from django.contrib.postgres.search import SearchVector, SearchQuery, SearchRank
 from data.models import CollectionOfDocuments, DocumentPageText, Document
 
 
@@ -20,7 +22,7 @@ class DBTextSearchController:
     ) -> list:
         """
         Retrieve ``DocumentPageText`` objects for the given IDs and attach
-        their scores.
+        their scores, efficiently fetching surrounding context in batches.
 
         Parameters
         ----------
@@ -34,18 +36,99 @@ class DBTextSearchController:
         Returns
         -------
         list
-            List of dictionaries produced by ``_prepare_document_page``.
+            List of dictionaries containing the main text and its context.
         """
-        document_pages = DocumentPageText.objects.filter(id__in=texts_ids)
-        doc_results = []
-        for idx, doc_page in enumerate(document_pages):
-            text_score = float(texts_scores[idx])
-            doc_results.append(
-                self._prepare_document_page(
-                    doc_page, score=text_score, surrounding_chunks=surrounding_chunks
-                )
+        document_pages = list(
+            DocumentPageText.objects.filter(id__in=texts_ids).select_related(
+                "page__document"
             )
+        )
+        # Map IDs to objects to maintain order from texts_ids
+        pages_map = {page.id: page for page in document_pages}
+
+        # Identify all needed context chunks
+        context_map = {}
+        if surrounding_chunks > 0:
+            page_ids = set()
+            needed_context = []  # List of (page_id, text_number)
+            for page in document_pages:
+                page_ids.add(page.page_id)
+                tn = page.text_number
+                # Left context
+                for i in range(max(tn - surrounding_chunks, 0), tn):
+                    needed_context.append((page.page_id, i))
+                # Right context
+                for i in range(tn + 1, tn + surrounding_chunks + 1):
+                    needed_context.append((page.page_id, i))
+
+            # Batch fetch all potential context chunks for these pages
+            if page_ids:
+                all_possible_contexts = DocumentPageText.objects.filter(
+                    page_id__in=page_ids
+                ).values("page_id", "text_number", "text_str")
+                for ctx in all_possible_contexts:
+                    context_map[(ctx["page_id"], ctx["text_number"])] = ctx[
+                        "text_str"
+                    ]
+
+        doc_results = []
+        for text_id, score in zip(texts_ids, texts_scores):
+            doc_page = pages_map.get(text_id)
+            if doc_page:
+                doc_results.append(
+                    self._prepare_document_page_with_map(
+                        doc_page,
+                        score=float(score),
+                        surrounding_chunks=surrounding_chunks,
+                        context_map=context_map,
+                    )
+                )
         return doc_results
+
+    def _prepare_document_page_with_map(
+        self,
+        doc_page: DocumentPageText,
+        score: float,
+        surrounding_chunks: int,
+        context_map: dict,
+    ) -> dict:
+        """
+        Build the result dictionary using a pre-fetched context map.
+        """
+        main_text = {
+            "score": score,
+            "document_name": doc_page.page.document.name,
+            "relative_path": doc_page.page.document.relative_path,
+            "page_number": doc_page.page.page_number,
+            "text_number": doc_page.text_number,
+            "language": doc_page.language,
+            "text_str": doc_page.text_str,
+        }
+
+        left_context = []
+        right_context = []
+
+        if surrounding_chunks > 0:
+            tn = doc_page.text_number
+            pid = doc_page.page_id
+            # Left
+            for i in range(max(tn - surrounding_chunks, 0), tn):
+                val = context_map.get((pid, i))
+                if val is not None:
+                    left_context.append({"text_number": i, "text_str": val})
+            # Right
+            for i in range(tn + 1, tn + surrounding_chunks + 1):
+                val = context_map.get((pid, i))
+                if val is not None:
+                    right_context.append({"text_number": i, "text_str": val})
+
+        return {
+            "result": {
+                "left_context": left_context,
+                "text": main_text,
+                "right_context": right_context,
+            }
+        }
 
     @staticmethod
     def get_all_categories(collection: CollectionOfDocuments):
@@ -129,22 +212,22 @@ class DBTextSearchController:
         only_used_to_search: bool = True,
     ) -> list[str]:
         """
-        Find document names whose relative path contains any of the given
-        substrings.
+                Find document names whose relative path contains any of the given
+                substrings.
 
-        Parameters
-        ----------
-        collection : CollectionOfDocuments
-            The collection to search.
-        texts : list[str]
-            Substrings to look for in ``relative_path``.
-        only_used_to_search : bool, default True
-            Restrict to documents marked ``use_in_search=True``.
+                Parameters
+                ----------
+                collection : CollectionOfDocuments
+                    The collection to search.
+                texts : list[str]
+                    Substrings to look for in ``relative_path``.
+                only_used_to_search : bool, default True
+                    Restrict to documents marked ``use_in_search=True``.
 
-        Returns
+                Returns
         -------
-        list[str]
-            Unique document names matching at least one substring.
+                list[str]
+                    Unique document names matching at least one substring.
         """
         all_doc_contains = []
         for text in texts:
@@ -160,90 +243,70 @@ class DBTextSearchController:
                 all_doc_contains.extend(doc_contains)
         return list(set(all_doc_contains))
 
-    def _prepare_document_page(
-        self, doc_page: DocumentPageText, score: float, surrounding_chunks: int
-    ) -> dict:
+    def search_texts(
+        self,
+        query_str: str,
+        collection: CollectionOfDocuments,
+        max_results: int = 100,
+        filters: dict = None,
+        language: str = None,
+    ) -> list:
         """
-        Build the result dictionary for a single ``DocumentPageText``
-        instance, including surrounding context if requested.
+        Perform a full-text search in PostgreSQL using FTS functionality.
 
         Parameters
         ----------
-        doc_page : DocumentPageText
-            The text fragment to process.
-        score : float
-            Relevance score associated with this fragment.
-        surrounding_chunks : int
-            Number of adjacent chunks to include as left/right context.
-
-        Returns
-        -------
-        dict
-            Structured representation of the fragment and its context.
-        """
-        main_text = {
-            "score": score,
-            "document_name": doc_page.page.document.name,
-            "relative_path": doc_page.page.document.relative_path,
-            "page_number": doc_page.page.page_number,
-            "text_number": doc_page.text_number,
-            "language": doc_page.language,
-            "text_str": doc_page.text_str,
-        }
-        left_context = self._prepare_text_context(
-            doc_page, surrounding_chunks, context="left"
-        )
-        right_context = self._prepare_text_context(
-            doc_page, surrounding_chunks, context="right"
-        )
-        return {
-            "result": {
-                "left_context": left_context,
-                "text": main_text,
-                "right_context": right_context,
-            }
-        }
-
-    def _prepare_text_context(self, doc_page, surrounding_chunks, context) -> list:
-        """
-        Retrieve surrounding text chunks for ``doc_page`` either to the
-        ``left`` or ``right`` of the current fragment.
-
-        Parameters
-        ----------
-        doc_page : DocumentPageText
-            Reference fragment.
-        surrounding_chunks : int
-            Number of neighbouring chunks to fetch.
-        context : str
-            Either ``"left"`` or ``"right"``.
+        query_str : str
+            The query string to search for.
+        collection : CollectionOfDocuments
+            The collection to search within.
+        max_results : int, default 100
+            Maximum number of results to return.
+        filters : dict, optional
+            Additional filters (e.g., document_names, relative_paths).
+        language : str, optional
+            Language for the FTS configuration (e.g., 'polish', 'english').
 
         Returns
         -------
         list
-            List of dictionaries ``{'text_number': int, 'text_str': str}``
-            representing the surrounding context.
+            List of tuples (text_id, rank).
         """
-        text_num = doc_page.text_number
-        if context == "left":
-            beg_position = max(text_num - surrounding_chunks, 0)
-            ctx_nums = [x for x in range(beg_position, text_num)]
-        elif context == "right":
-            ctx_nums = [
-                x for x in range(text_num + 1, text_num + surrounding_chunks + 1)
-            ]
-        else:
-            raise Exception(f"Unknown context type {context}")
-
-        context_res = []
-        doc_pages = DocumentPageText.objects.filter(
-            text_number__in=ctx_nums, page=doc_page.page
+        queryset = DocumentPageText.objects.filter(
+            page__document__collection=collection
         )
-        for d_page in doc_pages:
-            context_res.append(
-                {
-                    "text_number": d_page.text_number,
-                    "text_str": d_page.text_str,
-                }
-            )
-        return context_res
+
+        if filters:
+            if "document_names" in filters and filters["document_names"]:
+                queryset = queryset.filter(
+                    page__document__name__in=filters["document_names"]
+                )
+            if "relative_paths" in filters and filters["relative_paths"]:
+                queryset = queryset.filter(
+                    page__document__relative_path__in=filters["relative_paths"]
+                )
+            if "language" in filters and filters["language"]:
+                queryset = queryset.filter(language=filters["language"])
+        elif language:
+            queryset = queryset.filter(language=language)
+
+        # Map language code to Postgres FTS config name
+        lang_config = "simple"
+        if language == "pl":
+            lang_config = "polish"
+        elif language == "en":
+            lang_config = "english"
+
+        vector = SearchVector(
+            "text_str", weight="A", config=lang_config
+        ) + SearchVector("text_str_clear", weight="B", config=lang_config)
+
+        query = SearchQuery(query_str, config=lang_config)
+
+        results = (
+            queryset.annotate(rank=SearchRank(vector, query))
+            .filter(rank__gt=0.001)
+            .order_by("-rank")[:max_results]
+        )
+
+        return [(res.id, res.rank) for res in results]

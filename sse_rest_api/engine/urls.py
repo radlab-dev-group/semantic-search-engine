@@ -50,6 +50,6 @@ urlpatterns = [
     path(
         prepare_api_url("rerankers"),
         ListRerankersModels.as_view(),
-        name="embedders",
+        name="rerankers",
     ),
 ]

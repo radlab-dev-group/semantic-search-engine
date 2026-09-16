@@ -35,14 +35,16 @@ from data.models import (
     CollectionOfDocuments,
     QueryTemplate,
 )
-from data.controllers.constants import NORMALIZE_EMBEDDINGS
+from data.controllers.constants import NORMALIZE_EMBEDDINGS, DEFAULT_MIN_SIMILARITY
 from data.controllers.template import QueryTemplateController
 
 from engine.models import UserQuery
 from engine.controllers.database.milvus import MilvusHandler
+from engine.database.vector_store_adapter import MilvusVectorStoreAdapter
 from engine.controllers.search.relational import DBTextSearchController
 from engine.controllers.database.relational_db import RelationalDBController
-from engine.controllers.models_logic.embedders_rerankers import EmbeddingModelsConfig
+from engine.engine_core.config.models_config import EmbeddingModelsConfig
+from engine.engine_core.protocols import VectorStoreProtocol
 
 
 class DBSemanticSearchController:
@@ -64,12 +66,13 @@ class DBSemanticSearchController:
 
     def __init__(
         self,
-        jsonl_config_path: str,
-        collection_name: str,
-        index_name: str | None,
+        jsonl_config_path: str | None = None,
+        collection_name: str | None = None,
+        index_name: str | None = None,
         batch_size: int = 10,
         embedder_model: str | None = None,
         cross_encoder_model: str | None = None,
+        vector_store: VectorStoreProtocol | None = None,
     ):
         """
         Initialise the controller with configuration for Milvus, embedder
@@ -77,9 +80,9 @@ class DBSemanticSearchController:
 
         Parameters
         ----------
-        jsonl_config_path : str
+        jsonl_config_path : str | None
             Path to the JSONL configuration for Milvus collections.
-        collection_name : str
+        collection_name : str | None
             Name of the Milvus collection.
         index_name : str | None
             Optional name of the Milvus index to use.
@@ -89,12 +92,26 @@ class DBSemanticSearchController:
             Identifier of the transformer model used for embedding texts.
         cross_encoder_model : str | None, optional
             Identifier of the cross‑encoder model used for reranking.
+        vector_store : VectorStoreProtocol | None, optional
+            Optional protocol‑based vector store.  When supplied this object
+            is used for search / ``add_texts`` instead of a raw ``MilvusHandler``.
         """
         self._logger = get_logger()
 
         self.batch_size = batch_size
         self.max_tokens_in_text = 508
+        self._vector_store = vector_store  # Protocol-based (may be None)
+        self._milvus_handler: MilvusHandler | None = (
+            None  # Legacy concrete (may be None)
+        )
 
+        if vector_store is not None:
+            # Protocol mode — no need to instantiate MilvusHandler.
+            self._text_db_controller = RelationalDBController()
+            self._template_controller = QueryTemplateController()
+            return
+
+        # ---------- legacy mode: create a concrete MilvusHandler ----------
         embedder_device = ""
         embedder_model_path = None
         embedder_vector_size = -1
@@ -123,8 +140,8 @@ class DBSemanticSearchController:
 
         self._milvus_handler = MilvusHandler(
             jsonl_config_path=jsonl_config_path,
-            collection_name=collection_name,
-            collection_description=collection_name,
+            collection_name=collection_name or "",
+            collection_description=collection_name or "",
             embedder_model_path=embedder_model_path,
             embedding_size=embedder_vector_size,
             index_name=index_name,
@@ -166,6 +183,39 @@ class DBSemanticSearchController:
             cross_encoder_model=collection.model_reranker,
         )
 
+    @staticmethod
+    def from_protocol(
+        vector_store: VectorStoreProtocol,
+        jsonl_config_path: str | None = None,
+        collection_name: str | None = None,
+    ) -> "DBSemanticSearchController":
+        """
+        Create a protocol‑based ``DBSemanticSearchController``.
+
+        Use this factory when you want to inject your own vector‑store
+        implementation (e.g. for testing or multi‑backend support).
+
+        Parameters
+        ----------
+        vector_store : VectorStoreProtocol
+            Any object implementing the VectorStoreProtocol interface.
+        jsonl_config_path : str | None, optional
+            Passed through to ``MilvusHandler`` as fallback config.
+        collection_name : str | None, optional
+            Passed through to ``MilvusHandler`` as fallback config.
+
+        Returns
+        -------
+        DBSemanticSearchController
+            A controller that delegates all vector operations to the
+            supplied protocol implementation.
+        """
+        return DBSemanticSearchController(
+            vector_store=vector_store,
+            jsonl_config_path=jsonl_config_path,
+            collection_name=collection_name,
+        )
+
     def index_texts(self, from_collection: CollectionOfDocuments) -> None:
         """
         Index all text fragments belonging to ``from_collection`` into
@@ -195,8 +245,13 @@ class DBSemanticSearchController:
         collection : CollectionOfDocuments
             The collection to which the texts belong.
         """
+        if isinstance(all_texts, QuerySet):
+            all_texts = all_texts.select_related("page__document")
+
+        batch_texts = []
+        batch_metadata = []
+
         with tqdm.tqdm(total=len(all_texts), desc="Indexing documents") as pbar:
-            # batched_texts = []
             for text in all_texts:
                 str_text_to_index = text.text_str
                 if text.text_str_clear and len(text.text_str_clear):
@@ -222,10 +277,23 @@ class DBSemanticSearchController:
                         skip_special_tokens=True,
                     )
 
-                self._milvus_handler.add_single_text(
-                    text=str_text_to_index, metadata=text_metadata
-                )
+                batch_texts.append(str_text_to_index)
+                batch_metadata.append(text_metadata)
+
+                if len(batch_texts) >= self.batch_size:
+                    self._milvus_handler.add_texts(
+                        texts=batch_texts, metadata=batch_metadata
+                    )
+                    batch_texts = []
+                    batch_metadata = []
+
                 pbar.update()
+
+            # Final batch
+            if len(batch_texts) > 0:
+                self._milvus_handler.add_texts(
+                    texts=batch_texts, metadata=batch_metadata
+                )
         return None
 
     def search(
@@ -238,6 +306,7 @@ class DBSemanticSearchController:
         return_with_factored_fields: bool = False,
         search_in_documents: list = None,
         relative_paths: list = None,
+        min_similarity: float | None = None,
     ) -> []:
         """
         Perform a vector search in Milvus with optional metadata filters.
@@ -260,6 +329,9 @@ class DBSemanticSearchController:
             List of document names to restrict the search to.
         relative_paths : list, optional
             List of relative file paths to restrict the search to.
+        min_similarity : float | None, optional
+            Cosine similarity cutoff. Hits scoring below this value are
+            dropped. ``None`` means no cutoff.
 
         Returns
         -------
@@ -279,14 +351,190 @@ class DBSemanticSearchController:
             "return_with_factored_fields": return_with_factored_fields,
         }
 
+        # ------------------------------------------------------------------
+        # Protocol-based path (new): returns a flat list[dict]
+        # Legacy path (old):  returns a list[list[dict]] from MilvusHandler.
+        # ------------------------------------------------------------------
+        if self._vector_store is not None:
+            results = self._vector_store.search(
+                query_text=search_text,
+                max_results=max_results,
+                metadata_filter=metadata_filter if metadata_filter else None,
+                min_similarity=min_similarity,
+            )
+            # Apply reranking via protocol if requested.
+            if rerank_results and results:
+                results = self._vector_store.rerank(
+                    search_text, results, max_results
+                )
+            return results
+
+        # Legacy path — MilvusHandler returns list[list[dict]].
         milvus_search = self._milvus_handler.search(
             search_text=search_text,
             max_results=max_results,
             additional_output_fields=additional_output_fields,
             metadata_filter=metadata_filter,
             post_search_options=post_search_options,
+            min_similarity=min_similarity,
         )
         return milvus_search
+
+    def _rrf_merge(self, milvus_results, postgres_results, k=60, max_results=100):
+        """
+        Merge results using Reciprocal Rank Fusion.
+
+        Parameters
+        ----------
+        milvus_results : list
+            Results from vector search.
+        postgres_results : list
+            Results from text search (list of tuples (id, rank)).
+        k : int, default 60
+            RRF constant.
+        max_results : int, default 100
+            Maximum number of merged results to return.
+
+        Returns
+        -------
+        tuple
+            (sorted_ids, sorted_scores)
+        """
+        scores = {}
+
+        # Process Milvus results
+        for rank, hit in enumerate(milvus_results, 1):
+            try:
+                text_id = int(hit["metadata"]["external_text_id"])
+                scores[text_id] = scores.get(text_id, 0) + 1.0 / (k + rank)
+            except (KeyError, ValueError, TypeError):
+                continue
+
+        # Process Postgres results
+        for rank, (text_id, _) in enumerate(postgres_results, 1):
+            scores[text_id] = scores.get(text_id, 0) + 1.0 / (k + rank)
+
+        # Sort by RRF score
+        sorted_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)[
+            :max_results
+        ]
+
+        return sorted_ids, [scores[tid] for tid in sorted_ids]
+
+    def rerank_results(
+        self, question_str: str, results: list, max_results: int
+    ) -> list:
+        """
+        Rerank provided results using cross-encoder model.
+
+        Parameters
+        ----------
+        question_str : str
+            The query string.
+        results : list
+            List of dictionaries containing search hits.
+        max_results : int
+            Maximum number of results to return after reranking.
+
+        Returns
+        -------
+        list
+            Reranked and truncated list of results.
+        """
+        if not len(results):
+            return results
+
+        self._logger.info("Reranking %d results" % len(results))
+
+        # Protocol-based path — delegates to vector_store protocol.
+        if self._vector_store is not None:
+            try:
+                reranked = self._vector_store.rerank(
+                    query_text=question_str,
+                    results=list(results),
+                    max_results=max_results,
+                )
+                return reranked
+            except Exception as e:
+                self._logger.error("Reranking failed (protocol): %s" % e)
+                return results[:max_results]
+
+        # Legacy path — MilvusHandler internals.
+        formatted_results = []
+        for res in results:
+            formatted_results.append(
+                {
+                    self._milvus_handler.DB_FIELD_TEXT: self._extract_rerank_text(
+                        res
+                    ),
+                    "original_data": res,
+                }
+            )
+
+        try:
+            self._milvus_handler._load_reranker_model_from_path()
+            reranked_all = self._milvus_handler._rerank_search_results(
+                question_str, [formatted_results]
+            )
+
+            reranked_hits = reranked_all[0]
+
+            final_results = []
+            for hit in reranked_hits:
+                original_data = hit["original_data"]
+                self._write_rerank_score(original_data, float(hit["score"]))
+                final_results.append(original_data)
+
+            final_results.sort(
+                key=lambda item: self._read_result_score(item),
+                reverse=True,
+            )
+            return final_results[:max_results]
+        except Exception as e:
+            self._logger.error("Reranking failed: %s" % e)
+            return results[:max_results]
+
+    @staticmethod
+    def _extract_rerank_text(res: dict) -> str:
+        """
+        Extract the text to be scored by the reranker from a result item.
+
+        Supports both the flat hit shape (``{"text_str": ...}``) and the
+        nested ``get_texts`` shape (``{"result": {"text": {"text_str": ...}}}``).
+
+        Returns an empty string when no text is found.
+        """
+        if "text_str" in res:
+            return res["text_str"]
+        inner = res.get("result") or {}
+        text_info = inner.get("text") or {}
+        return text_info.get("text_str", "")
+
+    @staticmethod
+    def _write_rerank_score(res: dict, score: float) -> None:
+        """
+        Store a reranker score on a result item, in the location the
+        downstream statistics actually read.
+        """
+        inner = res.get("result")
+        if isinstance(inner, dict) and "text" in inner:
+            inner["text"]["score"] = score
+        else:
+            res["score"] = score
+
+    @staticmethod
+    def _read_result_score(res: dict) -> float:
+        """Read back the score of a result item (nested or flat shape)."""
+        inner = res.get("result")
+        if isinstance(inner, dict) and "text" in inner:
+            try:
+                return float(inner["text"].get("score", 0.0))
+            except (TypeError, ValueError):
+                return 0.0
+        try:
+            return float(res.get("score", 0.0))
+        except (TypeError, ValueError):
+            return 0.0
 
     def search_with_options(
         self,
@@ -505,31 +753,93 @@ class DBSemanticSearchController:
         )
 
         # Call search method
-        query_results = self.search(
+        max_results = int(search_params.get("max_results", 50))
+        hybrid_search = bool(search_params.get("hybrid_search", True))
+        do_rerank = bool(search_params.get("rerank_results", False))
+        rerank_max_results = int(
+            search_params.get("rerank_max_results", max_results * 2)
+        )
+        rrf_k = int(search_params.get("rrf_k", 60))
+
+        # Cosine similarity cutoff. Accept a number in [0, 1]; anything else
+        # (including booleans and non-numeric values) falls back to the default.
+        min_similarity = search_params.get("min_similarity", DEFAULT_MIN_SIMILARITY)
+        if (
+            isinstance(min_similarity, bool)
+            or not isinstance(min_similarity, (int, float))
+            or not (0.0 <= float(min_similarity) <= 1.0)
+        ):
+            self._logger.warning(
+                "Invalid min_similarity=%r; falling back to default %s",
+                min_similarity,
+                DEFAULT_MIN_SIMILARITY,
+            )
+            min_similarity = DEFAULT_MIN_SIMILARITY
+
+        milvus_max_results = max_results
+        if hybrid_search and do_rerank:
+            milvus_max_results = rerank_max_results
+
+        milvus_results = self.search(
             search_text=question_str,
-            max_results=int(search_params.get("max_results", 50)),
-            rerank_results=bool(search_params.get("rerank_results", False)),
+            max_results=milvus_max_results,
+            rerank_results=do_rerank if not hybrid_search else False,
             language=lang_str,
             return_with_factored_fields=bool(
                 search_params.get("return_with_factored_fields", False)
             ),
             search_in_documents=docs_to_search,
             relative_paths=relative_paths,
+            min_similarity=min_similarity,
         )[0]
-        if not len(query_results):
-            self._logger.warning("query_results is empty!")
-            return {}, {}, []
 
         # Prepare results to presents for user
         texts_ids = []
         texts_scores = []
-        for text_res in query_results:
-            texts_ids.append(int(text_res["metadata"]["external_text_id"]))
-            texts_scores.append(text_res["score"])
+
+        if hybrid_search:
+            postgres_results = textual_controller.search_texts(
+                query_str=question_str,
+                collection=collection,
+                max_results=max_results,
+                filters={
+                    "document_names": docs_to_search,
+                    "relative_paths": relative_paths,
+                    "language": lang_str,
+                },
+                language=lang_str,
+            )
+            texts_ids, texts_scores = self._rrf_merge(
+                milvus_results=milvus_results,
+                postgres_results=postgres_results,
+                k=rrf_k,
+                max_results=rerank_max_results if do_rerank else max_results,
+            )
+        else:
+            if not len(milvus_results):
+                self._logger.warning("milvus_results is empty!")
+                return {}, {}, []
+
+            for text_res in milvus_results:
+                texts_ids.append(int(text_res["metadata"]["external_text_id"]))
+                texts_scores.append(text_res["score"])
+
+        if not len(texts_ids):
+            self._logger.warning(
+                "No results found (hybrid_search=%s)" % hybrid_search
+            )
+            return {}, {}, []
 
         postgres_docs = textual_controller.get_texts(
             texts_ids=texts_ids, texts_scores=texts_scores, surrounding_chunks=2
         )
+
+        if hybrid_search and do_rerank:
+            postgres_docs = self.rerank_results(
+                question_str=question_str,
+                results=postgres_docs,
+                max_results=max_results,
+            )
 
         results = {
             "query": question_str,
@@ -1020,6 +1330,9 @@ class DBSemanticSearchController:
         dict
             Mapping ``{document_name: stats_dict}``.
         """
+        if not postgres_docs:
+            return dict()
+
         doc_stats = dict()
         for result in postgres_docs:
             result = result["result"]
@@ -1044,8 +1357,11 @@ class DBSemanticSearchController:
             res["score"] = res["score"] / res["hits"]
             res["pages"] = sorted(set(res["pages"]))
             res["pages_count"] = len(res["pages"])
+            # Clamp the mean score so that non-positive cosine similarity
+            # values (possible for unrelated texts) do not break math.log.
+            score_base = max(float(res["score"]), smooth_factor)
             res["score_weighted"] = math.log(
-                float(res["score"] * res["hits"] * res["pages_count"])
+                float(score_base * res["hits"] * res["pages_count"])
             )
             w_scores.append(res["score_weighted"])
         # percentage-like scaling with a smooth factor

@@ -2,12 +2,12 @@
 
 ## Overview
 
-The **Semantic Search Engine** (SSE) is a modular, Django‑based platform that combines **semantic vector search**, *
-*generative AI**, and **content supervision** to provide powerful, context‑aware information retrieval.  
+The **Semantic Search Engine** (SSE) is a modular, Django‑based platform that combines **hybrid search** (vector + full-text), **generative AI**, and **content supervision** to provide powerful, context‑aware information retrieval.  
 It supports:
 
-- Indexing documents (PDF, text, etc.) into a Milvus vector store.
-- Rich metadata‑driven filtering and query‑template matching.
+- **Hybrid Search**: Combines Milvus vector search with PostgreSQL Full-Text Search using Reciprocal Rank Fusion (RRF).
+- **Indexing**: High-performance batch indexing of documents into Milvus.
+- **Filtering**: Rich metadata‑driven filtering and query‑template matching.
 - RAG (Retrieval‑Augmented Generation) pipelines with locally‑hosted LLMs or OpenAI models.
 - Multi‑user, organisation‑aware access control.
 
@@ -16,7 +16,7 @@ It supports:
 | Package    | Purpose                                                                                                            | Key Modules                                                             |
 |------------|--------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
 | **chat**   | Conversational interface on top of the search engine. Handles chat sessions, message state, and RAG orchestration. | `controllers.py`, `api.py`, `models.py`, `serializer.py`                |
-| **data**   | Ingestion pipeline, relational DB models, and utilities for preparing documents before semantic indexing.          | `relational_db.py`, `semantic_db.py`, `query_templates.py`, `upload.py` |
+| **data**   | Ingestion pipeline, relational DB models, utilities for preparing documents, and PostgreSQL Full-Text Search components. | `relational_db.py`, `semantic_db.py`, `query_templates.py`, `upload.py` |
 | **engine** | Core search, embedding, reranking, and generative answer logic.                                                    | `search.py`, `models.py`, `embedders_rerankers.py`, `system.py`         |
 | **system** | Organisation, group, and user management with token‑based authentication.                                          | `models.py`, `controllers.py`, `api.py`                                 |
 | **main**   | Global configuration, settings handling, error utilities, and Django entry points.                                 | `settings.py`, `constants.py`, `decorators.py`, `response.py`           |
@@ -98,7 +98,9 @@ curl -X POST http://localhost:8271/api/upload_and_index_files/ \
   -F "indexing_options={\"prepare_proper_pages\":true,\"clear_text\":true}"
 ```
 
-### 2. Search with Options
+### 2. Search with Options (Hybrid Search)
+
+Hybrid search is enabled by default, merging Milvus vector results with PostgreSQL text search via RRF.
 
 ``` bash
 curl -X POST http://localhost:8271/api/search_with_options/ \
@@ -110,7 +112,8 @@ curl -X POST http://localhost:8271/api/search_with_options/ \
         "options": {
           "categories": ["Law"],
           "max_results": 20,
-          "rerank_results": true
+          "rerank_results": true,
+          "hybrid_search": true
         }
       }'
 ```

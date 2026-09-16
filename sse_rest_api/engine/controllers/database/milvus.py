@@ -20,25 +20,25 @@ from pymilvus import (
 INDEX_QUERY_PARAMS = {
     "HNSW": {
         "INDEX_PARAMS": {
-            "metric_type": "L2",
+            "metric_type": "COSINE",
             "index_type": "HNSW",
             "params": {"M": 8, "efConstruction": 64},
             "index_name": "emb_idx",
         },
         "QUERY_PARAMS": {
-            "metric_type": "L2",
+            "metric_type": "COSINE",
             "params": {"ef": 100},
         },
     },
     "IVF_FLAT": {
         "INDEX_PARAMS": {
             "index_type": "IVF_FLAT",
-            "metric_type": "L2",
+            "metric_type": "COSINE",
             "params": {"nlist": 1536},
             "index_name": "emb_idx",
         },
         "QUERY_PARAMS": {
-            "metric_type": "L2",
+            "metric_type": "COSINE",
             "params": {"nprobe": 128},
             "offset": 0,
         },
@@ -58,8 +58,10 @@ class MilvusHandler:
     DB_FIELD_IS_ACTIVE = "is_active"
     DB_FIELD_EMBEDDING = "embedding"
 
-    DEFAULT_INDEX_PARAMS = INDEX_QUERY_PARAMS[DEFAULT_INDEX_TYPE]["INDEX_PARAMS"]
-    DEFAULT_INDEX_PARAMS["field_name"] = DB_FIELD_EMBEDDING
+    DEFAULT_INDEX_PARAMS = {
+        **INDEX_QUERY_PARAMS[DEFAULT_INDEX_TYPE]["INDEX_PARAMS"],
+        "field_name": DB_FIELD_EMBEDDING,
+    }
 
     BASE_FILTER_EXPR = f"{DB_FIELD_IS_ACTIVE} == true"
     SEARCH_FIELDS = [DB_FIELD_TEXT, DB_FIELD_METADATA]
@@ -239,6 +241,7 @@ class MilvusHandler:
         additional_output_fields: list | None = None,
         post_search_options: dict | None = None,
         metadata_filter: dict | None = None,
+        min_similarity: float | None = None,
     ) -> list:
         """
         Main search function for milvus collection.
@@ -249,6 +252,8 @@ class MilvusHandler:
         :param post_search_options: Additional options to pass after db
         search is finished, like reranking
         :param metadata_filter: Filtering options
+        :param min_similarity: Optional cosine similarity cutoff. Hits with
+        score lower than this value are dropped. ``None`` means no cutoff.
         :return: List of results
         """
         self.__prepare_milvus_client()
@@ -278,6 +283,8 @@ class MilvusHandler:
             query_results = []
             for hit in results:
                 res_dict = {"score": hit["distance"]}
+                if min_similarity is not None and res_dict["score"] < min_similarity:
+                    continue
                 for q_param in return_fields:
                     res_dict[q_param] = hit["entity"].get(q_param, "")
                 query_results.append(res_dict)
@@ -288,7 +295,7 @@ class MilvusHandler:
             and post_search_options["rerank_results"]
             and len(all_queries_results)
         ):
-            self.__load_reranker_model_from_path()
+            self._load_reranker_model_from_path()
             all_queries_results = self._rerank_search_results(
                 search_text, all_queries_results
             )
@@ -311,9 +318,8 @@ class MilvusHandler:
         :param json_config_path: Path to json file
         :return:
         """
-        self._connection_config = json.load(open(json_config_path, "r"))[
-            self.DB_CONNECTION_JSON_FIELD
-        ]
+        with open(json_config_path, "r") as f:
+            self._connection_config = json.load(f)[self.DB_CONNECTION_JSON_FIELD]
         self.__get_connection_from_env()
         self.__check_connection_configuration()
         return self._connection_config
@@ -408,17 +414,25 @@ class MilvusHandler:
         :param check_db: Check if database exists, if not then create
         :return: connection
         """
-        if check_db:
-            db_name = self._connection_config["db_name"]
+        db_name = self._connection_config["db_name"]
+        try:
             connections.connect(
                 host=self._connection_config["host"],
                 port=self._connection_config["port"],
+                user=self._connection_config.get("user", ""),
+                password=self._connection_config.get("password", ""),
             )
 
-            all_databases = db.list_database()
-            if check_db and db_name not in all_databases:
-                db.create_database(db_name)
-        self._is_connected = self._database is not None
+            if check_db:
+                all_databases = db.list_database()
+                if db_name not in all_databases:
+                    db.create_database(db_name)
+
+            self._is_connected = True
+        except Exception as e:
+            print(f"Failed to connect to Milvus: {e}")
+            self._is_connected = False
+        return self._is_connected
 
     def _disconnect_from_milvus_db(self):
         if self._milvus_client is not None:
@@ -532,12 +546,13 @@ class MilvusHandler:
             )
 
     def __add_index_to_collection(self):
-        index_params = self._milvus_client.prepare_index_params()
+        index_params = self._milvus_client.prepare_index_params(
+            field_name=self.DB_FIELD_EMBEDDING
+        )
         index_params.add_index(
             index_type="IVF_FLAT",
-            metric_type="L2",
+            metric_type="COSINE",
             params={"nlist": 1024},
-            field_name=self.DB_FIELD_EMBEDDING,
             index_name="emb_idx",
         )
 
@@ -561,9 +576,7 @@ class MilvusHandler:
         """
         self.__prepare_milvus_client()
         self.__prepare_collection_schema()
-        if not self._milvus_client.has_collection(
-            collection_name=self._collection_name
-        ):
+        if self._collection_name not in self._milvus_client.list_collections():
             if self.embedding_size is None:
                 raise Exception("Collection embedding size must be set")
             self.__add_milvus_collection(load_collection=True)
@@ -613,7 +626,7 @@ class MilvusHandler:
 
         return self._embedder_model
 
-    def __load_reranker_model_from_path(self):
+    def _load_reranker_model_from_path(self):
         if self.reranker_model_path is None:
             raise Exception("Reranker model path must be set!")
 

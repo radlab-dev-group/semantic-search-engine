@@ -47,7 +47,7 @@ engine/
    b) Calls `DBSemanticSearchController.search_with_options()` to retrieve ranked text fragments. <br>c) Persists a
    `UserQueryResponse`.
 3. **Generative Answer** – Client POSTs to `/api/<version>/generative_answer/` with the `query_response_id` and
-   generation options. The view uses `GenerativeModelController` to call model using `LLMRouterClient` object, 
+   generation options. The view uses `GenerativeModelController` to call model using `LLMRouterClient` object,
    optionally translating the answer. The generated answer is saved as a `UserQueryResponseAnswer`.
 4. **Rating** – Users can rate the generated answer via `/api/<version>/rate_generative_answer/`;
    `EngineSystemController.set_rating()` updates the rating fields.
