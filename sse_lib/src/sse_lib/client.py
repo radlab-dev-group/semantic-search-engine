@@ -114,9 +114,9 @@ class SSEClient:
         host = _first_set(api_host, os.environ.get(ENV_API_HOST))
         if transport is None and not host:
             raise SSEConfigError(f"api_host is required (or set {ENV_API_HOST})")
-        prefix = _first_set(
-            api_prefix, os.environ.get(ENV_API_PREFIX), endpoints.DEFAULT_API_PREFIX
-        )
+        prefix = api_prefix
+        if prefix is None:
+            prefix = os.environ.get(ENV_API_PREFIX, endpoints.DEFAULT_API_PREFIX)
         language = (
             _first_set(language, os.environ.get(ENV_API_LANGUAGE))
             or DEFAULT_LANGUAGE
@@ -191,7 +191,9 @@ class SSEClient:
         self, endpoint: str, params: Optional[Mapping[str, Any]] = None, **kwargs
     ):
         """``GET`` on an endpoint, with ``lang`` added for you."""
-        return self.request("GET", endpoint, params=self._with_language(params))
+        return self.request(
+            "GET", endpoint, params=self._with_language(params), **kwargs
+        )
 
     def post(
         self,
@@ -589,11 +591,15 @@ class SSEClient:
 
         ``options`` holds the generation options; single values may be passed
         as keyword arguments (``GenerativeOptions`` semantics).
+        ``collection`` is required by the current server, even for a chat
+        created with a collection.
         """
         if chat_id is None:
             raise SSEValueError("chat_id is required")
         if not message or not str(message).strip():
             raise SSEValueError("message cannot be empty")
+        if collection is None:
+            raise SSEValueError("collection is required to send a chat message")
         payload: Dict[str, Any] = {
             "chat_id": chat_id,
             "user_message": str(message),
@@ -658,7 +664,10 @@ class SSEClient:
                 build_options(options_cls, client_defaults, None).to_dict()
             )
         if options is not None:
-            merged.update(build_options(options_cls, options, None).to_dict())
+            if isinstance(options, dict):
+                merged.update(options)
+            else:
+                merged.update(build_options(options_cls, options, None).to_dict())
         return build_options(options_cls, merged, kwargs or {})
 
     def _store_oauth_tokens(self, body: Any) -> None:
@@ -714,7 +723,7 @@ def _name(collection: CollectionLike) -> str:
 def _as_sequence(value: Any) -> Iterable[Any]:
     if value is None:
         return []
-    if isinstance(value, (str, bytes, Mapping, tuple)):
+    if isinstance(value, (str, bytes, Mapping)):
         return [value]
     if isinstance(value, Sequence):
         return list(value)
@@ -732,7 +741,7 @@ def _prepare_files(
     opened: List[Any] = []
     prepared: List[Tuple[str, Tuple[str, Any, str]]] = []
     try:
-        for item in _as_sequence(files):
+        for item in ([files] if isinstance(files, tuple) else _as_sequence(files)):
             prepared.append((UPLOAD_FILE_FIELD, _unpack_file(item, opened)))
         if not prepared:
             raise SSEValueError("upload_files() needs at least one file")

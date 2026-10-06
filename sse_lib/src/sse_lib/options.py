@@ -173,19 +173,25 @@ def build_options(
     known = {meta.name for meta in fields(options_cls)}
     accepts_extra = "extra" in known
 
-    values = {key: value for key, value in data.items() if key in known}
-    extra = dict(data.get("extra") or {})
+    values: Dict[str, Any] = {}
+    extra: Dict[str, Any] = {}
 
-    for key, value in (kwargs or {}).items():
-        if key in known:
-            values[key] = value
-        elif accepts_extra:
-            extra[key] = value
-        else:
-            raise SSEValueError(
-                f"{options_cls.__name__} has no '{key}' option; known options "
-                f"are {sorted(known)}"
-            )
+    for source in (data, kwargs or {}):
+        if accepts_extra:
+            extra.update(source.get("extra") or {})
+        for key, value in source.items():
+            if key == "extra" and accepts_extra:
+                continue
+            if key in known:
+                values[key] = value
+                extra.pop(key, None)
+            elif accepts_extra:
+                extra[key] = value
+            else:
+                raise SSEValueError(
+                    f"{options_cls.__name__} has no '{key}' option; known options "
+                    f"are {sorted(known)}"
+                )
 
     if accepts_extra and extra:
         values["extra"] = extra

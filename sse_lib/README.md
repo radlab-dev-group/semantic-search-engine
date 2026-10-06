@@ -92,6 +92,13 @@ Python 3.9+, `requests` as the only runtime dependency.
 Collections may be passed as a name, a `Collection` returned by
 `create_collection()` / `list_collections()`, or any mapping with a `name` key.
 
+`send_chat_message(..., collection="my_docs")` requires an explicit collection,
+even if the chat was created with one: the current server resolves the collection
+from each message request. Omitting it raises `SSEValueError` before sending.
+
+Set `api_prefix=""` for deployments without an API path prefix; an explicitly
+provided empty prefix overrides `SSE_API_PREFIX`.
+
 ## Options objects
 
 | Class | Used by | Notes |
@@ -107,6 +114,12 @@ equivalent:
 client.search("my_docs", "query", SearchOptions(max_results=20, hybrid_search=True))
 client.search("my_docs", "query", max_results=20, hybrid_search=True)
 ```
+
+Unknown keys in search and generation dictionaries are preserved in `extra`;
+unknown indexing keys raise `SSEValueError`. Per-call dictionaries override only
+the supplied client defaults, while `IndexingOptions` instances supply a complete
+configuration (including their dataclass defaults). Keyword arguments win over
+both.
 
 ### Wire-format quirks handled by the client
 

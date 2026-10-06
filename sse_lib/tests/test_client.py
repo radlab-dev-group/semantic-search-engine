@@ -516,7 +516,10 @@ class ChatTest(unittest.TestCase):
 
     def test_send_chat_message_builds_options_from_keywords(self):
         client = build_client([ok({"generated_assistant_message": "a"})])
-        client.send_chat_message(1, "q", generative_model="m", answer_language="pl")
+        client.send_chat_message(
+            1, "q", collection="docs", generative_model="m", answer_language="pl"
+        )
+        self.assertEqual(client.fake_session.calls[0].json["collection_name"], "docs")
         self.assertEqual(
             client.fake_session.calls[0].json["options"],
             {"generative_model": "m", "answer_language": "pl"},
