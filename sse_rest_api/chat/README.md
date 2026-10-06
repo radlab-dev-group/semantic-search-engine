@@ -67,6 +67,26 @@ All endpoints use the common decorators:
 - `@get_organisation_user` – injects the `OrganisationUser` based on the authenticated Django user.
 - `@get_default_language` – resolves the language for error messages and responses.
 
+### Access and Collection Selection
+
+- Saving and reading saved chats requires ownership. Missing chat IDs return
+  `CHAT_ID_NOT_FOUND`; foreign chats return `USER_DENIED_TO_CHAT`, without history.
+- Unknown hashes (including chats not marked saved) retain a successful empty result:
+  `chat_id: null`, `is_read_only: null`, `chat_history: []`. GET accepts `chat_hash`
+  in the query string, with precedence over the legacy GET body.
+- Adding a message requires an owned, editable chat; read-only chats return
+  `CANNOT_ADD_MESSAGE_CHAT_RO`. The required `options` accepts an object or a JSON
+  object string, including an empty object.
+- An explicit `collection_name` overrides the chat's saved collection for that
+  request only. Omission or `null` uses `chat.collection`. Explicit blank, unknown,
+  or inaccessible names do not fall back to the saved collection.
+- Both explicit and inherited collections are checked against current access before
+  saving a message or generating a response. Revoked membership or sharing grants,
+  and chats without an available collection, return `COLLECTION_NOT_FOUND` without
+  message writes or generation. There is no generative-only message mode.
+- `sse_lib.send_chat_message` continues to pass an explicit `collection_name`; its
+  required collection argument and response envelope are unchanged.
+
 ### Typical Conversation Flow
 
 1. **Start a Chat** – `POST /api/<version>/new_chat/` → receives a new `chat_id` (or hash after saving).
