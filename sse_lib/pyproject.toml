@@ -1,0 +1,67 @@
+# Standalone, pip-installable client of the SSE REST API.
+#
+#   pip install ./sse_lib            # from a checkout
+#   pip install -e ./sse_lib         # development install
+#
+# It deliberately depends on `requests` only: the library is meant to be added
+# to any project that has to talk to a Semantic Search Engine deployment,
+# without pulling in Django, torch or pymilvus.
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sse-lib"
+description = "Thin Python client for the Semantic Search Engine (SSE) REST API"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "RadLab" }]
+keywords = ["semantic-search", "rag", "rest", "client", "sse"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = ["requests>=2.31,<3.0"]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<10.0",
+    "black>=24.1,<26.0",
+    "flake8>=7.0,<8.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/radlab-dev-group/semantic-search-engine"
+Repository = "https://github.com/radlab-dev-group/semantic-search-engine"
+Issues = "https://github.com/radlab-dev-group/semantic-search-engine/issues"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+sse_lib = ["py.typed"]
+
+[tool.setuptools.dynamic]
+version = { attr = "sse_lib.__version__" }
+
+[tool.black]
+line-length = 85
+target-version = ['py39', 'py310', 'py311', 'py312']
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
