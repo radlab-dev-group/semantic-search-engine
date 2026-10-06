@@ -61,6 +61,16 @@ Local module `sse_rest_api/authorization/` provides Keycloak and OAuth v1/v2 aut
 | `Levenshtein` | String edit distance |
 | `pybind11` | C++ binding (build dependency) |
 
+### Client Library (`sse_lib/`)
+
+| Package | Purpose |
+|---------|---------|
+| `requests` | HTTP transport of the standalone `sse_lib` client (and of `sse_rest_api/authorization`) |
+
+`sse_lib/` is a separate, pip-installable distribution (`pip install ./sse_lib`) that wraps the REST API of this
+repository. It is not part of the server image and pulls in no other dependency — no Django, no `torch`, no `pymilvus`.
+See [`sse_lib/README.md`](sse_lib/README.md).
+
 ### Dynamically Installed Packages
 
 Installed at deployment via `sse_rest_api/initialize.sh`:
@@ -191,4 +201,5 @@ Used for local development of PostgreSQL and Milvus services:
 |-----------|---------|
 | `mcp/` | Model Context Protocol server implementations (FastMCP servers and Ollama client) |
 | `sse_apps/` | Standalone admin utilities, evaluation scripts (BLEU, ROUGE scoring), and document converters |
+| `sse_lib/` | Standalone Python client library of the SSE REST API (installable with pip) |
 | `scripts/` | Shell utility scripts for infrastructure management |
