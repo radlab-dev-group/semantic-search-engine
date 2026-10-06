@@ -41,7 +41,7 @@ from sse_lib.exceptions import (
     SSETransportError,
     SSEValueError,
 )
-from .models import (
+from sse_lib.models import (
     Answer,
     Chat,
     ChatHistory,
@@ -53,7 +53,7 @@ from .models import (
     SearchResponse,
     UploadResult,
 )
-from .options import (
+from sse_lib.options import (
     DEFAULT_INDEX_TYPE,
     INDEX_TYPES,
     GenerativeOptions,
@@ -62,7 +62,7 @@ from .options import (
     build_options,
     text_document,
 )
-from .transport import DEFAULT_TIMEOUT, DEFAULT_TOKEN_TYPE, Transport
+from sse_lib.transport import DEFAULT_TIMEOUT, DEFAULT_TOKEN_TYPE, Transport
 
 __version__ = "0.1.0"
 
