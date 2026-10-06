@@ -120,7 +120,7 @@ class _FakeMilvusClient:
 
 def _make_handler(distances):
     handler = MilvusHandler(
-        jsonl_config_path="configs/milvus_config.json",
+        jsonl_config_path=os.path.join(_APP_DIR, "configs", "milvus_config.example.json"),
         collection_name="test_collection",
         create_db_if_not_exists=False,
         load_embedder=False,
