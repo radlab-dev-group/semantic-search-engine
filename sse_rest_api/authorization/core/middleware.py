@@ -8,7 +8,6 @@ from django.utils.deprecation import MiddlewareMixin
 from main.src.constants import get_logger
 from authorization.core.authentication import GATokenAuthentication
 
-
 middleware_callback: Callable | None = None
 
 
@@ -43,7 +42,10 @@ class AuthAuthenticationMiddleware(MiddlewareMixin):
                 request.user = AnonymousUser()
                 self.logger.info("Anonymous user")
         else:
-            request.user = user_token.auth_user
+            claims = self.ga_token.token_handler.verify_and_decode_token(
+                token=user_token, token_str=None
+            )
+            request.user = user_token.auth_user if claims else AnonymousUser()
             self.logger.info(
                 f"Setting middleware logged user as {request.user.username}"
             )

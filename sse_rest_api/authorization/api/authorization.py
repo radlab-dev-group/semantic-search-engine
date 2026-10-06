@@ -15,6 +15,7 @@ from authorization.core.errors import (
 from main.src.constants import get_logger
 from main.src.response import response_with_status
 from main.src.decorators import get_default_language, required_params_exists
+from main.src.validation import required_text, optional_text
 
 from authorization.core.handlers import RdlAuthStateHandler
 from authorization.core.handlers import RdlAuthGrantAccTokenHandler
@@ -52,6 +53,8 @@ class CreateRdlAuthToken(APIView):
 
     required_params = ["code", "state"]
     optional_params = ["session_state"]
+    input_validators = {"code": required_text, "state": required_text,
+                        "session_state": optional_text}
 
     permission_classes = (AllowAny,)
 
@@ -99,6 +102,7 @@ class CreateRdlAuthToken(APIView):
 
 class RefreshToken(APIView):
     required_params = ["refresh_token"]
+    input_validators = {"refresh_token": required_text}
 
     permission_classes = (AllowAny,)
 

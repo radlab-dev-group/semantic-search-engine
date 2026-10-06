@@ -67,7 +67,7 @@ class GATokenAuthentication:
     def introspect_token(self, request):
         token_from_request = self.__parse_auth_header_for_token(request)
         if token_from_request is None or not len(token_from_request.strip()):
-            return self.__no_authenticated_user()
+            return None
         return self.token_handler.introspect_user_token(
             user_token=token_from_request
         )
@@ -79,15 +79,18 @@ class GATokenAuthentication:
 
         scope = kc_config.user_role_main_scope
         user_scope = decoded_token.get(scope, None)
-        if user_scope is None:
+        if not isinstance(user_scope, dict):
             return False
 
         variable = kc_config.user_role_scope_variable
         user_variable = user_scope.get(variable, None)
-        if user_variable is None:
+        if not isinstance(user_variable, dict):
             return False
 
-        for user_role in user_variable.get("roles", []):
+        roles = user_variable.get("roles", [])
+        if not isinstance(roles, list):
+            return False
+        for user_role in roles:
             if user_role in kc_config.accepted_user_roles:
                 return True
         return False
