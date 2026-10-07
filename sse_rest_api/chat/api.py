@@ -16,6 +16,8 @@ from rest_framework.views import APIView
 
 from main.src.response import response_with_status
 from main.src.decorators import required_params_exists, get_default_language
+from main.src.validation import (request_params, required_text, optional_text,
+                                 identifier, boolean, options_object, search_options)
 
 from system.core.decorators import get_organisation_user
 
@@ -47,6 +49,8 @@ class NewChat(APIView):
 
     required_params = []
     optional_params = ["options", "collection_name", "search_options"]
+    input_validators = {"options": options_object, "collection_name": optional_text,
+                        "search_options": search_options}
 
     chat_controller = ChatController()
 
@@ -57,8 +61,8 @@ class NewChat(APIView):
     @get_default_language
     def post(self, language, organisation_user, request):
         options_dict = {}
-        if "options" in request.data and len(request.data.get("options")):
-            options_dict = request.data.get("options")
+        if "options" in request_params(request):
+            options_dict = request_params(request).get("options")
 
         collection = None
         collection_name = request.data.get("collection_name", None)
@@ -75,9 +79,9 @@ class NewChat(APIView):
                 )
 
         search_options_dict = None
-        search_options = request.data.get("search_options", None)
+        search_options = request_params(request).get("search_options", None)
         if search_options is not None and len(search_options):
-            search_options_dict = request.data.get("search_options")
+            search_options_dict = search_options
 
         new_chat = self.chat_controller.new_chat(
             organisation_user=organisation_user,
@@ -101,7 +105,7 @@ class AddUserMessageToChatWithSystemResponse(APIView):
     This view performs several steps:
     1. Validates required and optional parameters.
     2. Retrieves the target ``Chat`` and checks ownership/read‑only status.
-    3. Optionally resolves a collection for Retrieval‑Augmented Generation (RAG).
+    3. Resolves and reauthorizes an explicit or saved collection for RAG.
     4. Persists the user message via ``ChatController.add_user_message``.
     5. Generates an assistant reply using ``ChatController.generate_assistant_message_cs_rag``.
     6. Returns the generated message, timing information, and updated history.
@@ -112,6 +116,9 @@ class AddUserMessageToChatWithSystemResponse(APIView):
 
     required_params = ["chat_id", "user_message", "options"]
     optional_params = ["collection_name", "search_options", "system_prompt"]
+    input_validators = {"chat_id": identifier, "user_message": required_text,
+                        "options": options_object, "collection_name": optional_text,
+                        "search_options": search_options, "system_prompt": optional_text}
 
     @required_params_exists(
         required_params=required_params, optional_params=optional_params
@@ -152,9 +159,9 @@ class AddUserMessageToChatWithSystemResponse(APIView):
             "system_prompt": system_prompt | None
         }
         """
-        chat_id = request.data.get("chat_id")
+        chat_id = request_params(request).get("chat_id")
         user_message = request.data.get("user_message")
-        options_dict = request.data.get("options")
+        options_dict = request_params(request).get("options")
 
         system_prompt = request.data.get("system_prompt", None)
         if system_prompt is not None and len(system_prompt.strip()):
@@ -163,9 +170,9 @@ class AddUserMessageToChatWithSystemResponse(APIView):
             system_prompt = None
 
         search_options_dict = {}
-        if "search_options" in request.data and len(request.data["search_options"]):
-            search_options_dict = request.data.get("search_options")
-        collection_name = request.data.get("collection_name", None)
+        if "search_options" in request_params(request):
+            search_options_dict = request_params(request).get("search_options")
+        collection_name = request_params(request).get("collection_name", None)
 
         """
         search options dict
@@ -211,9 +218,13 @@ class AddUserMessageToChatWithSystemResponse(APIView):
                 response_body=None,
             )
 
-        collection = RelationalDBController.get_collection(
-            collection_name=collection_name, created_by=organisation_user
-        )
+        if collection_name is None and chat_obj.collection_id is not None:
+            collection_name = chat_obj.collection.name
+        collection = None
+        if collection_name is not None and collection_name.strip():
+            collection = RelationalDBController.get_collection(
+                collection_name=collection_name, created_by=organisation_user
+            )
 
         if collection is None:
             return response_with_status(
@@ -275,6 +286,7 @@ class SetChatStateAsSaved(APIView):
     """
 
     required_params = ["chat_id", "read_only"]
+    input_validators = {"chat_id": identifier, "read_only": boolean}
 
     chat_controller = ChatController(add_to_db=True)
 
@@ -282,15 +294,22 @@ class SetChatStateAsSaved(APIView):
     @get_organisation_user
     @get_default_language
     def post(self, language, organisation_user, request):
-        chat_id = request.data.get("chat_id")
-        read_only = request.data.get("read_only")
+        chat_id = request_params(request).get("chat_id")
+        read_only = request_params(request).get("read_only")
         chat_obj = self.chat_controller.get_chat_by_id(chat_id=chat_id)
         if chat_obj is None:
-            raise Exception("Chat object not found!")
+            return response_with_status(
+                status=False,
+                language=language,
+                error_name=CHAT_ID_NOT_FOUND,
+                response_body=None,
+            )
         if chat_obj.organisation_user != organisation_user:
-            raise Exception(
-                "Chat organisation user is different than "
-                "message organisation user!"
+            return response_with_status(
+                status=False,
+                language=language,
+                error_name=USER_DENIED_TO_CHAT,
+                response_body=None,
             )
 
         chat_hash = self.chat_controller.set_chat_as_saved(
@@ -315,6 +334,7 @@ class GetSavedChatByHash(APIView):
     """
 
     required_params = ["chat_hash"]
+    input_validators = {"chat_hash": required_text}
 
     chat_controller = ChatController(add_to_db=True)
 
@@ -322,7 +342,7 @@ class GetSavedChatByHash(APIView):
     @get_organisation_user
     @get_default_language
     def get(self, language, organisation_user, request):
-        chat_hash = request.data.get("chat_hash")
+        chat_hash = request_params(request).get("chat_hash")
 
         chat_obj = self.chat_controller.get_chat_by_chat_hash(
             chat_hash=chat_hash, only_saved=True
@@ -331,9 +351,11 @@ class GetSavedChatByHash(APIView):
             chat_messages = []
         else:
             if chat_obj.organisation_user != organisation_user:
-                raise Exception(
-                    "Chat organisation user is different from "
-                    "message organisation user!"
+                return response_with_status(
+                    status=False,
+                    language=language,
+                    error_name=USER_DENIED_TO_CHAT,
+                    response_body=None,
                 )
             chat_messages = self.chat_controller.get_chat_messages(chat=chat_obj)
 

@@ -21,7 +21,7 @@ All of the above is driven by a **single JSON configuration file** (`configs/aut
 ## 2. Configuration
 
 The module expects a JSON object under the key **`authorization`**.  
-Below is the *real* configuration that matches the current deployment:
+Below is an example; replace the provider, credentials and verification key for your deployment:
 
 ```json
 {
@@ -32,15 +32,14 @@ Below is the *real* configuration that matches the current deployment:
     "client_secret": "",
     "grant_type": "authorization_code",
     "redirect_uri": "http://0.0.0.0:8000/",
-    "public_sign_key": "",
+    "public_sign_key": "<provider PEM public key>",
     "audience": "account",
     "scope": ".default",
     "algorithms": [
-      "RS256",
-      "AES",
-      "HS512",
-      "RSA-QEAP"
+      "RS256"
     ],
+    "connect_timeout": 3.05,
+    "read_timeout": 10.0,
     "user_role_main_scope": "resource_access",
     "user_role_scope_variable": "account",
     "accepted_user_roles": [
@@ -64,8 +63,12 @@ Below is the *real* configuration that matches the current deployment:
 * `realm`, `client_id`, `client_secret` – values supplied by the IdP.
 * `grant_type` – must be `"authorization_code"` for the standard flow.
 * `redirect_uri` – URL the IdP redirects back to after a successful login.
-* `public_sign_key` – optional public key used to verify JWT signatures.
+* `public_sign_key` – required nonempty verification key in local JWT mode.
 * `audience`, `scope`, `algorithms` – passed to the token request / verification logic.
+  Local verification requires an explicit nonempty list of supported algorithms; `none` is forbidden.
+  Match the provider's signing algorithm; do not mix symmetric and asymmetric algorithms casually.
+* `connect_timeout`, `read_timeout` – finite positive seconds (defaults: `3.05`, `10.0`).
+  Both apply to authorization-code, refresh, introspection and logout requests. No automatic retries occur.
 * `user_role_main_scope` & `user_role_scope_variable` – where the module looks for the list of roles inside the decoded
   JWT.
 * `accepted_user_roles` – list of roles that are allowed to use the system (`["superadmin"]` in the example).
@@ -73,6 +76,16 @@ Below is the *real* configuration that matches the current deployment:
 
 The configuration file is read once at start‑up by `authorization.utils.config.RdlAuthConfig` and its values are exposed
 as read‑only properties (`auth_host`, `client_id`, …).
+
+With `SYSTEM_HANDLER.use_introspect` enabled, validity is established by the configured trusted
+provider's introspection endpoint, which must return the JSON boolean `active: true`.
+Missing, false, numeric or string `active` values are rejected. If an email is supplied it must
+have `email_verified: true`. Provider claims are used directly, including for opaque tokens;
+stored `decoded_token` is never authentication evidence. Requests revalidate stored tokens.
+Deployments previously relying on an empty key must configure a valid key and algorithms or
+enable properly configured introspection. An empty key never disables signature verification.
+Network, HTTP and malformed JSON failures deny authentication without logging response bodies,
+tokens, credentials or exception details. Logout deactivates local tokens even if remote logout fails.
 
 If you need to load a different configuration (e.g., for tests), instantiate the class with an explicit path:
 
@@ -106,8 +119,7 @@ Both models are defined in `authorization/models.py`.
 ### 4.2 `RdlAuthGrantAccTokenHandler`
 
 * Performs the **token request** (grant‑code flow or refresh‑token flow).
-* Verifies the JWT signature when a `public_sign_key` is supplied; otherwise decodes without verification (
-  `verify_signature=False`).
+* Verifies JWT signatures with an explicit key and allowed algorithms, or uses trusted active introspection.
 * Calls `__get_or_add_user_from_user_info` to obtain a Django `User` (creates one if missing).
 * Stores the token in the `Token` model, de‑activating any previous token for the same user.
 * Provides helper methods:
@@ -118,7 +130,7 @@ Both models are defined in `authorization/models.py`.
 | `get_rdl_auth_user_for_token` | Resolve a `User` + `Token` from a freshly‑obtained access token.                     |
 | `disable_all_user_tokens`     | De‑activate every active token belonging to a user and call the IdP logout endpoint. |
 | `introspect_user_token`       | Optional introspection (when `SYSTEM_HANDLER.use_introspect` is true).               |
-| `verify_and_decode_token`     | Verify signature (if possible) and return the decoded payload.                       |
+| `verify_and_decode_token`     | Return freshly verified claims or `None`; never cached claims.                       |
 
 ### 4.3 `GATokenAuthentication` (`authorization.core.authentication`)
 
@@ -132,7 +144,7 @@ Both models are defined in `authorization/models.py`.
 
 * Runs **before** any view.
 * Calls `GATokenAuthentication.get_user_token_for_request`.
-* If a token is found, sets `request.user` to `token.auth_user`.
+* If a token is found, revalidates it before setting `request.user` to `token.auth_user`.
 * If no token is found and introspection is enabled, attempts introspection and sets `request.user` accordingly.
 * Falls back to `AnonymousUser` when no authentication data can be resolved.
 

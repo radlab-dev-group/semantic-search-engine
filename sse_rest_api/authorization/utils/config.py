@@ -1,4 +1,5 @@
 import json
+import math
 
 
 class RdlAuthConfig:
@@ -73,6 +74,10 @@ class RdlAuthConfig:
         return self._algorithms
 
     @property
+    def request_timeout(self):
+        return self._request_timeout
+
+    @property
     def accepted_user_roles(self):
         return self._accepted_user_roles
 
@@ -111,6 +116,22 @@ class RdlAuthConfig:
             self._audience = self._rdl_auth_config.get("audience", "")
             self._scope = self._rdl_auth_config.get("scope", "")
             self._algorithms = self._rdl_auth_config.get("algorithms", [])
+            timeout = tuple(
+                self._rdl_auth_config.get(name, default)
+                for name, default in (
+                    ("connect_timeout", 3.05),
+                    ("read_timeout", 10.0),
+                )
+            )
+            if any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
+                for value in timeout
+            ):
+                raise ValueError("OAuth timeouts must be finite positive numbers")
+            self._request_timeout = timeout
 
             self._accepted_user_roles = self._rdl_auth_config.get(
                 "accepted_user_roles", []

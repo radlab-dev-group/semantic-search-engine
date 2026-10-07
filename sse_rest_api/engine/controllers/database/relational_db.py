@@ -3,7 +3,7 @@ import json
 import tqdm
 
 from typing import List, Dict, Any
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
 
 from radlab_data.text.reader import DirectoryFileReader
 from radlab_data.text.document import Document as InputTextDocument
@@ -33,6 +33,16 @@ class RelationalDBController:
         self._denoiser_controller = None
 
     @staticmethod
+    def get_visible_collections(user: OrganisationUser, check_in_organisation=True):
+        if user is None:
+            return CollectionOfDocuments.objects.none()
+        visibility = Q(created_by=user)
+        if check_in_organisation:
+            groups = user.user_groups.filter(organisation=user.organisation)
+            visibility |= Q(visible_to_groups__in=groups)
+        return CollectionOfDocuments.objects.filter(visibility).distinct()
+
+    @staticmethod
     def get_user_collections(
         user: OrganisationUser, semantic_collections: List[str]
     ):
@@ -47,9 +57,8 @@ class RelationalDBController:
     def get_user_organisation_collections(
         user: OrganisationUser, semantic_collections: List[Any]
     ):
-        return CollectionOfDocuments.objects.filter(
-            visible_to_groups__organisation__in=[user.organisation],
-            name__in=semantic_collections,
+        return RelationalDBController.get_visible_collections(user).filter(
+            name__in=semantic_collections
         )
 
     def add_uploaded_documents_to_db(
@@ -347,36 +356,17 @@ class RelationalDBController:
         collection_name: str,
         check_in_organisation: bool = True,
     ) -> CollectionOfDocuments | None:
-        try:
-            return CollectionOfDocuments.objects.get(
-                name=collection_name, created_by=created_by
-            )
-        except CollectionOfDocuments.DoesNotExist:
-            if not check_in_organisation:
-                return None
-        return RelationalDBController.get_collection_from_user_group(
-            organisation_user=created_by, collection_name=collection_name
-        )
+        return RelationalDBController.get_visible_collections(
+            created_by, check_in_organisation=check_in_organisation
+        ).filter(name=collection_name).first()
 
     @staticmethod
     def get_collection_from_user_group(
         organisation_user: OrganisationUser, collection_name: str
     ) -> CollectionOfDocuments:
-        group_collection = None
-        user_groups = OrganisationGroup.objects.filter(
-            organisation=organisation_user.organisation
-        )
-        for user_group in user_groups:
-            group_collection = None
-            try:
-                group_collection = CollectionOfDocuments.objects.get(
-                    name=collection_name, visible_to_groups=user_group
-                )
-            except CollectionOfDocuments.DoesNotExist:
-                pass
-            if group_collection is not None:
-                break
-        return group_collection
+        return RelationalDBController.get_visible_collections(
+            organisation_user
+        ).filter(name=collection_name).first()
 
     @staticmethod
     def get_organisation_templates(

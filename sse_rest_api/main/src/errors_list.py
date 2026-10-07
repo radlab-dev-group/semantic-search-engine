@@ -4,8 +4,13 @@ UER_NO_PERMIT = "UER_NO_PERMIT"
 NO_REQUIRED_PARAMS = "NO_REQUIRED_PARAMS"
 NO_LOGIN_PARAMS = "NO_LOGIN_PARAMS"
 UNSUPPORTED_LANGUAGE = "UNSUPPORTED_LANGUAGE"
+INVALID_PARAMS = "INVALID_PARAMS"
 
 BUILT_IN_GENERAL_ERRORS = {
+    INVALID_PARAMS: {
+        ECODE: "e__data_502",
+        MSG: {MSG_PL: "Niepoprawne parametry!", MSG_EN: "Invalid parameters!"},
+    },
     NO_LOGIN_PARAMS: {
         ECODE: f"e__login_400",
         MSG: {

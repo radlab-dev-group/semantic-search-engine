@@ -69,6 +69,36 @@ data/
 3. **Optional text‑only indexing** – Use `/api/<version>/add_and_index_texts/` when the client already has pre‑processed
    JSON text chunks.
 
+### Upload safety and limits
+
+`data/controllers/upload.py` copies uploads in 64 KiB chunks. ZIP archives are
+spooled to a temporary file outside the recursively scanned upload directory and
+deleted on completion or rejection. Only extracted regular files are returned.
+Absolute paths, traversal, symlinks, special files, duplicate names, case-only
+collisions and file/directory collisions are rejected; existing files are never
+overwritten. A rejected request removes its entire unique staging directory,
+creates no upload record and never starts relational or semantic indexing.
+
+Configure these Django settings in `main/settings.py` (defaults apply when absent):
+
+| Setting | Default | Scope |
+|---|---:|---|
+| `UPLOAD_MAX_FILES` | `1000` | Regular files across the whole multipart request |
+| `UPLOAD_MAX_UNCOMPRESSED_BYTES` | `104857600` | Total plain/extracted bytes across the request |
+| `UPLOAD_MAX_COMPRESSION_RATIO` | `100` | Per ZIP member: uncompressed/compressed bytes |
+| `UPLOAD_MAX_INPUT_BYTES` | `104857600` | Total incoming ZIP and plain file bytes |
+
+Use positive finite limits. ZIP declared sizes/counts/ratios are checked before
+extraction, and actual bytes, ratios and file counts are checked during copying.
+Each ZIP also permits at most `2 * UPLOAD_MAX_FILES` entries, including directories.
+Set Django multipart upload handlers and reverse-proxy request limits separately:
+these controller limits apply after Django receives the multipart request.
+
+`number_of_uploaded_documents` counts stored regular files (including nested ZIP
+members), not ZIP containers or directories. Existing relational/page and vector
+index counters retain their prior semantics. The response envelope and business
+error HTTP status remain unchanged; rejected uploads return `000001_DATA`.
+
 ### Extending the Data Layer
 
 - **New metadata fields** – Extend `Document.metadata_json` and update

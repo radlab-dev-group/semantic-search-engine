@@ -1,12 +1,16 @@
-import json
 import os
 
-from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from main.src.response import response_with_status
 from main.src.decorators import required_params_exists, get_default_language
 from main.src.constants import CONFIG_DIR
+from main.src.validation import (request_params, required_text, optional_text,
+                                 identifier, boolean, search_options, generation_options, rating_integer)
+from main.src.errors import error_response
+from main.src.errors_list import INVALID_PARAMS
+from engine.core.errors import (COLLECTION_ACCESS_DENIED, RESPONSE_ACCESS_DENIED,
+                                ANSWER_ACCESS_DENIED, GENERATION_FAILED)
 
 from system.core.decorators import get_organisation_user
 from engine.controllers.search.query import SearchQueryController
@@ -32,6 +36,8 @@ class SearchWithOptions(APIView):
 
     required_params = ["collection_name", "query_str", "options"]
     optional_params = ["ignore_question_lang_detect"]
+    input_validators = {"collection_name": required_text, "query_str": required_text,
+                        "options": search_options, "ignore_question_lang_detect": boolean}
 
     @required_params_exists(
         required_params=required_params, optional_params=optional_params
@@ -39,13 +45,11 @@ class SearchWithOptions(APIView):
     @get_organisation_user
     @get_default_language
     def post(self, language, organisation_user, request):
-        query_str = request.data.get("query_str")
-        collection_name = request.data.get("collection_name")
-        options_dict = json.loads(request.data.get("options"))
-
-        ignore_question_lang_detect = bool(
-            request.data.get("ignore_question_lang_detect", False)
-        )
+        params = request_params(request)
+        query_str = params.get("query_str")
+        collection_name = params.get("collection_name")
+        options_dict = params.get("options")
+        ignore_question_lang_detect = params.get("ignore_question_lang_detect", False)
 
         collection = RelationalDBController.get_collection(
             collection_name=collection_name, created_by=organisation_user
@@ -54,7 +58,7 @@ class SearchWithOptions(APIView):
             return response_with_status(
                 status=False,
                 language=language,
-                error_name="Collection not found or access denied!",
+                error_name=COLLECTION_ACCESS_DENIED,
                 response_body={},
             )
 
@@ -88,15 +92,18 @@ class GenerativeAnswerForQuestion(APIView):
 
     required_params = ["query_response_id", "query_options"]
     optional_params = ["system_prompt"]
+    input_validators = {"query_response_id": identifier, "query_options": generation_options,
+                        "query_instruction": optional_text, "system_prompt": optional_text}
 
     @required_params_exists(required_params=required_params)
     @get_organisation_user
     @get_default_language
     def post(self, language, organisation_user, request):
-        query_response_id = request.data.get("query_response_id")
-        query_options = json.loads(request.data.get("query_options"))
+        params = request_params(request)
+        query_response_id = params.get("query_response_id")
+        query_options = params.get("query_options")
 
-        query_instruction = request.data.get("query_instruction", "")
+        query_instruction = request.data.get("query_instruction") or ""
 
         system_prompt = request.data.get("system_prompt", None)
         if system_prompt is not None and len(system_prompt.strip()):
@@ -112,7 +119,7 @@ class GenerativeAnswerForQuestion(APIView):
             return response_with_status(
                 status=False,
                 language=language,
-                error_name="Response not found or access denied!",
+                error_name=RESPONSE_ACCESS_DENIED,
                 response_body={},
             )
 
@@ -125,13 +132,10 @@ class GenerativeAnswerForQuestion(APIView):
         )
 
         if query_response is None:
-            which_key = "DEEPL_AUTH_KEY"
-            if "openai" in query_options["generative_model"]:
-                which_key = "OPENAI_API_KEY"
             return response_with_status(
                 status=False,
                 language=language,
-                error_name=f"{which_key} is not set or model error occurred!",
+                error_name=GENERATION_FAILED,
                 response_body={},
             )
 
@@ -185,6 +189,8 @@ class ListRerankersModels(APIView):
 class SetRateForQueryResponseAnswer(APIView):
     required_params = ["answer_response_id", "rate_value", "rate_value_max"]
     optional_params = ["rate_comment"]
+    input_validators = {"answer_response_id": identifier, "rate_value": rating_integer,
+                        "rate_value_max": rating_integer, "rate_comment": optional_text}
 
     @required_params_exists(
         required_params=required_params, optional_params=optional_params
@@ -192,10 +198,13 @@ class SetRateForQueryResponseAnswer(APIView):
     @get_organisation_user
     @get_default_language
     def post(self, language, organisation_user, request):
-        answer_response_id = request.data["answer_response_id"]
-        rate_value = request.data["rate_value"]
-        rate_value_max = request.data["rate_value_max"]
-        comment = request.data.get("rate_comment", None)
+        params = request_params(request)
+        answer_response_id = params["answer_response_id"]
+        rate_value = params["rate_value"]
+        rate_value_max = params["rate_value_max"]
+        comment = params.get("rate_comment", None)
+        if rate_value_max <= 0 or not 0 <= rate_value <= rate_value_max:
+            return error_response(INVALID_PARAMS, language)
 
         query_response_answer = (
             GenerativeModelController.get_user_query_response_answer(
@@ -208,7 +217,7 @@ class SetRateForQueryResponseAnswer(APIView):
             return response_with_status(
                 status=False,
                 language=language,
-                error_name="Answer not found or access denied!",
+                error_name=ANSWER_ACCESS_DENIED,
                 response_body={},
             )
 

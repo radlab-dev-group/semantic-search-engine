@@ -1,5 +1,4 @@
 import jwt
-import json
 import random
 import string
 import requests
@@ -10,7 +9,6 @@ from django.contrib.auth.models import User
 from main.src.constants import get_logger
 from authorization.models import Token, SessionState
 from authorization.utils.config import RdlAuthConfig
-
 
 DEFAULT_AUTH = "Bearer"
 DEFAULT_STATE_LENGTH = 16
@@ -186,7 +184,7 @@ class RdlAuthGrantAccTokenHandler(object):
         grant_code: str,
         token_opts: dict,
     ) -> (User | None, Token | None):
-        self.logger.debug("Preparing user for token: {token_str}")
+        self.logger.debug("Preparing user for verified token")
         if not state_str or not len(state_str):
             self.logger.error("state_str is not given!")
             return None, None
@@ -201,29 +199,9 @@ class RdlAuthGrantAccTokenHandler(object):
             state.session_state = session_state
         state.save()
 
-        kc_config = self.rdl_auth_state_handler.rdl_auth_config
-        public_sign_key = kc_config.public_sign_key
-        audience = kc_config.audience
-        algorithms = kc_config.algorithms
-        try:
-            if public_sign_key is not None and len(public_sign_key):
-                decoded_token = self.__decode_jwt_token_with_publ_key(
-                    token_str=token_str,
-                    public_sign_key=public_sign_key,
-                    audience=audience,
-                    algorithms=algorithms,
-                )
-            else:
-                decoded_token = self.__decode_jwt_token_no_signature(
-                    token_str=token_str, audience=audience
-                )
-        except Exception as e:
-            self.logger.error("Error during token verification" + str(e))
+        decoded_token = self.verify_and_decode_token(token=None, token_str=token_str)
+        if decoded_token is None:
             return None, None
-
-        self.logger.debug(
-            f"Decoded user token (user info): {str(json.dumps(decoded_token))}"
-        )
 
         errors = self.__check_mappings_errors(user_info=decoded_token)
         if len(errors):
@@ -259,11 +237,11 @@ class RdlAuthGrantAccTokenHandler(object):
                 "client_secret": self.rdl_auth_state_handler.rdl_auth_config.client_secret,
                 "refresh_token": token.refresh_token,
             }
-            response = requests.post(logout_url, data=token_request_data)
-            if not response.ok:
-                self.logger.error(f"Error while logout token {response.text}")
+            self.__post_oauth(logout_url, token_request_data, expect_json=False)
 
-    def introspect_user_token(self, user_token: str) -> User or None:
+    def introspect_user_token(self, user_token: str) -> User | None:
+        if not settings.SYSTEM_HANDLER.use_introspect:
+            return None
         intro_response = self.__call_introspection_ep(user_token=user_token)
         if intro_response is None:
             return None
@@ -273,7 +251,7 @@ class RdlAuthGrantAccTokenHandler(object):
                 intro_response=intro_response
             )
             if not is_verified:
-                return True
+                return None
 
         intro_user = self.__introspection_get_or_add_user(
             intro_response=intro_response
@@ -296,23 +274,18 @@ class RdlAuthGrantAccTokenHandler(object):
     ):
         # Session state have to be consistent with token
         state_str = intro_response.get("session_state", "")
-        if not len(state_str):
-            state_str = self.rdl_auth_state_handler.generate_state()
-        session_state = self.rdl_auth_state_handler.add_state_str(
-            state_str=state_str
-        )
-        if session_state is None:
-            self.logger.error(
-                f"Introspection problem while adding state "
-                f"{intro_response['session_state']}"
+        if not isinstance(state_str, str) or not state_str:
+            session_state = self.rdl_auth_state_handler.generate_state()
+        else:
+            session_state = self.rdl_auth_state_handler.add_state_str(
+                state_str=state_str
             )
+        if session_state is None:
+            self.logger.error("Introspection problem while adding state")
             return None
 
         # Prepare token and store actual token to database
-        decoded_token = self.__decode_jwt_token_no_signature(
-            token_str=user_token,
-            audience=self.rdl_auth_state_handler.rdl_auth_config.audience,
-        )
+        decoded_token = intro_response
         token = self.__add_token_for_user(
             user=intro_user,
             token_str=user_token,
@@ -334,10 +307,8 @@ class RdlAuthGrantAccTokenHandler(object):
         Check user email is verified
         """
         email = intro_response.get("email", None)
-        if email is not None and not intro_response.get("email_verified", False):
-            self.logger.error(
-                f"Token introspection: User email {email} is not verified!"
-            )
+        if email is not None and intro_response.get("email_verified") is not True:
+            self.logger.error("Token introspection: User email is not verified!")
             return False
         return True
 
@@ -347,7 +318,7 @@ class RdlAuthGrantAccTokenHandler(object):
         :return:
         """
         user_id = intro_response.get(DEFAULT_USER_ID, None)
-        if user_id is None:
+        if not isinstance(user_id, str) or not user_id.strip():
             self.logger.error(
                 f"Token introspection: User scope info '{DEFAULT_USER_ID}' "
                 f"is not found during introspection!"
@@ -375,25 +346,34 @@ class RdlAuthGrantAccTokenHandler(object):
         if api_introspect_url is None or api_introspect_body is None:
             return None
 
-        response = requests.post(api_introspect_url, data=api_introspect_body)
-        if not response.ok:
-            self.logger.error(f"Error while token introspection {response.text}")
+        intro_response = self.__post_oauth(api_introspect_url, api_introspect_body)
+        if intro_response is None or intro_response.get("active") is not True:
             return None
-
-        # Check intro requirements
-        intro_response = response.json()
-        if "active" in intro_response and not intro_response["active"]:
-            # If token is not active
-            self.logger.warning(f"Error while introspection: token is not active!")
-            return None
-        elif "error" in intro_response:
-            # If error occurred
-            self.logger.error(
-                f"Error while introspection {intro_response['error']}. "
-                f"{intro_response.get('error_description', '')}"
-            )
+        if "error" in intro_response:
+            self.logger.error("OAuth introspection was rejected")
             return None
         return intro_response
+
+    def __post_oauth(self, url, data, expect_json=True):
+        try:
+            response = requests.post(
+                url,
+                data=data,
+                timeout=self.rdl_auth_state_handler.rdl_auth_config.request_timeout,
+            )
+            if not response.ok:
+                self.logger.error("OAuth provider returned an HTTP error")
+                return None
+            if not expect_json:
+                return True
+            payload = response.json()
+        except (requests.RequestException, ValueError):
+            self.logger.error("OAuth provider request failed")
+            return None
+        if not isinstance(payload, dict):
+            self.logger.error("OAuth provider returned an invalid JSON object")
+            return None
+        return payload
 
     def __request_rdl_auth_token_with_options(
         self, grant_code: str | None, refresh_token: str | None = None
@@ -411,19 +391,16 @@ class RdlAuthGrantAccTokenHandler(object):
         if token_url is None or request_data is None:
             return None, None, []
 
-        response = requests.post(token_url, data=request_data)
-        if not response.ok:
-            self.logger.error(response.text)
-
+        j_response = self.__post_oauth(token_url, request_data)
+        if j_response is None or "error" in j_response:
             return None, None, []
-        j_response = response.json()
 
         token_options = self.__manage_token_options(json_response=j_response)
         acc_token = j_response.get("access_token", None)
-        if acc_token is not None:
+        if isinstance(acc_token, str) and acc_token.strip():
             return acc_token, token_options, []
 
-        return None, None, [j_response["error"] if "error" in j_response else ""]
+        return None, None, []
 
     def __request_token_with_refresh_token(
         self, refresh_token: str
@@ -509,7 +486,6 @@ class RdlAuthGrantAccTokenHandler(object):
             self.logger.error(
                 "Trying to create token object into database, but token "
                 "with given token_str exists. Cannot continue."
-                "Token is: {}".format(token_str)
             )
             return None
 
@@ -582,32 +558,23 @@ class RdlAuthGrantAccTokenHandler(object):
         return user
 
     @staticmethod
-    def __decode_jwt_token_no_signature(token_str, audience: str) -> dict:
-        decode_options = {}
-        if len(audience.strip()):
-            decode_options["audience"] = audience
-
-        decoded = jwt.decode(
-            token_str,
-            **decode_options,
-            options={"verify_signature": False, "verify_exp": True},
-        )
-        return decoded
-
-    @staticmethod
     def __decode_jwt_token_with_publ_key(
         token_str: str, public_sign_key: str, audience: str, algorithms: list
     ) -> dict:
-        decode_params = {}
-        if len(public_sign_key.strip()):
-            decode_params["key"] = public_sign_key
-            if len(algorithms):
-                decode_params["algorithms"] = algorithms
-        else:
-            decode_params["options"] = {
-                "verify_signature": False,
-                "verify_exp": True,
-            }
+        if not isinstance(public_sign_key, str) or not public_sign_key.strip():
+            raise ValueError("JWT verification key is required")
+        if (
+            not isinstance(algorithms, list)
+            or not algorithms
+            or any(
+                not isinstance(algorithm, str)
+                or algorithm.lower() == "none"
+                or algorithm not in jwt.algorithms.get_default_algorithms()
+                for algorithm in algorithms
+            )
+        ):
+            raise ValueError("Explicit JWT algorithms are required")
+        decode_params = {"key": public_sign_key, "algorithms": algorithms}
         if len(audience.strip()):
             decode_params["audience"] = audience
         decoded = jwt.decode(token_str, **decode_params)
@@ -625,6 +592,14 @@ class RdlAuthGrantAccTokenHandler(object):
             if token is not None:
                 acc_token = token.acc_token
 
+            if settings.SYSTEM_HANDLER.use_introspect:
+                claims = self.__call_introspection_ep(user_token=acc_token)
+                if claims is None or not self.__introspection_is_email_verified(
+                    claims
+                ):
+                    return None
+                return claims
+
             decoded_acc_token = self.__decode_jwt_token_with_publ_key(
                 token_str=acc_token,
                 public_sign_key=public_sign_key,
@@ -632,17 +607,9 @@ class RdlAuthGrantAccTokenHandler(object):
                 algorithms=algorithms,
             )
 
-            return self.__verify_user_token(
-                token=token, decoded_token=decoded_acc_token
-            )
+            return decoded_acc_token
         except jwt.ExpiredSignatureError:
             return None
-        except Exception as e:
-            self.logger.error(e)
+        except (jwt.PyJWTError, ValueError, TypeError):
+            self.logger.error("JWT verification failed")
             return None
-
-    @staticmethod
-    def __verify_user_token(token: Token, decoded_token) -> dict | None:
-        if token is not None:
-            return token.decoded_token
-        return decoded_token

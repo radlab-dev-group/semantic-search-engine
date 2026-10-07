@@ -1,10 +1,13 @@
-import json
 from rest_framework.views import APIView
 
 from engine.controllers.database.milvus import INDEX_QUERY_PARAMS
 
 from main.src.decorators import required_params_exists, get_default_language
 from main.src.response import response_with_status
+from main.src.validation import (request_params, required_text, optional_text,
+                                 indexing_options, texts)
+from main.src.errors import error_response
+from main.src.errors_list import INVALID_PARAMS
 
 
 from system.core.errors import GROUP_NAME_NOT_EXIST
@@ -17,7 +20,8 @@ from data.serializers import (
     SimpleDocumentSerializer,
     SimpleQueryTemplateSerializer,
 )
-from data.controllers.upload import UploadDocumentsController
+from data.controllers.upload import UploadDocumentsController, UploadRejected
+from data.core.errors import UPLOAD_REJECTED
 
 
 from chat.core.errors import COLLECTION_NOT_FOUND
@@ -39,6 +43,8 @@ class NewCollection(APIView):
         "embedder_index_type",
     ]
     optional_params = ["group_name"]
+    input_validators = {key: required_text for key in required_params}
+    input_validators["group_name"] = optional_text
 
     @required_params_exists(
         required_params=required_params, optional_params=optional_params
@@ -47,6 +53,8 @@ class NewCollection(APIView):
     @get_default_language
     def post(self, language, organisation_user, request, *args, **kwargs):
         embedder_index_type = request.data.get("embedder_index_type")
+        if embedder_index_type not in INDEX_QUERY_PARAMS:
+            return error_response(INVALID_PARAMS, language)
         embedder_index_params = INDEX_QUERY_PARAMS[embedder_index_type][
             "INDEX_PARAMS"
         ]
@@ -57,7 +65,7 @@ class NewCollection(APIView):
         collection_name = request.data.get("collection_name").replace(" ", "_")
 
         org_group = None
-        group_name = request.data.get("group_name", "")
+        group_name = request.data.get("group_name") or ""
         if len(group_name.strip()):
             org_group = SystemController.get_organisation_group(
                 organisation=organisation_user.organisation, group_name=group_name
@@ -152,6 +160,7 @@ class ListCollections(APIView):
 
 class UploadAndIndexFilesToCollection(APIView):
     required_params = ["files[]", "collection_name", "indexing_options"]
+    input_validators = {"collection_name": required_text, "indexing_options": indexing_options}
 
     @required_params_exists(required_params=required_params)
     @get_organisation_user
@@ -159,9 +168,9 @@ class UploadAndIndexFilesToCollection(APIView):
     def post(self, language, organisation_user, request, *args, **kwargs):
         files = request.FILES.getlist("files[]")
         collection_name = request.data.get("collection_name")
-        indexing_options = json.loads(request.data.get("indexing_options"))
-
-        upl_controller = UploadDocumentsController(upload_dir="./upload_sse")
+        indexing_options = request_params(request).get("indexing_options")
+        if not files:
+            return error_response(INVALID_PARAMS, language)
 
         collection = RelationalDBController.get_collection(
             collection_name=collection_name, created_by=organisation_user
@@ -174,13 +183,17 @@ class UploadAndIndexFilesToCollection(APIView):
                 response_body=None,
             )
 
-        upl_doc = upl_controller.store_and_index_files_rel_db_post_request(
-            organisation_user=organisation_user,
-            files=files,
-            collection=collection,
-            indexing_options=indexing_options,
-            semantic_config_path="./configs/milvus_config.json",
-        )
+        upl_controller = UploadDocumentsController(upload_dir="./upload_sse")
+        try:
+            upl_doc = upl_controller.store_and_index_files_rel_db_post_request(
+                organisation_user=organisation_user,
+                files=files,
+                collection=collection,
+                indexing_options=indexing_options,
+                semantic_config_path="./configs/milvus_config.json",
+            )
+        except UploadRejected:
+            return error_response(UPLOAD_REJECTED, language)
 
         upl_doc_serialized = UploadedDocumentsSerializer(upl_doc)
 
@@ -194,6 +207,8 @@ class UploadAndIndexFilesToCollection(APIView):
 
 class AddAndIndexTextsFromEP(APIView):
     required_params = ["texts[]", "collection_name", "indexing_options"]
+    input_validators = {"collection_name": required_text, "indexing_options": indexing_options,
+                        "texts[]": texts}
 
     @required_params_exists(required_params=required_params)
     @get_organisation_user
@@ -202,7 +217,7 @@ class AddAndIndexTextsFromEP(APIView):
 
         texts = request.data.get("texts[]")
         collection_name = request.data.get("collection_name")
-        indexing_options = request.data.get("indexing_options")
+        indexing_options = request_params(request).get("indexing_options")
 
         rel_db_controller = RelationalDBController(store_to_db=True)
         collection = rel_db_controller.get_collection(
@@ -256,13 +271,13 @@ class AddAndIndexTextsFromEP(APIView):
 
 class ListCategoriesFromCollection(APIView):
     required_params = ["collection_name"]
+    input_validators = {"collection_name": required_text}
 
     @required_params_exists(required_params=required_params)
     @get_organisation_user
     @get_default_language
     def get(self, language, organisation_user, request):
-        pass
-        collection_name = request.data.get("collection_name")
+        collection_name = request_params(request).get("collection_name")
         collection = RelationalDBController.get_collection(
             collection_name=collection_name, created_by=organisation_user
         )
@@ -288,15 +303,19 @@ class ListCategoriesFromCollection(APIView):
 
 class ListDocumentsFromCollection(APIView):
     required_params = ["collection_name"]
+    input_validators = {"collection_name": required_text}
 
     @required_params_exists(required_params=required_params)
     @get_organisation_user
     @get_default_language
     def get(self, language, organisation_user, request):
-        collection_name = request.data.get("collection_name")
+        collection_name = request_params(request).get("collection_name")
         collection = RelationalDBController.get_collection(
             collection_name=collection_name, created_by=organisation_user
         )
+        if collection is None:
+            return response_with_status(status=False, language=language,
+                                        error_name=COLLECTION_NOT_FOUND)
         documents = RelationalDBController.get_documents_to_search_from_collection(
             collection=collection,
         )
@@ -351,10 +370,8 @@ class ListFilteringOptions(APIView):
 
         # URLs are not modelled in this system yet — use empty list.
         # Categories come from visible documents (use_in_search=True).
-        collections = CollectionOfDocuments.objects.filter(
-            created_by=organisation_user
-        ) | CollectionOfDocuments.objects.filter(
-            visible_to_groups__organisation=organisation_user.organisation
+        collections = RelationalDBController.get_visible_collections(
+            organisation_user
         )
         categories = list(
             Document.objects.filter(

@@ -32,13 +32,14 @@ NLP tasks.*
     - [Chat Lifecycle](#chat-lifecycle)
     - [Content Supervisor](#content-supervisor)
     - [Generative Model Integration](#generative-model-integration)
-11. [Management & Administrative Tools](#management--administrative-tools)
+11. [Python Client (`sse_lib`)](#python-client-sse_lib)
+12. [Management & Administrative Tools](#management--administrative-tools)
     - [Django Management Commands](#django-management-commands)
     - [Shell Scripts](#shell-scripts)
-12. [Testing & Evaluation](#testing--evaluation)
-13. [Extending the Engine](#extending-the-engine)
-14. [Contribution Guidelines](#contribution-guidelines)
-15. [License](#license)
+13. [Testing & Evaluation](#testing--evaluation)
+14. [Extending the Engine](#extending-the-engine)
+15. [Contribution Guidelines](#contribution-guidelines)
+16. [License](#license)
 
 ---  
 
@@ -153,6 +154,10 @@ semantic-search-engine/
 │   ├── aws_handler.py
 │   ├── constants.py
 │   └── models.json                # Model metadata registry
+├── sse_lib/                      # Standalone, pip-installable client of the REST API
+│   ├── pyproject.toml
+│   ├── README.md
+│   └── src/sse_lib/              # client, transport, options, models, endpoints
 ├── doccano_converter.py          # Doccano → dataset conversion
 ├── any_text_to_json.py           # Directory → JSON/JSONL conversion
 ├── manage.py                     # Django management script
@@ -626,6 +631,54 @@ Both paths support:
 
 Generated answers are stored in `UserQueryResponseAnswer` and can be rated via the `SetRateForQueryResponseAnswer`
 endpoint.
+
+---  
+
+## Python Client (`sse_lib`)
+
+`sse_lib/` is a standalone, pip-installable wrapper around the REST API of this repository. It is a deliberately thin
+layer: the Django controllers, views and serializers stay as they are, and the library only turns Python calls into
+those HTTP endpoints (and their JSON answers into small dataclasses). Its single runtime dependency is `requests`.
+
+```bash
+pip install ./sse_lib
+```
+
+```python
+from sse_lib import SSEClient, SearchOptions, GenerativeOptions
+
+with SSEClient("http://localhost:8271", token="...") as client:
+    client.create_collection(
+        "my_docs",
+        "My Documents",
+        "Test collection",
+        embedder="radlab/polish-bi-encoder-mean",
+        reranker="radlab/polish-cross-encoder",
+        index_type="HNSW",
+    )
+    client.upload_files("my_docs", ["invoice.pdf"])
+    client.index_documents("my_docs", ["Some text to index."], category="Notes")
+
+    found = client.search("my_docs", "data retention policy", SearchOptions(max_results=20))
+    answer = client.generate_answer(
+        found.query_response_id,
+        GenerativeOptions(generative_model="radlab/pLLama-3-8B-DPO-L"),
+    )
+    print(answer.answer)
+```
+
+- **Coverage**: collections, file and raw-text indexing, hybrid search, RAG answers and their ratings, embedder/reranker/
+  generative model listings, chats, and authentication (static token, username/password login, Keycloak code exchange).
+- **API quirks encoded once**: `options`/`query_options`/`indexing_options` sent as JSON strings where the views call
+  `json.loads()`, `files[]`/`texts[]` form fields, endpoint paths without a trailing slash, and the
+  `{"status": false, "errors": [...]}` envelope translated into typed exceptions (`SSEAPIError`,
+  `SSEAuthenticationError`, ...).
+- **Configuration** through the constructor or `SSE_API_HOST`, `SSE_API_TOKEN`, `SSE_API_PREFIX`, `SSE_API_LANGUAGE`,
+  `SSE_API_TIMEOUT`; versioned deployments need `api_prefix="api/v1"`.
+- **Escape hatch**: `client.request("GET", "some_endpoint")` reaches any endpoint, and every returned object keeps the
+  raw payload in `.raw`.
+
+Full documentation lives in [sse_lib/README.md](sse_lib/README.md).
 
 ---  
 
