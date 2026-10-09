@@ -1,3 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sse-engine"
+version = "0.1.0"
+description = "Semantic Search Engine - Django REST API server"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "tests.settings_django"
+testpaths = ["sse_rest_api"]
+
 [tool.black]
 line-length = 85
 target-version = ['py310', 'py311', 'py312']
@@ -17,5 +31,3 @@ exclude = '''
 
 [tool.bandit]
 skips = ["B101", "B110", "B112"]
-
-# TODO: Add radlab-data deps!
