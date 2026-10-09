@@ -17,7 +17,11 @@ from django.core.files.uploadedfile import TemporaryUploadedFile
 
 from sse_api.system.models import OrganisationUser
 
-from sse_api.data.models import UploadedDocuments, DocumentPageText, CollectionOfDocuments
+from sse_api.data.models import (
+    UploadedDocuments,
+    DocumentPageText,
+    CollectionOfDocuments,
+)
 
 from sse_api.engine.controllers.search.semantic import DBSemanticSearchController
 from sse_api.engine.controllers.database.relational_db import RelationalDBController

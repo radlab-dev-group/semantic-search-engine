@@ -99,7 +99,7 @@ def rerank_results_with_vector_store(
     try:
         reranked = vector_store.rerank(query_text, results, max_results)
         return reranked
-    except Exception as exc:
+    except Exception:
         # Log via the caller or a logger passed in — here we fall back gracefully.
         return results[:max_results]
 
@@ -442,7 +442,6 @@ class SearchEngineCore:
             texts_ids = [
                 int(hit["metadata"]["external_text_id"]) for hit in milvus_results
             ]
-            texts_scores = [hit["score"] for hit in milvus_results]
 
         # Step 4: Get text details via data source protocol
         if texts_ids:

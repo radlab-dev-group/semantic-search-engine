@@ -12,7 +12,7 @@ BUILT_IN_GENERAL_ERRORS = {
         MSG: {MSG_PL: "Niepoprawne parametry!", MSG_EN: "Invalid parameters!"},
     },
     NO_LOGIN_PARAMS: {
-        ECODE: f"e__login_400",
+        ECODE: "e__login_400",
         MSG: {
             MSG_PL: "Nie podano wymaganych danych do logowania!",
             MSG_EN: "No login required data are given!",

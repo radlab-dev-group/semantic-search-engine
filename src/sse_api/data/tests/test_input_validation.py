@@ -6,8 +6,8 @@ from django.test import TestCase
 from rest_framework.test import force_authenticate
 
 from sse_api.data.api import (NewCollection, ListCategoriesFromCollection, ListDocumentsFromCollection,
-                      UploadAndIndexFilesToCollection, AddAndIndexTextsFromEP)
-from tests.input_support import EndpointInputMixin, INDEXING_OPTIONS
+                              UploadAndIndexFilesToCollection, AddAndIndexTextsFromEP)
+from sse_api.tests.input_support import EndpointInputMixin, INDEXING_OPTIONS
 
 
 class DataInputTests(EndpointInputMixin, TestCase):
@@ -44,7 +44,7 @@ class DataInputTests(EndpointInputMixin, TestCase):
                 self.assert_denial(self.invoke(view, {"collection_name": "missing"}, method="get"))
                 lookup.reset_mock()
                 self.assert_denial(self.invoke(view, url="/?collection_name=&lang=en",
-                                              body={"collection_name": "body"}))
+                                   body={"collection_name": "body"}))
                 self.assert_denial(self.invoke(view, url="/?lang=bad", body={"collection_name": "body"}))
                 lookup.assert_not_called()
             documents.assert_not_called()

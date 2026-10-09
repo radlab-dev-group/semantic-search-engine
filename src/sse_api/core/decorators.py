@@ -3,7 +3,11 @@ from collections.abc import Mapping
 from rest_framework.request import Request
 
 from sse_api.core.errors import error_response
-from sse_api.core.errors_list import NO_REQUIRED_PARAMS, UNSUPPORTED_LANGUAGE, INVALID_PARAMS
+from sse_api.core.errors_list import (
+    NO_REQUIRED_PARAMS,
+    UNSUPPORTED_LANGUAGE,
+    INVALID_PARAMS,
+)
 from sse_api.core.constants import default_app_language, AVAILABLE_LANGUAGES
 from sse_api.core.validation import request_params
 

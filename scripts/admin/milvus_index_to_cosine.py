@@ -28,6 +28,7 @@ Environment overrides (same names as the application uses):
 """
 
 import argparse
+import sys
 import json
 import os
 

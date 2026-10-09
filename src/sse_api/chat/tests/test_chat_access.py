@@ -7,10 +7,10 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 with patch("sse_api.engine.controllers.models_logic.generative.GenerativeModelConfig.load"):
     from sse_api.chat.api import (AddUserMessageToChatWithSystemResponse, GetSavedChatByHash,
-                          SetChatStateAsSaved)
+                                  SetChatStateAsSaved)
 from sse_api.chat.core.errors import (ALL_ERRORS_CHATS, CHAT_ID_NOT_FOUND,
-                              USER_DENIED_TO_CHAT, CANNOT_ADD_MESSAGE_CHAT_RO,
-                              COLLECTION_NOT_FOUND)
+                                      USER_DENIED_TO_CHAT, CANNOT_ADD_MESSAGE_CHAT_RO,
+                                      COLLECTION_NOT_FOUND)
 from sse_api.chat.models import Chat, Message
 from sse_api.data.models import CollectionOfDocuments
 from sse_api.core.errors import MSG, MSG_EN, ECODE

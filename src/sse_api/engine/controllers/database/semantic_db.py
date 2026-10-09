@@ -3,7 +3,9 @@ from typing import List
 from sse_api.data.controllers.constants import NORMALIZE_EMBEDDINGS
 
 from sse_api.engine.controllers.database.milvus import MilvusHandler
-from sse_api.engine.controllers.models_logic.embedders_rerankers import EmbeddingModelsConfig
+from sse_api.engine.controllers.models_logic.embedders_rerankers import (
+    EmbeddingModelsConfig,
+)
 
 
 class SemanticDBController:

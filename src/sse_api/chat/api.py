@@ -17,7 +17,7 @@ from rest_framework.views import APIView
 from sse_api.core.response import response_with_status
 from sse_api.core.decorators import required_params_exists, get_default_language
 from sse_api.core.validation import (request_params, required_text, optional_text,
-                                 identifier, boolean, options_object, search_options)
+                                     identifier, boolean, options_object, search_options)
 
 from sse_api.system.core.decorators import get_organisation_user
 
@@ -29,7 +29,11 @@ from sse_api.chat.core.errors import (
     USER_DENIED_TO_CHAT,
     CANNOT_ADD_MESSAGE_CHAT_RO,
 )
-from sse_api.chat.serializer import ChatSerializer, MessageSerializer, MessageStateSerializer
+from sse_api.chat.serializer import (
+    ChatSerializer,
+    MessageSerializer,
+    MessageStateSerializer,
+)
 
 from sse_api.engine.controllers.database.relational_db import RelationalDBController
 

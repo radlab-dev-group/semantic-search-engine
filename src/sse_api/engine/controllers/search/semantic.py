@@ -35,7 +35,10 @@ from sse_api.data.models import (
     CollectionOfDocuments,
     QueryTemplate,
 )
-from sse_api.data.controllers.constants import NORMALIZE_EMBEDDINGS, DEFAULT_MIN_SIMILARITY
+from sse_api.data.controllers.constants import (
+    NORMALIZE_EMBEDDINGS,
+    DEFAULT_MIN_SIMILARITY,
+)
 from sse_api.data.controllers.template import QueryTemplateController
 
 from sse_api.engine.models import UserQuery

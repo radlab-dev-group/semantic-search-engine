@@ -27,10 +27,7 @@ from radlab_data.preprocessing.dataset import (
 from radlab_data.preprocessing.pipeline import Pipeline
 from radlab_data.preprocessing.pipeline_modules import (
     AlignAnnotationToWordBoundaries,
-    RemoveDuplicates,
-    RemoveLongIOBAnnotation,
     RemoveUnlabelledData,
-    SplitSentences,
 )
 from radlab_data.utils.argument_parser import (
     INPUT_DIR_REQUIRED,

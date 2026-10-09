@@ -5,7 +5,7 @@ from sse_api.engine.controllers.database.milvus import INDEX_QUERY_PARAMS
 from sse_api.core.decorators import required_params_exists, get_default_language
 from sse_api.core.response import response_with_status
 from sse_api.core.validation import (request_params, required_text, optional_text,
-                                 indexing_options, texts)
+                                     indexing_options, texts)
 from sse_api.core.errors import error_response
 from sse_api.core.errors_list import INVALID_PARAMS
 

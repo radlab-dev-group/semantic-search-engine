@@ -514,7 +514,7 @@ class TestsLoader:
                     )
                 )
                 if query_response is None:
-                    logging.warning(f"Received None query response!")
+                    logging.warning("Received None query response!")
                     continue
 
                 logging.info(

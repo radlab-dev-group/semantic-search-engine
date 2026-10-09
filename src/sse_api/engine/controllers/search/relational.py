@@ -1,4 +1,3 @@
-from django.db.models import F
 from django.contrib.postgres.search import SearchVector, SearchQuery, SearchRank
 from sse_api.data.models import CollectionOfDocuments, DocumentPageText, Document
 

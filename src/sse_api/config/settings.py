@@ -121,7 +121,7 @@ if (
     or system_handler.use_oauth_v1_auth
     or system_handler.use_oauth_v2_auth
 ):
-    import sse_api.authorization
+    from sse_api import authorization
 
     INSTALLED_APPS.append(authorization.app_name)
     MIDDLEWARE.append(authorization.default_middleware_class)

@@ -6,11 +6,11 @@ from sse_api.core.response import response_with_status
 from sse_api.core.decorators import required_params_exists, get_default_language
 from sse_api.core.constants import CONFIG_DIR
 from sse_api.core.validation import (request_params, required_text, optional_text,
-                                 identifier, boolean, search_options, generation_options, rating_integer)
+                                     identifier, boolean, search_options, generation_options, rating_integer)
 from sse_api.core.errors import error_response
 from sse_api.core.errors_list import INVALID_PARAMS
 from sse_api.engine.core.errors import (COLLECTION_ACCESS_DENIED, RESPONSE_ACCESS_DENIED,
-                                ANSWER_ACCESS_DENIED, GENERATION_FAILED)
+                                        ANSWER_ACCESS_DENIED, GENERATION_FAILED)
 
 from sse_api.system.core.decorators import get_organisation_user
 from sse_api.engine.controllers.search.query import SearchQueryController
@@ -20,7 +20,9 @@ from sse_api.engine.controllers.models_logic.generative import (
     GenerativeModelController,
     GenerativeModelControllerApi,
 )
-from sse_api.engine.controllers.models_logic.embedders_rerankers import EmbeddingModelsConfig
+from sse_api.engine.controllers.models_logic.embedders_rerankers import (
+    EmbeddingModelsConfig,
+)
 
 
 class SearchWithOptions(APIView):

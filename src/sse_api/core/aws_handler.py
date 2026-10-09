@@ -52,11 +52,11 @@ class AwsHandler:
             assert len(c_v), f"{c_o} value must be defined!"
 
         self._bucket = self._json_config[self.BUCKET_NAME]
-        assert len(self._bucket), f"Bucket name must be defined!"
+        assert len(self._bucket), "Bucket name must be defined!"
 
         self._client = boto3.client("s3", **conn_opts)
 
-        assert self._client is not None, f"Problem while connecting to AWS!"
+        assert self._client is not None, "Problem while connecting to AWS!"
 
         self._is_loaded = True
 
@@ -178,7 +178,7 @@ class AwsHandler:
             self._json_config = json.load(f)[self.AWS_JSON_SECTION]
 
     def __assert_params(self):
-        assert self._is_loaded, f"AWS Handler config is not loaded!"
+        assert self._is_loaded, "AWS Handler config is not loaded!"
 
     def __load_file_from_aws_path(self, file_path: str, file_type: str):
         try:

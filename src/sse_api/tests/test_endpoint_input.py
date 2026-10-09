@@ -6,7 +6,7 @@ with patch("sse_api.authorization.utils.config.RdlAuthConfig.load_config"):
     from sse_api.authorization.api.authorization import CreateRdlAuthToken, RefreshToken
 
 from sse_api.core.errors_constants import MSG
-from tests.input_support import EndpointInputMixin
+from sse_api.tests.input_support import EndpointInputMixin
 
 
 class SharedEndpointInputTests(EndpointInputMixin, TestCase):
@@ -40,7 +40,11 @@ class SharedEndpointInputTests(EndpointInputMixin, TestCase):
 
     def test_chat_invalid_input_has_no_controller_side_effects(self):
         with patch("sse_api.engine.controllers.models_logic.generative.GenerativeModelConfig.load"):
-            from sse_api.chat.api import NewChat, AddUserMessageToChatWithSystemResponse, SetChatStateAsSaved
+            from sse_api.chat.api import (
+                NewChat,
+                AddUserMessageToChatWithSystemResponse,
+                SetChatStateAsSaved,
+            )
         for view, payload, invalid in (
             (NewChat, {}, (("options", []), ("options", None), ("collection_name", False), ("search_options", "[]"))),
             (AddUserMessageToChatWithSystemResponse, {"chat_id": 1, "user_message": "hi", "options": {}},

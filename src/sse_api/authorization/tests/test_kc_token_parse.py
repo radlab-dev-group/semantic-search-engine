@@ -1,5 +1,4 @@
 import json
-import base64
 
 
 def load_token_from_file(filename):

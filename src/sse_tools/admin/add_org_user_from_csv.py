@@ -9,15 +9,6 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "sse_api.config.settings")
 django.setup()
 
 from sse_api.system.controllers import SystemController
-from sse_api.system.core.constants import (
-    DEFAULT_ORGANISATION_NAME,
-    DEFAULT_ORGANISATION_DESCRIPTION,
-    DEFAULT_USER_GROUP_NAME,
-    DEFAULT_USER_GROUP_DESCRIPTION,
-    DEFAULT_USER_NAME,
-    DEFAULT_USER_EMAIL,
-    DEFAULT_USER_PASS,
-)
 
 
 def prepare_parser(desc=""):

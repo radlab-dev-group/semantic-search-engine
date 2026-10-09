@@ -2,8 +2,12 @@ from unittest.mock import patch
 
 from django.test import TestCase
 
-from sse_api.engine.api import SearchWithOptions, GenerativeAnswerForQuestion, SetRateForQueryResponseAnswer
-from tests.input_support import EndpointInputMixin, GENERATION_OPTIONS
+from sse_api.engine.api import (
+    SearchWithOptions,
+    GenerativeAnswerForQuestion,
+    SetRateForQueryResponseAnswer,
+)
+from sse_api.tests.input_support import EndpointInputMixin, GENERATION_OPTIONS
 
 
 class EngineInputTests(EndpointInputMixin, TestCase):

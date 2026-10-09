@@ -215,7 +215,7 @@ class RdlAuthGrantAccTokenHandler(object):
 
         user = self.__get_or_add_user_from_user_info(user_info=decoded_token)
         if not user:
-            self.logger.error(f"Error while get/add user")
+            self.logger.error("Error while get/add user")
             return None, None
 
         token = self.__add_token_for_user(
@@ -299,7 +299,7 @@ class RdlAuthGrantAccTokenHandler(object):
         )
         if token is None:
             self.logger.error(
-                f"Introspection problem with adding token for user "
+                "Introspection problem with adding token for user "
                 f"{intro_response[DEFAULT_USER_ID]}"
             )
             return None
@@ -325,7 +325,7 @@ class RdlAuthGrantAccTokenHandler(object):
         if not isinstance(user_id, str) or not user_id.strip():
             self.logger.error(
                 f"Token introspection: User scope info '{DEFAULT_USER_ID}' "
-                f"is not found during introspection!"
+                "is not found during introspection!"
             )
             return None
 

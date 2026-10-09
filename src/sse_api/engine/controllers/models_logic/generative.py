@@ -624,7 +624,7 @@ class GenerativeModelController:
         """
         which_docs = get_accumulated_docs_by_rank_perc(
             results={"stats": user_response.general_stats_json},
-            perc_rank_gen_qa=percentage_rank_gen_qa,
+            perc_rank_gen_qa=percentage_rank_mass,
         )
         logging.info(f"Number of documents to generate response: {len(which_docs)}")
         logging.info(f"generative model to generate answer: {generative_model}")

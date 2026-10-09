@@ -13,8 +13,12 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from rest_framework.test import force_authenticate
 
 from sse_api.data.api import UploadAndIndexFilesToCollection
-from sse_api.data.controllers.upload import UploadBudget, UploadDocumentsController, UploadRejected
-from tests.input_support import EndpointInputMixin, INDEXING_OPTIONS
+from sse_api.data.controllers.upload import (
+    UploadBudget,
+    UploadDocumentsController,
+    UploadRejected,
+)
+from sse_api.tests.input_support import EndpointInputMixin, INDEXING_OPTIONS
 
 
 def archive(entries, compression=zipfile.ZIP_STORED):
@@ -95,6 +99,7 @@ class ZipUploadTests(SimpleTestCase):
     def test_bounded_reads(self):
         upload = archive([("a", b"a" * 100)])
         original = upload.read
+
         def bounded(size=-1):
             self.assertGreater(size, 0)
             self.assertLessEqual(size, 64 * 1024)

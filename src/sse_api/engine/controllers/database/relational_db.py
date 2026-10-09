@@ -18,7 +18,9 @@ from sse_api.data.models import (
     QueryTemplate,
 )
 from sse_api.data.controllers.denoiser import DenoiserController
-from sse_api.engine.controllers.models_logic.embedders_rerankers import EmbeddingModelsConfig
+from sse_api.engine.controllers.models_logic.embedders_rerankers import (
+    EmbeddingModelsConfig,
+)
 from sse_api.core.utils import compute_text_hash
 
 

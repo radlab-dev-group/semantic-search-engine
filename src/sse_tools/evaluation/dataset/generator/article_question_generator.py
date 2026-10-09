@@ -11,7 +11,10 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "sse_api.config.settings")
 django.setup()
 
 from sse_api.engine.controllers.database import PublicRelationDBController
-from sse_tools.evaluation.dataset.generator.question_worker import LLamaHandler, FileWriter
+from sse_tools.evaluation.dataset.generator.question_worker import (
+    LLamaHandler,
+    FileWriter,
+)
 
 
 LLAMA_SERVICES_HOSTS = [

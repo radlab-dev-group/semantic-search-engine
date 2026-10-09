@@ -1,7 +1,5 @@
-import json
 import argparse
 import pandas as pd
-from aiohttp.client_reqrep import json_re
 
 
 def prepare_parser(desc=""):
