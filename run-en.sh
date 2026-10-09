@@ -41,7 +41,8 @@ set -euo pipefail
 # ---------- locations ----------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd -P)"
 ROOT_DIR="$SCRIPT_DIR"
-API_DIR="$ROOT_DIR/sse_rest_api"
+API_DIR="$ROOT_DIR"
+CONFIG_DIR="$ROOT_DIR/configs"
 VENV_DIR="$ROOT_DIR/.venv"
 PY_PREFERRED="python3.11"
 
@@ -114,7 +115,7 @@ wait_port() {
 # ---------- commands ----------
 setup() {
   step "Step 2: virtual environment + dependencies"
-  [[ -d "$API_DIR" ]] || { err "Missing sse_rest_api/ directory — are you inside the repo?"; exit 1; }
+  [[ -d "$API_DIR/src/sse_api" ]] || { err "Missing src/sse_api/ directory — are you inside the repo?"; exit 1; }
 
   local py="$PY_PREFERRED"
   have "$py" || { py="python3"; warn "$PY_PREFERRED not found, using python3"; }
@@ -134,12 +135,13 @@ setup() {
   fi
 
   local pip; pip="$(pick_pip)"
-  log "Installing dependencies: sse_rest_api/requirements.txt"
+  log "Installing dependencies: requirements.txt"
   "$pip" install --upgrade pip >/dev/null
   "$pip" install -r "$API_DIR/requirements.txt"
+  "$pip" install --no-deps -e "$API_DIR"
 
   log "Installing dependencies from git (radlab-data, llm-router)"
-  ( cd "$API_DIR" && ./initialize.sh dep )
+  ( cd "$API_DIR/src/sse_api" && ./initialize.sh dep )
 }
 
 infra() {
@@ -168,18 +170,18 @@ init() {
     warn "Skipping initialization (--no-init)."
     return 0
   fi
-  [[ -d "$API_DIR" ]] || { err "Missing sse_rest_api/"; exit 1; }
+  [[ -d "$API_DIR/src/sse_api" ]] || { err "Missing src/sse_api/"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
-  ( cd "$API_DIR" && ./initialize.sh migrate )
-  ( cd "$API_DIR" && ./initialize.sh semantic )
-  ( cd "$API_DIR" && ./initialize.sh add_user )
-  ( cd "$API_DIR" && ./initialize.sh add_query_templates )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" python3 -m sse_api.manage migrate )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" python3 src/sse_tools/admin/prepare_semantic_db.py )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" python3 src/sse_tools/admin/add_org_group_user.py -u configs/user-group-organisation.json )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" python3 src/sse_tools/admin/add_query_template_to_org.py )
 }
 
 cosine() {
   step "COSINE: migrating indexes of existing collections (no re-embedding)"
   local script="$SCRIPT_DIR/scripts/admin/milvus_index_to_cosine.py"
-  local cfg="$API_DIR/configs/milvus_config.json"
+  local cfg="$CONFIG_DIR/milvus_config.json"
   [[ -f "$script" ]] || { err "Missing migration script: $script"; exit 1; }
   [[ -f "$cfg" ]]    || { err "Missing Milvus config: $cfg"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
@@ -203,15 +205,15 @@ cosine() {
   fi
 
   local py; py="$(pick_python)"
-  ( cd "$API_DIR" && "$py" "$script" "${args[@]}" )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" "$script" "${args[@]}" )
 }
 
 start() {
   step "Step 7: starting the API server (foreground) → http://localhost:8271/api/"
-  [[ -d "$API_DIR" ]] || { err "Missing sse_rest_api/"; exit 1; }
+  [[ -d "$API_DIR/src/sse_api" ]] || { err "Missing src/sse_api/"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
   log "Test login: default_admin / password  (POST /api/login)"
-  ( cd "$API_DIR" && ./run-api.sh )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" ./src/sse_api/run-api.sh )
 }
 
 down() {

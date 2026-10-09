@@ -4,7 +4,7 @@
 #
 #   cp .env.example .env      # or: ./run-en.sh config
 #   $EDITOR .env              # every CHANGE_ME has to disappear
-#   docker compose --profile tools run --rm tools python manage.py migrate --noinput
+#   docker compose --profile tools run --rm tools python -m sse_api.manage migrate --noinput
 #   docker compose up -d
 #
 # All secrets come from `.env`; nothing sensitive is committed or baked in.
@@ -33,12 +33,13 @@ services:
       ENV_MILVUS_HOST: milvus
       ENV_MILVUS_PORT: "19530"
       ENV_DEBUG: "0"
-      DJANGO_SETTINGS_MODULE: main.settings
+      DJANGO_SETTINGS_MODULE: sse_api.config.settings
+      SSE_CONFIG_DIR: /app/configs
     volumes:
       # Runtime configuration (django-config.json, secret-key.txt, ...).
-      - ./sse_rest_api/configs:/app/sse_rest_api/configs:ro
-      - upload_sse:/app/sse_rest_api/upload_sse
-      - staticfiles:/app/sse_rest_api/staticfiles
+      - ./configs:/app/configs:ro
+      - upload_sse:/app/upload_sse
+      - staticfiles:/app/staticfiles
     ports:
       # Loopback only — nginx is the single public entry point.
       - "127.0.0.1:${API_HOST_PORT:-8000}:8000"
@@ -71,16 +72,18 @@ services:
       ENV_MILVUS_HOST: milvus
       ENV_MILVUS_PORT: "19530"
       ENV_DEBUG: "0"
+      DJANGO_SETTINGS_MODULE: sse_api.config.settings
+      SSE_CONFIG_DIR: /app/configs
     volumes:
-      - ./sse_rest_api/configs:/app/sse_rest_api/configs
-      - upload_sse:/app/sse_rest_api/upload_sse
-      - staticfiles:/app/sse_rest_api/staticfiles
+      - ./configs:/app/configs
+      - upload_sse:/app/upload_sse
+      - staticfiles:/app/staticfiles
     depends_on:
       postgres:
         condition: service_healthy
       milvus:
         condition: service_healthy
-    command: ["python", "manage.py", "migrate", "--noinput"]
+    command: ["python", "-m", "sse_api.manage", "migrate", "--noinput"]
 
   # --- PostgreSQL ------------------------------------------------------------
   postgres:

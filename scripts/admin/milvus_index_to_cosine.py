@@ -15,8 +15,7 @@ For each requested collection the script:
    matches the collection),
 4. loads the collection again.
 
-Usage (run from the ``sse_rest_api`` directory so that the ``engine`` and
-``data`` packages are importable):
+Usage (run from the repository root):
 
     python scripts/admin/milvus_index_to_cosine.py --all
     python scripts/admin/milvus_index_to_cosine.py --collection my_coll --collection other_coll
@@ -31,15 +30,6 @@ Environment overrides (same names as the application uses):
 import argparse
 import json
 import os
-import sys
-
-# Allow running as a script from the repository root or from sse_rest_api.
-_REPO_ROOT = os.path.dirname(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-)
-_APP_DIR = os.path.join(_REPO_ROOT, "sse_rest_api")
-if _APP_DIR not in sys.path:
-    sys.path.insert(0, _APP_DIR)
 
 # The index parameter registry lives in a module whose import chain touches
 # Django models, so minimal Django settings must be configured first
@@ -54,10 +44,10 @@ if not settings.configured:
             "django.contrib.contenttypes",
             "django.contrib.auth",
             "django.contrib.postgres",
-            "data",
-            "system",
-            "engine",
-            "chat",
+            "sse_api.data",
+            "sse_api.system",
+            "sse_api.engine",
+            "sse_api.chat",
         ],
         DATABASES={
             "default": {
@@ -73,10 +63,12 @@ if not settings.configured:
 
 from pymilvus import MilvusClient  # noqa: E402
 
-from engine.controllers.database.milvus import INDEX_QUERY_PARAMS  # noqa: E402
+from sse_api.engine.controllers.database.milvus import INDEX_QUERY_PARAMS  # noqa: E402
 
 CONFIG_JSON_FIELD = "milvus_db_connection"
-DEFAULT_CONFIG_PATH = os.path.join("configs", "milvus_config.json")
+DEFAULT_CONFIG_PATH = os.path.join(
+    os.getenv("SSE_CONFIG_DIR", "configs"), "milvus_config.json"
+)
 DEFAULT_INDEX_NAME = "emb_idx"
 DEFAULT_EMBEDDING_FIELD = "embedding"
 

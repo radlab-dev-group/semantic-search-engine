@@ -1,32 +1,16 @@
 #!/bin/bash
-
-if [ "${1}" == "sample" ]
-then
-  SLEEP_TIME=3
-  DATA_DIR=/....
-else
-  SLEEP_TIME=7
-  DATA_DIR=/....
-fi
-
-echo ""
-echo "Running indexing directory ${DATA_DIR} in ${SLEEP_TIME} seconds"
-echo "Press CTR+C to abort indexing..."
-echo ""
-sleep ${SLEEP_TIME}
-
-cp ../sse_apps/add_files_from_dir.py .
-
-python3 add_files_from_dir.py \
-	-d ${DATA_DIR} \
-	-c AiA2023 \
-	-o /dev/null \
-	--clear-texts \
-	--check-text-language \
-	--proper-pages \
-	--merge-document-pages \
-	--split-to-max-tokens-in-chunk=200 \
-	--overlap-tokens-between-chunks=20 \
-	--processes=10
-
-rm add_files_from_dir.py 
+#
+# Index a directory of files into a collection.
+#
+#   bash scripts/not_tested/run-sample-indexing.sh <data-dir> <collection>
+#
+set -euo pipefail
+REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")/../.." >/dev/null 2>&1 && pwd -P)"
+DATA_DIR="${1:?usage: run-sample-indexing.sh <data-dir> <collection>}"
+COLLECTION="${2:?usage: run-sample-indexing.sh <data-dir> <collection>}"
+cd "$REPO_DIR"
+exec python3 src/sse_tools/indexing/add_files_from_dir.py \
+    -d "$DATA_DIR" \
+    -c "$COLLECTION" \
+    --proper-pages \
+    --merge-document-pages

@@ -1,8 +1,0 @@
-{
-  "api_hosts": {
-    "google/gemma-4-12b-it": "localhost:8080",
-  },
-  "active_api_models": [
-    "google/gemma-4-12b-it",
-  ]
-}

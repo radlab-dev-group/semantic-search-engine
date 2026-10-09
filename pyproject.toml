@@ -8,9 +8,13 @@ version = "0.1.0"
 description = "Semantic Search Engine - Django REST API server"
 requires-python = ">=3.10"
 
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["sse_api*", "sse_tools*"]
+
 [tool.pytest.ini_options]
-DJANGO_SETTINGS_MODULE = "tests.settings_django"
-testpaths = ["sse_rest_api"]
+DJANGO_SETTINGS_MODULE = "sse_api.tests.settings_django"
+testpaths = ["src/sse_api"]
 
 [tool.black]
 line-length = 85

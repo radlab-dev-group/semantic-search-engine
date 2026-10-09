@@ -16,7 +16,7 @@
 #   ./run.sh start|up        # odpal serwer API w foreground → http://localhost:8271/api/ (krok 7)
 #   ./run.sh down            # zatrzymaj i usuń kontenery PG + Milvus (etcd/MinIO)
 #   ./run.sh status          # pokaż stan kontenerów i portów (5471/19530/19121/8271)
-#   ./run.sh config          # utwórz .env i brakujące pliki sse_rest_api/configs/ z szablonów
+#   ./run.sh config          # utwórz .env i brakujące pliki configs/ z szablonów
 #
 # Flagi:
 #   --no-venv        nie twórz/wykorzystuj venv (użyj systemowego pythona/pipa)
@@ -48,7 +48,8 @@ set -euo pipefail
 # ---------- lokalizacja ----------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd -P)"
 ROOT_DIR="$SCRIPT_DIR"
-API_DIR="$ROOT_DIR/sse_rest_api"
+API_DIR="$ROOT_DIR"
+CONFIG_DIR="$ROOT_DIR/configs"
 VENV_DIR="$ROOT_DIR/.venv"
 PY_PREFERRED="python3.11"
 # Obrazy i sieć Dockera stosu Milvus standalone (te same wersje jak w
@@ -153,11 +154,11 @@ config() {
     exit 1
   fi
 
-  for example in "$API_DIR"/configs/*.example.*; do
+  for example in "$CONFIG_DIR"/*.example.*; do
     [[ -e "$example" ]] || continue
     name="$(basename "$example")"
-    target="$API_DIR/configs/${name/.example./.}"
-    rel="sse_rest_api/configs/${name/.example./.}"
+    target="$CONFIG_DIR/${name/.example./.}"
+    rel="configs/${name/.example./.}"
     if [[ -f "$target" ]]; then
       log "Pominięto (istnieje): $rel"
       skipped=$((skipped + 1))
@@ -176,7 +177,7 @@ config() {
 
 setup() {
   step "Krok 2: wirtualne środowisko + zależności"
-  [[ -d "$API_DIR" ]] || { err "Brak katalogu sse_rest_api/ — czy jesteś w repo?"; exit 1; }
+  [[ -d "$API_DIR/src/sse_api" ]] || { err "Brak katalogu src/sse_api/ — czy jesteś w repo?"; exit 1; }
 
   local py="$PY_PREFERRED"
   have "$py" || { py="python3"; warn "$PY_PREFERRED nie znaleziony, używam python3"; }
@@ -196,12 +197,13 @@ setup() {
   fi
 
   local pip; pip="$(pick_pip)"
-  log "Instaluję zależności: sse_rest_api/requirements.txt"
+  log "Instaluję zależności: requirements.txt"
   "$pip" install --upgrade pip >/dev/null
   "$pip" install -r "$API_DIR/requirements.txt"
+  "$pip" install --no-deps -e "$API_DIR"
 
   log "Instaluję zależności z git (radlab-data, llm-router)"
-  ( cd "$API_DIR" && ./initialize.sh dep )
+  ( cd "$API_DIR/src/sse_api" && ./initialize.sh dep )
 }
 
 infra() {
@@ -289,18 +291,18 @@ init() {
     warn "Pomijam inicjalizację (--no-init)."
     return 0
   fi
-  [[ -d "$API_DIR" ]] || { err "Brak sse_rest_api/"; exit 1; }
+  [[ -d "$API_DIR/src/sse_api" ]] || { err "Brak src/sse_api/"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
-  ( cd "$API_DIR" && ./initialize.sh migrate )
-  ( cd "$API_DIR" && ./initialize.sh semantic )
-  ( cd "$API_DIR" && ./initialize.sh add_user )
-  ( cd "$API_DIR" && ./initialize.sh add_query_templates )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" python3 -m sse_api.manage migrate )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" python3 -m sse_api.manage shell -c "pass" >/dev/null 2>&1 || true; python3 src/sse_tools/admin/prepare_semantic_db.py )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" python3 src/sse_tools/admin/add_org_group_user.py -u configs/user-group-organisation.json )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" python3 src/sse_tools/admin/add_query_template_to_org.py )
 }
 
 cosine() {
   step "COSINE: migracja indexów istniejących kolekcji (bez re-embedingu)"
   local script="$SCRIPT_DIR/scripts/admin/milvus_index_to_cosine.py"
-  local cfg="$API_DIR/configs/milvus_config.json"
+  local cfg="$CONFIG_DIR/milvus_config.json"
   [[ -f "$script" ]] || { err "Brak skryptu migracji: $script"; exit 1; }
   [[ -f "$cfg" ]]    || { err "Brak configu Milvus: $cfg"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
@@ -324,16 +326,16 @@ cosine() {
   fi
 
   local py; py="$(pick_python)"
-  ( cd "$API_DIR" && "$py" "$script" "${args[@]}" )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" "$script" "${args[@]}" )
 }
 
 start() {
   step "Krok 7: start serwera API (foreground) → http://localhost:8271/api/"
-  [[ -d "$API_DIR" ]] || { err "Brak sse_rest_api/"; exit 1; }
+  [[ -d "$API_DIR/src/sse_api" ]] || { err "Brak src/sse_api/"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
   log "Login testowy: default_admin / password  (POST /api/login)"
   warn "W środowisku produkcyjnym natychmiast zmień hasło konta default_admin."
-  ( cd "$API_DIR" && ./run-api.sh )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" ./src/sse_api/run-api.sh )
 }
 
 down() {
