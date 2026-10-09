@@ -12,7 +12,7 @@ from sse_lib import (
     SSEValueError,
     build_options,
 )
-from support import HOST, FakeSession, build_client, ok
+from support import HOST, FakeSession, INDEXING, build_client, ok
 
 
 class OptionsRegressionTest(unittest.TestCase):
@@ -43,7 +43,12 @@ class ClientRegressionTest(unittest.TestCase):
             [ok({})], default_indexing_options={"clear_text": False}
         )
         client.index_documents(
-            "docs", ["text"], indexing_options={"max_tokens_in_chunk": 200}
+            "docs",
+            ["text"],
+            indexing_options={
+                "max_tokens_in_chunk": 200,
+                "number_of_overlap_tokens": 0,
+            },
         )
         payload = client.fake_session.calls[0].json
         self.assertFalse(payload["indexing_options"]["clear_text"])
@@ -57,7 +62,7 @@ class ClientRegressionTest(unittest.TestCase):
 
     def test_tuple_documents_are_a_sequence(self):
         client = build_client([ok({})])
-        client.index_documents("docs", ("text A", "text B"))
+        client.index_documents("docs", ("text A", "text B"), **INDEXING)
         documents = client.fake_session.calls[0].json["texts[]"]
         self.assertEqual(
             [doc["pages"][0]["page_content"] for doc in documents],
@@ -66,7 +71,7 @@ class ClientRegressionTest(unittest.TestCase):
 
     def test_single_file_tuple_is_still_supported(self):
         client = build_client([ok({})])
-        client.upload_files("docs", ("a.txt", b"text"))
+        client.upload_files("docs", ("a.txt", b"text"), **INDEXING)
         self.assertEqual(len(client.fake_session.calls[0].files), 1)
         self.assertEqual(
             client.fake_session.calls[0].files[0][1][:2], ("a.txt", b"text")

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, fields
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 from sse_lib.exceptions import SSEValueError
 
@@ -239,6 +239,78 @@ def text_document(
     return document
 
 
+# Fields the backend insists on, per validated endpoint.  ``data`` runs
+# ``indexing_options`` through identifier()/number() and ``engine`` runs
+# ``query_options`` through generation_options(); all of those reject ``None``,
+# so a client that leaves them unset used to get an opaque INVALID_PARAMS back.
+# The chat endpoints are deliberately *not* covered: they validate ``options``
+# with the permissive ``options_object`` and accept anything, so requiring
+# these fields when sending a chat message would reject valid requests.
+INDEXING_REQUIRED_FIELDS = ("max_tokens_in_chunk", "number_of_overlap_tokens")
+GENERATIVE_REQUIRED_FIELDS = ("generative_model", "percentage_rank_mass")
+
+
+def _require(options: Any, required: Sequence[str], endpoint: str) -> None:
+    missing = [name for name in required if getattr(options, name, None) is None]
+    if missing:
+        listed = " and ".join(f"'{name}'" for name in missing)
+        raise SSEValueError(
+            f"{endpoint} requires {listed}; the backend rejects them as null. "
+            "Pass them explicitly (or via default_indexing_options on the client)."
+        )
+
+
+def _reject_out_of_range(value: Any, name: str, endpoint: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise SSEValueError(f"{endpoint} requires {name} to be a number")
+
+
+def validate_indexing(options: "IndexingOptions", *, endpoint: str) -> None:
+    """Check what ``data``'s ``indexing_options`` validator demands.
+
+    Mirrors ``core/validation.py`` so the caller gets the message before a
+    round trip: both chunk size and overlap are mandatory, the chunk size is a
+    positive identifier and the overlap must satisfy ``0 <= overlap < chunk``.
+    """
+    _require(options, INDEXING_REQUIRED_FIELDS, endpoint)
+    chunk = options.max_tokens_in_chunk
+    overlap = options.number_of_overlap_tokens
+    _reject_out_of_range(chunk, "max_tokens_in_chunk", endpoint)
+    _reject_out_of_range(overlap, "number_of_overlap_tokens", endpoint)
+    if chunk <= 0:
+        raise SSEValueError(
+            f"{endpoint} requires max_tokens_in_chunk > 0, got {chunk!r}"
+        )
+    if not 0 <= overlap < chunk:
+        raise SSEValueError(
+            f"{endpoint} requires 0 <= number_of_overlap_tokens < "
+            f"max_tokens_in_chunk, got {overlap!r} for {chunk!r}"
+        )
+
+
+def validate_generative(options: "GenerativeOptions", *, endpoint: str) -> None:
+    """Check what ``engine``'s ``generation_options`` validator demands.
+
+    The model name and ``percentage_rank_mass`` are both required, the mass is
+    a percentage, and ``answer_language`` becomes mandatory as soon as
+    ``translate_answer`` is on.
+    """
+    _require(options, GENERATIVE_REQUIRED_FIELDS, endpoint)
+    mass = options.percentage_rank_mass
+    _reject_out_of_range(mass, "percentage_rank_mass", endpoint)
+    if not 0 <= mass <= 100:
+        raise SSEValueError(
+            f"{endpoint} requires percentage_rank_mass between 0 and 100, "
+            f"got {mass!r}"
+        )
+    if getattr(options, "translate_answer", False) and not getattr(
+        options, "answer_language", None
+    ):
+        raise SSEValueError(
+            f"{endpoint} requires answer_language when translate_answer is set"
+        )
+
+
 __all__ = [
     "DEFAULT_INDEX_TYPE",
     "INDEX_TYPES",
@@ -247,4 +319,6 @@ __all__ = [
     "SearchOptions",
     "build_options",
     "text_document",
+    "validate_generative",
+    "validate_indexing",
 ]

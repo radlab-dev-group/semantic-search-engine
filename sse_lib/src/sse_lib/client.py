@@ -48,6 +48,8 @@ from sse_lib.options import (
     SearchOptions,
     build_options,
     text_document,
+    validate_generative,
+    validate_indexing,
 )
 from sse_lib.transport import DEFAULT_TIMEOUT, Transport
 
@@ -423,6 +425,9 @@ class SSEClient:
             indexing_options,
             indexing_kwargs,
         )
+        # Checked before any file handle is opened: the server refuses these
+        # two as null, so there is nothing to upload until they are set.
+        validate_indexing(options, endpoint=endpoints.UPLOAD_AND_INDEX_FILES)
         prepared, opened = _prepare_files(files)
         try:
             body = self.request(
@@ -467,6 +472,7 @@ class SSEClient:
             indexing_options,
             indexing_kwargs,
         )
+        validate_indexing(resolved, endpoint=endpoints.ADD_AND_INDEX_TEXTS)
         payload = {
             "collection_name": _name(collection),
             TEXTS_FIELD: [
@@ -542,6 +548,10 @@ class SSEClient:
         generation = self._build_options(
             GenerativeOptions, None, options, generation_kwargs
         )
+        # Only here, not for chat: `generative_answer` validates query_options
+        # with generation_options (model and percentage_rank_mass mandatory),
+        # while add_user_message accepts any object.
+        validate_generative(generation, endpoint=endpoints.GENERATIVE_ANSWER)
         payload: Dict[str, Any] = {
             "query_response_id": query_response_id,
             "query_options": generation.to_json(),

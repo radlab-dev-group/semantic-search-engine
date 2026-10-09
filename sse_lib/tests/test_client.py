@@ -29,7 +29,7 @@ from sse_lib import (
 )
 from sse_lib.client import ENV_API_HOST, ENV_API_TOKEN
 
-from support import api_error, build_client, ok, response
+from support import INDEXING, GENERATIVE, api_error, build_client, ok, response
 
 
 class ClientConfigurationTest(unittest.TestCase):
@@ -248,7 +248,10 @@ class IndexingTest(unittest.TestCase):
         result = client.upload_files(
             "my_docs",
             [("file.txt", io.BytesIO(b"content"))],
-            indexing_options={"max_tokens_in_chunk": 200},
+            indexing_options={
+                "max_tokens_in_chunk": 200,
+                "number_of_overlap_tokens": 0,
+            },
         )
         call = client.fake_session.calls[0]
         self.assertEqual(call.url, "http://sse.test:8271/api/upload_and_index_files")
@@ -273,7 +276,7 @@ class IndexingTest(unittest.TestCase):
         handle.write(b"data")
         handle.close()
         try:
-            client.upload_files("docs", handle.name)
+            client.upload_files("docs", handle.name, **INDEXING)
         finally:
             os.unlink(handle.name)
         uploaded = client.fake_session.calls[0].files[0][1]
@@ -288,7 +291,10 @@ class IndexingTest(unittest.TestCase):
     def test_index_documents_converts_plain_strings(self):
         client = build_client([ok({"indexed_documents": 2, "indexed_chunks": 3})])
         result = client.index_documents(
-            "my_docs", ["first text", "second text"], category="Notes"
+            "my_docs",
+            ["first text", "second text"],
+            category="Notes",
+            **INDEXING,
         )
         payload = client.fake_session.calls[0].json
         self.assertEqual(
@@ -307,12 +313,14 @@ class IndexingTest(unittest.TestCase):
     def test_index_documents_keeps_prepared_documents(self):
         client = build_client([ok({"indexed_documents": 1, "indexed_chunks": 1})])
         prepared = text_document("page", name="report", category="Finance")
-        client.index_documents("docs", prepared)
+        client.index_documents("docs", prepared, **INDEXING)
         self.assertEqual(client.fake_session.calls[0].json["texts[]"], [prepared])
 
     def test_index_documents_accepts_indexing_keywords(self):
         client = build_client([ok({})])
-        client.index_documents("docs", "text", max_tokens_in_chunk=128)
+        client.index_documents(
+            "docs", "text", max_tokens_in_chunk=128, number_of_overlap_tokens=0
+        )
         options = client.fake_session.calls[0].json["indexing_options"]
         self.assertEqual(options["max_tokens_in_chunk"], 128)
         self.assertEqual(
@@ -445,7 +453,7 @@ class GenerationTest(unittest.TestCase):
 
     def test_empty_prompts_are_not_sent(self):
         client = build_client([ok({"answer": "x"})])
-        client.generate_answer(1, {"generative_model": "m"})
+        client.generate_answer(1, dict(GENERATIVE))
         self.assertNotIn("system_prompt", client.fake_session.calls[0].json)
         self.assertNotIn("query_instruction", client.fake_session.calls[0].json)
 

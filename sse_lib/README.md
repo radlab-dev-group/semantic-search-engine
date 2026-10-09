@@ -21,17 +21,40 @@ client.create_collection(
     reranker="radlab/polish-cross-encoder",
     index_type="HNSW",
 )
-client.upload_files("my_docs", ["invoice.pdf", "regulations.zip"])
-client.index_documents("my_docs", ["Some text to index."], category="Notes")
+client.upload_files(
+    "my_docs",
+    ["invoice.pdf", "regulations.zip"],
+    max_tokens_in_chunk=128,
+    number_of_overlap_tokens=0,
+)
+client.index_documents(
+    "my_docs",
+    ["Some text to index."],
+    category="Notes",
+    max_tokens_in_chunk=128,
+    number_of_overlap_tokens=0,
+)
 
 found = client.search("my_docs", "policy on data retention",
                       SearchOptions(max_results=20, rerank_results=True))
 answer = client.generate_answer(
     found.query_response_id,
-    GenerativeOptions(generative_model="radlab/pLLama-3-8B-DPO-L"),
+    GenerativeOptions(
+        generative_model="radlab/pLLama-3-8B-DPO-L",
+        percentage_rank_mass=40,
+    ),
 )
 print(answer.answer)
 ```
+
+Indexing and generation values above are **not decoration**. The backend
+requires `max_tokens_in_chunk`, `number_of_overlap_tokens` and
+`percentage_rank_mass` and rejects them as `null`, and the library deliberately
+ships no default for them: the right chunk size follows the context window of
+the embedder the deployment is configured with, which the library cannot know.
+Omit one and you get `SSEValueError` naming the field, before the request goes
+out. Set `SSEClient(..., default_indexing_options={...})` to give them once per
+client instead of per call.
 
 ## Installation
 
