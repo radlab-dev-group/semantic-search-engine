@@ -14,11 +14,12 @@ include = ["sse_api*", "sse_tools*"]
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "sse_api.tests.settings_django"
-testpaths = ["src/sse_api"]
+testpaths = ["src/sse_api", "sse_lib"]
 
+# --- formatting -------------------------------------------------------------
 [tool.black]
 line-length = 85
-target-version = ['py310', 'py311', 'py312']
+target-version = ["py310", "py311", "py312"]
 include = '\.pyi?$'
 exclude = '''
 /(
@@ -33,5 +34,28 @@ exclude = '''
 )/
 '''
 
+# --- static analysis --------------------------------------------------------
 [tool.bandit]
 skips = ["B101", "B110", "B112"]
+
+[tool.pylint.'messages control']
+disable = [
+    "raw-checker-failed",
+    "bad-inline-option",
+    "locally-disabled",
+    "file-ignored",
+    "suppressed-message",
+    "useless-suppression",
+    "deprecated-pragma",
+    "use-implicit-booleaness-not-comparison-to-string",
+    "use-implicit-booleaness-not-comparison-to-zero",
+    "use-symbolic-message-instead",
+]
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = false
+strict = true
