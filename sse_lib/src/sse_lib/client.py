@@ -85,11 +85,24 @@ class SSEClient:
                                  SearchOptions(max_results=20, rerank_results=True))
         answer = client.generate_answer(
             response.query_response_id,
-            GenerativeOptions(generative_model="radlab/pLLama-3-8B-DPO-L"),
+            GenerativeOptions(
+                generative_model="radlab/pLLama-3-8B-DPO-L",
+                percentage_rank_mass=40,
+            ),
         )
 
     With ``username``/``password`` the client logs in on the first call and
     keeps the returned token; pass ``token`` to reuse one across processes.
+
+    ``percentage_rank_mass`` is part of the example on purpose: the server
+    requires it in ``query_options``, and a ``GenerativeOptions`` that leaves
+    it out is serialised without the key and rejected.
+
+    When a preconfigured ``transport`` is passed, ``api_prefix``, ``timeout``,
+    ``verify``, ``session``, ``headers`` and ``max_retries`` are ignored — the
+    transport already carries them, and the client does not reach inside an
+    object it was handed.  ``token`` is the exception: it is applied to the
+    given transport.
     """
 
     def __init__(

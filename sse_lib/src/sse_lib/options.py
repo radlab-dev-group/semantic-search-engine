@@ -203,7 +203,7 @@ def text_document(
     *,
     name: Optional[str] = None,
     category: str = "",
-    relative_path: str = "",
+    relative_path: Optional[str] = None,
     options: Optional[Dict[str, Any]] = None,
     pages: Optional[List[Any]] = None,
 ) -> Dict[str, Any]:
@@ -224,9 +224,13 @@ def text_document(
             {"page_content": page} if isinstance(page, str) else page
             for page in pages
         ]
+    document_name = name or "text-document"
     document: Dict[str, Any] = {
-        "filepath": name or "text-document",
-        "relative_filepath": relative_path,
+        "filepath": document_name,
+        # The server validates relative_filepath with required_text, so an
+        # omitted path falls back to the document name instead of sending "",
+        # which the server rejected outright.
+        "relative_filepath": relative_path or document_name,
         "category": category,
         "pages": page_list,
     }

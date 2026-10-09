@@ -115,11 +115,18 @@ class TextDocumentTest(unittest.TestCase):
             document,
             {
                 "filepath": "text-document",
-                "relative_filepath": "",
+                "relative_filepath": "text-document",
                 "category": "",
                 "pages": [{"page_content": "some text"}],
             },
         )
+
+    def test_relative_filepath_is_never_empty(self):
+        """The server validates it with required_text; "" was rejected."""
+        for kwargs in ({}, {"name": "report"}, {"relative_path": "a/b.txt"}):
+            with self.subTest(**kwargs):
+                document = text_document("text", **kwargs)
+                self.assertTrue(document["relative_filepath"].strip())
 
     def test_name_category_and_metadata(self):
         document = text_document(
