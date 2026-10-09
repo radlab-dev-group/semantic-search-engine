@@ -19,7 +19,8 @@ It supports:
 | **data**   | Ingestion pipeline, relational DB models, utilities for preparing documents, and PostgreSQL Full-Text Search components. | `relational_db.py`, `semantic_db.py`, `query_templates.py`, `upload.py` |
 | **engine** | Core search, embedding, reranking, and generative answer logic.                                                    | `search.py`, `models.py`, `embedders_rerankers.py`, `system.py`         |
 | **system** | Organisation, group, and user management with token‑based authentication.                                          | `models.py`, `controllers.py`, `api.py`                                 |
-| **main**   | Global configuration, settings handling, error utilities, and Django entry points.                                 | `settings.py`, `constants.py`, `decorators.py`, `response.py`           |
+| **config** | Global configuration, settings handling, and Django entry points.                                                | `settings.py`, `urls.py`, `wsgi.py`, `asgi.py`, `celery.py`             |
+| **core**   | Shared utilities (errors, validation, constants, AWS handler).                                                  | `errors.py`, `validation.py`, `constants.py`, `aws_handler.py`         |
 
 ## Quick Start
 
@@ -34,6 +35,7 @@ It supports:
    python3 -m venv .venv
    source .venv/bin/activate
    pip install -r requirements.txt
+   pip install --no-deps -e .
    ```
 
 3. **Configure environment variables** (see *Configuration* below)
@@ -43,14 +45,20 @@ It supports:
    export ENV_USE_KC_AUTH=0   # set to 1 to enable Keycloak auth
    ```
 
-4. **Run migrations**
+4. **Create runtime configuration**
    ```bash
-   ./initialize.sh migrate
+   cp configs/django-config.example.json configs/django-config.json
+   # ...fill in CHANGE_ME values, or run ./run.sh config
    ```
 
-5. **Start the server**
+5. **Run migrations**
    ```bash
-   ./run-api.sh
+   python -m sse_api.manage migrate
+   ```
+
+6. **Start the server**
+   ```bash
+   python -m sse_api.manage runserver 0.0.0.0:8271
    ```
 
    The API will be available at `http://localhost:8271/api/...`.
@@ -67,7 +75,7 @@ Key sections:
 - **Authentication** – Enable Keycloak/OAuth via `ENV_USE_KC_AUTH`, `ENV_USE_OAUTH_V1_AUTH`, `ENV_USE_OAUTH_V2_AUTH`.
 - **Logging** – Choose between `dev`, `demo`, `prod` loggers in `django-config.json`.
 
-Refer to each package’s README (e.g., `chat/README.md`, `data/README.md`) for detailed settings.
+Refer to each app’s README (e.g., `chat/README.md`, `data/README.md`) for detailed settings.
 
 ## Typical Workflows
 

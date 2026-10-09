@@ -21,7 +21,7 @@ This document lists all dependencies for the **Semantic Search Engine (SSE)** �
 |---------|---------|
 | `pyjwt` | JWT token handling |
 
-Local module `sse_rest_api/authorization/` provides Keycloak and OAuth v1/v2 authentication support.
+Local module `src/sse_api/authorization/` provides Keycloak and OAuth v1/v2 authentication support.
 
 ### Machine Learning / NLP
 
@@ -65,7 +65,7 @@ Local module `sse_rest_api/authorization/` provides Keycloak and OAuth v1/v2 aut
 
 | Package | Purpose |
 |---------|---------|
-| `requests` | HTTP transport of the standalone `sse_lib` client (and of `sse_rest_api/authorization`) |
+| `requests` | HTTP transport of the standalone `sse_lib` client (and of `src/sse_api/authorization`) |
 
 `sse_lib/` is a separate, pip-installable distribution (`pip install ./sse_lib`) that wraps the REST API of this
 repository. It is not part of the server image and pulls in no other dependency — no Django, no `torch`, no `pymilvus`.
@@ -73,7 +73,7 @@ See [`sse_lib/README.md`](sse_lib/README.md).
 
 ### Dynamically Installed Packages
 
-Installed at deployment via `sse_rest_api/initialize.sh`:
+Installed at deployment via `src/sse_api/initialize.sh`:
 
 | Package | Source | Purpose |
 |---------|--------|---------|
@@ -89,7 +89,7 @@ Installed at deployment via `sse_rest_api/initialize.sh`:
 - **Host:** `192.168.100.67`
 - **Port:** `5457`
 - **Database:** `sse_backend`
-- **Config:** `sse_rest_api/configs/django-config.json` (`database` section)
+- **Config:** `configs/django-config.json` (`database` section)
 
 Used for relational data storage and **Full-Text Search (FTS)**. The system utilizes `django.contrib.postgres` to perform weighted searches (`SearchVector`, `SearchRank`) over document text, which are then merged with vector results via RRF.
 
@@ -98,14 +98,14 @@ Used for relational data storage and **Full-Text Search (FTS)**. The system util
 - **Host:** `192.168.100.67`
 - **Port:** `19530`
 - **Database:** `sse_backend`
-- **Config:** `sse_rest_api/configs/milvus_config.json`
+- **Config:** `configs/milvus_config.json`
 
 Used for semantic vector search over indexed document collections. Supports IVF_FLAT and HNSW indexing.
 
 ### LLM Router API — Generative Model Endpoint
 
 - **Host:** `192.168.100.65:8080`
-- **Config:** `sse_rest_api/configs/generative-models.json`
+- **Config:** `configs/generative-models.json`
 
 Provides 7 generative models via HTTP POST:
 
@@ -126,7 +126,7 @@ Provides 7 generative models via HTTP POST:
 ### Keycloak — Authentication / SSO
 
 - **Host:** `https://login.radlab.dev`
-- **Config:** `sse_rest_api/configs/auth-config.json`
+- **Config:** `configs/auth-config.json`
 - **Enable via:** `ENV_USE_KC_AUTH=1`
 - **Grant type:** `authorization_code`
 
@@ -135,7 +135,7 @@ When enabled, replaces default token-based authentication with Keycloak SSO.
 ### AWS S3 — Object Storage
 
 - **Region:** `eu-central-1`
-- **Config file:** `sse_rest_api/configs/aws_config.json` (must be created at deployment)
+- **Config file:** `configs/aws_config.json` (must be created at deployment)
 - **Enable via:** `ENV_USE_AWS=true`
 - **Library:** `boto3`
 
@@ -151,7 +151,7 @@ Translates generated answers to Polish. Enabled when `DEEPL_AUTH_KEY` is set and
 
 ### Celery / RabbitMQ — Task Queue
 
-- **Config:** `sse_rest_api/configs/django-config.json` (`broker_url`)
+- **Config:** `configs/django-config.json` (`broker_url`)
 - **Enable via:** `ENV_USE_CELERY=1`
 
 Handles async background tasks (document ingestion, indexing). Disabled by default.
@@ -162,7 +162,7 @@ Handles async background tasks (document ingestion, indexing). Disabled by defau
 
 Models are loaded from `/mnt/data2/llms/models/radlab-open/` and defined in config files:
 
-### Embedders (`sse_rest_api/configs/embedders.json`)
+### Embedders (`configs/embedders.json`)
 
 | Model | Dimensions | Target |
 |-------|-----------|--------|
@@ -172,13 +172,13 @@ Models are loaded from `/mnt/data2/llms/models/radlab-open/` and defined in conf
 | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | 384 | CPU |
 | `google/embeddinggemma-300m` | 768 | cuda:0 |
 
-### Rerankers (`sse_rest_api/configs/rerankers.json`)
+### Rerankers (`configs/rerankers.json`)
 
 | Model | Dimensions | Target |
 |-------|-----------|--------|
 | `radlab/polish-cross-encoder` | 1024 | cuda:0 |
 
-### Denoiser (`sse_rest_api/configs/models.json`)
+### Denoiser (`configs/models.json`)
 
 | Model | Target |
 |-------|--------|

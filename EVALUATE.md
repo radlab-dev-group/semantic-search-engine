@@ -162,7 +162,7 @@ Before running evaluation scripts, ensure:
 
 1. **Environment is set up**: The script must be run from the project root with the appropriate `PYTHONPATH` or within
    the installed environment.
-2. **Django Settings**: `DJANGO_SETTINGS_MODULE` must be set (usually `main.settings`).
+2. **Django Settings**: `DJANGO_SETTINGS_MODULE` must be set (usually `sse_api.config.settings`).
 3. **Milvus & LLM Access**: The Milvus database and the generative model API must be reachable as configured in
    `configs/`.
 

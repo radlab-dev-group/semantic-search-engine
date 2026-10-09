@@ -2,9 +2,9 @@
 
 > English counterpart of `URUCHOMIENIE.md` (script: `run-en.sh`). Polish originals: `URUCHOMIENIE.md` + `run.sh`.
 >
-> In sync with the current code (service in `sse_rest_api/`). The top-level `README.md` describes the **old**
+> In sync with the current code (service in `src/sse_api/`). The top-level `README.md` describes the **old**
 > file layout — skip it.
-> Most faithful source: `sse_rest_api/README.md` + the code itself (`*/urls.py`, `configs/`, `initialize.sh`, `run-api.sh`).
+> Most faithful source: `src/sse_api/README.md` + the code itself (`*/urls.py`, `configs/`, `initialize.sh`, `run-api.sh`).
 
 ## ⚡ Quick start (TL;DR)
 
@@ -20,7 +20,7 @@ Step-by-step details below. Search computes **cosine similarity** (see §11).
 ## 0. What it is and where the code lives
 
 - **Repo:** `semantic-search-engine/`
-- **Service (backend API): `sse_rest_api/`** — `manage.py`, `initialize.sh`, `run-api.sh`, `configs/`,
+- **Service (backend API): `src/sse_api/`** — `python -m sse_api.manage`, `initialize.sh`, `run-api.sh`, `configs/`,
   `requirements.txt`.
 - `sse_apps/admin/` + `scripts/admin/` — admin scripts (user, templates, Milvus, Postgres).
 - Stack: **Python 3.11, Django + DRF**. Hybrid search = **Milvus** (vectors) + **PostgreSQL** (full-text) + RRF.
@@ -45,8 +45,8 @@ Step-by-step details below. Search computes **cosine similarity** (see §11).
 cd semantic-search-engine
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -r sse_rest_api/requirements.txt
-cd sse_rest_api
+pip install -r requirements.txt
+cd src/sse_api
 ./initialize.sh dep     # pip install radlab-data + llm-router (from git)
 ```
 
@@ -81,11 +81,11 @@ Target: `localhost:19530`, db `sse_backend_engine`, `sse_user`/`sse_password` (`
 
 ## 6. Database initialization + account + templates
 
-Everything runs from `sse_rest_api/` (the scripts use relative paths):
+Everything runs from the repository root:
 
 ```bash
-cd semantic-search-engine/sse_rest_api
-./initialize.sh migrate               # manage.py migrate (PostgreSQL)
+cd semantic-search-engine
+./initialize.sh migrate               # python -m sse_api.manage migrate (PostgreSQL)
 ./initialize.sh semantic              # creates the DB in Milvus (sse_backend_engine)
 ./initialize.sh add_user              # org/group/user from user-group-organisation.json
 ./initialize.sh add_query_templates   # templates from query-templates.json
@@ -99,7 +99,7 @@ or everything at once: `./initialize.sh all`.
 ## 7. Start the API server
 
 ```bash
-cd semantic-search-engine/sse_rest_api
+cd semantic-search-engine
 ./run-api.sh     # python3 manage.py runserver 0.0.0.0:8271
 ```
 
@@ -140,7 +140,7 @@ curl -X POST http://localhost:8271/api/search_with_options \
 
 RAG/chat (requires the router): `POST /api/generative_answer`, `POST /api/new_chat`, `POST /api/add_user_message`.
 
-> ⚠️ `sse_rest_api/README.md` shows collection creation under `POST /api/collections/`, but in the code **creation** is
+> ⚠️ `src/sse_api/README.md` shows collection creation under `POST /api/collections/`, but in the code **creation** is
 > `api/new_collection`, while `api/collections` is **listing** (GET). When calling the API, rely on `*/urls.py`.
 
 ## 9. What can be overridden (env / config)
@@ -155,12 +155,12 @@ RAG/chat (requires the router): `POST /api/generative_answer`, `POST /api/new_ch
 
 ## 10. Common "gotchas"
 
-- Run `initialize.sh` / `run-api.sh` **from the `sse_rest_api/` directory**.
+- Run the scripts **from the repository root**.
 - The models under `/mnt/data2/llms/models/...` must exist; the denoiser runs on `cuda:0` (check the GPU,
   `CUDA_VISIBLE_DEVICES=0`).
 - Ports: **PG 5471**, **Milvus 19530/19121**, **API 8271** — avoid collisions.
 - `prepare_semantic_db.py` reads `./configs/milvus_config.json` by default (which is why `initialize.sh semantic`
-  copies the script into `sse_rest_api/`).
+  invokes the tool as a module).
 - **Collections created before COSINE was enabled** (before 2026-09-02) may have an `IP` index — their results will
   not be cosine; migrate them: §11.
 
@@ -172,7 +172,7 @@ The code **already computes cosine similarity by default** (commit `d9831f9`, 20
 - indexes and queries: `INDEX_QUERY_PARAMS` (HNSW and IVF_FLAT) → `metric_type: COSINE`,
 - the score from Milvus = cosine similarity; the `min_similarity` threshold (default **0.5**, range [-1, 1]) drops
   results weaker than the threshold,
-- compatibility tests: `sse_rest_api/engine/tests/test_similarity.py`.
+- compatibility tests: `src/sse_api/engine/tests/test_similarity.py`.
 
 **New collections** (created through the API `POST /api/new_collection`) automatically get COSINE — nothing to do.
 
@@ -190,7 +190,7 @@ cd semantic-search-engine
 Equivalent direct invocation (requires a running Milvus):
 
 ```bash
-cd semantic-search-engine/sse_rest_api
+cd semantic-search-engine
 python ../scripts/admin/milvus_index_to_cosine.py --all
 python ../scripts/admin/milvus_index_to_cosine.py --collection my_coll --dry-run
 ```

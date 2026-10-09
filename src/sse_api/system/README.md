@@ -205,8 +205,8 @@ INSTALLED_APPS = [
 2. **Run migrations**
 
 ```shell script
-python manage.py makemigrations system
-   python manage.py migrate
+python python -m sse_api.manage makemigrations system
+   python python -m sse_api.manage migrate
 ```
 
 3. **(Optional) Seed defaults** – you can write a simple management command or script that uses `SystemController` to

@@ -2,13 +2,12 @@
 # Runtime dependencies live in requirements.txt — this file is deliberately NOT
 # installed into the production image (see Dockerfile and .dockerignore).
 #
-# Install into a separate venv:  pip install -r sse_rest_api/requirements-dev.txt
+# Install into a separate venv:  pip install -r requirements-dev.txt
 
 # --- tests -------------------------------------------------------------------
 # pytest-django is what makes the DJANGO_SETTINGS_MODULE option in
-# pyproject.toml a recognised pytest option. The tests in sse_rest_api/tests
-# run without Django; the ones in sse_rest_api/engine need the ML stack and run
-# inside the application image.
+# pyproject.toml a recognised pytest option. The tests in src/sse_api/tests run without the ML stack; the
+# ones in src/sse_api/engine need it and run inside the application image.
 pytest>=8.0,<10.0
 pytest-django>=4.8,<5.0
 

@@ -162,7 +162,7 @@ Add the module’s URL namespace to the main router (e.g., `path("auth/", includ
 | `POST`      | `logout/`                            | `remove_auth_token` (`DisableRdlAuthToken.as_view()`) | `{ "status": true }` (all user tokens disabled)                      |
 | `POST`      | `refresh_token/`                     | `RefreshToken`                                        | New access‑token set, same shape as *login* response.                |
 
-All responses are produced by `main.src.response.response_with_status` and follow the unified schema:
+All responses are produced by `sse_api.core.response.response_with_status` and follow the unified schema:
 
 ```json
 {

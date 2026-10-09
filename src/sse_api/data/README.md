@@ -104,6 +104,6 @@ error HTTP status remain unchanged; rejected uploads return `000001_DATA`.
 - **New metadata fields** – Extend `Document.metadata_json` and update
   `RelationalDBController._filter_documents_based_on_metadata` to support additional operators.
 - **Alternative storage** – Swap `UploadedDocuments` handling with a cloud bucket (e.g., S3) by customizing `AwsHandler`
-  in the `main` package and adjusting `UploadDocumentsController._store_single_file_to_upload_dir`.
+  in the `sse_api.config` package and adjusting `UploadDocumentsController._store_single_file_to_upload_dir`.
 - **Custom denoiser** – Provide a different model path in `configs/models.json`; the `DenoiserController` will pick it
   up automatically.
