@@ -7,7 +7,7 @@ Tests for the COSINE metric alignment and the cosine similarity cutoff
 
 These tests are intentionally DB‑free:
 
-* pure helpers from ``engine.engine_core.search_engine`` are tested
+* pure helpers from ``engine.core.search_engine`` are tested
   directly (no Django, no Milvus),
 * ``MilvusHandler.search`` is exercised with a fake Milvus client,
 * the rerank result-shape helpers on the controller are tested as static
@@ -66,7 +66,7 @@ from sse_api.engine.controllers.database.milvus import (  # noqa: E402
 from sse_api.engine.controllers.search.semantic import (  # noqa: E402
     DBSemanticSearchController,
 )
-from sse_api.engine.engine_core.search_engine import (  # noqa: E402
+from sse_api.engine.core.search_engine import (  # noqa: E402
     SearchEngineCore,
     prepare_documents_stats,
 )

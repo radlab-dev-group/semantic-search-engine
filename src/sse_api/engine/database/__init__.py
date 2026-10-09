@@ -3,7 +3,7 @@ database (adapter layer)
 -------------------------
 
 Re-exports the original implementations for backward‑compatibility and
-provides protocol‑based adapter classes that bridge engine_core protocols
+provides protocol‑based adapter classes that bridge engine.core protocols
 to concrete database backends.
 """
 

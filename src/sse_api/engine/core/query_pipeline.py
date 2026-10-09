@@ -2,7 +2,7 @@
 query_pipeline.py
 -----------------
 
-Lightweight query orchestrator that uses engine_core protocols and
+Lightweight query orchestrator that uses engine.core protocols and
 pure computation functions.  This class **does not** access Django ORM —
 it is the hosting app's responsibility to create ``UserQuery`` /
 ``UserQueryResponse`` records.
@@ -12,13 +12,13 @@ from typing import Any, Dict, Optional
 
 from radlab_data.text.utils import TextUtils
 
-from sse_api.engine.engine_core.protocols import (
+from sse_api.engine.core.protocols import (
     VectorStoreProtocol,
     RelationalDataProtocol,
     ModelConfigProtocol,
 )
 from sse_api.data.controllers.constants import DEFAULT_MIN_SIMILARITY
-from sse_api.engine.engine_core.search_engine import SearchEngineCore
+from sse_api.engine.core.search_engine import SearchEngineCore
 
 
 class QueryPipeline:

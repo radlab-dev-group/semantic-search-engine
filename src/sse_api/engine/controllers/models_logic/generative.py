@@ -14,8 +14,8 @@ from sse_api.system.models import OrganisationUser
 from sse_api.chat.models import MessageState
 from sse_api.engine.models import UserQueryResponse, UserQueryResponseAnswer
 
-# Import from engine_core where possible (pure computation functions)
-from sse_api.engine.engine_core import (
+# Import from engine.core where possible (pure computation functions)
+from sse_api.engine.core import (
     convert_search_results_to_doc2answer,
     get_accumulated_docs_by_rank_perc,
 )

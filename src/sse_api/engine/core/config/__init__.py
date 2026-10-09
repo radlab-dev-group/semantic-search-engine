@@ -1,6 +1,6 @@
 """Model configuration registry — pure Python, zero Django dependencies."""
 
-from sse_api.engine.engine_core.config.models_config import (
+from sse_api.engine.core.config.models_config import (
     ALL_AVAILABLE_EMBEDDERS_MODELS,
     ALL_AVAILABLE_RERANKERS_MODELS,
     EmbeddingModelsConfig,

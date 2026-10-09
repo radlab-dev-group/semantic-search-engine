@@ -43,8 +43,8 @@ from sse_api.engine.controllers.database.milvus import MilvusHandler
 from sse_api.engine.database.vector_store_adapter import MilvusVectorStoreAdapter
 from sse_api.engine.controllers.search.relational import DBTextSearchController
 from sse_api.engine.controllers.database.relational_db import RelationalDBController
-from sse_api.engine.engine_core.config.models_config import EmbeddingModelsConfig
-from sse_api.engine.engine_core.protocols import VectorStoreProtocol
+from sse_api.engine.core.config.models_config import EmbeddingModelsConfig
+from sse_api.engine.core.protocols import VectorStoreProtocol
 
 
 class DBSemanticSearchController:

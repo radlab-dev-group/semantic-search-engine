@@ -23,7 +23,7 @@ from sse_api.engine.controllers.search.relational import DBTextSearchController
 
 class RelationalDataAdapter:
     """
-    Protocol‑based adapter that provides relational data access to engine_core.
+    Protocol‑based adapter that provides relational data access to engine.core.
 
     Internally it uses ``RelationalDBController`` and ``DBTextSearchController``,
     converting protocol calls (which use ``collection_id: int``) into ORM queries.

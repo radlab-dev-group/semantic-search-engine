@@ -1,5 +1,5 @@
 """
-Protocol interfaces that define the contract between engine_core (the pure
+Protocol interfaces that define the contract between engine.core (the pure
 search engine) and the database / adapter layer.
 
 All classes are ``typing.Protocol`` — they have no runtime cost when used

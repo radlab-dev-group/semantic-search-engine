@@ -12,7 +12,7 @@ operate exclusively on plain Python dicts, lists and tuples.
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
-from sse_api.engine.engine_core.protocols import VectorStoreProtocol
+from sse_api.engine.core.protocols import VectorStoreProtocol
 
 
 # ---------------------------------------------------------------------------

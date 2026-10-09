@@ -3,7 +3,7 @@ engine/controllers
 ------------------
 
 Backward‑compatibility re‑exports.  All original import paths continue to work.
-New consumers should prefer direct imports from ``engine.engine_core`` and
+New consumers should prefer direct imports from ``engine.core`` and
 ``engine.database``.
 """
 

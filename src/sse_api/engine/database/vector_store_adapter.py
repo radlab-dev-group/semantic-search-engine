@@ -3,13 +3,13 @@ vector_store_adapter.py
 -----------------------
 
 Adapter that implements ``VectorStoreProtocol`` by wrapping ``MilvusHandler``.
-Provides a clean protocol boundary so engine_core never needs to know about
+Provides a clean protocol boundary so engine.core never needs to know about
 pymilvus or Milvus internals.
 """
 
 from typing import Any, Dict, List, Optional
 
-from sse_api.engine.engine_core.protocols import VectorStoreProtocol
+from sse_api.engine.core.protocols import VectorStoreProtocol
 from sse_api.engine.database.milvus_impl import MilvusHandler
 
 

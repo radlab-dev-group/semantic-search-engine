@@ -3,7 +3,7 @@ milvus_impl.py
 --------------
 
 Thin re‑export of the original MilvusHandler implementation.
-Kept in this file so that engine_core can reference it by name while
+Kept in this file so that engine.core can reference it by name while
 the original source file remains unchanged for backward‑compatibility.
 """
 
