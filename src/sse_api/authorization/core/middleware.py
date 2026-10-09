@@ -12,8 +12,16 @@ middleware_callback: Callable | None = None
 
 
 class AuthAuthenticationMiddleware(MiddlewareMixin):
-    ga_token = GATokenAuthentication()
-    logger = get_logger()
+    def __init__(self, get_response):
+        super().__init__(get_response)
+        # Built here rather than as class attributes: GATokenAuthentication
+        # reads configs/auth-config.json, and class attributes would run that
+        # at import time, which makes this module unimportable without a
+        # deployment config file. Django builds middleware once per process,
+        # so this is still a single instance — just created after settings are
+        # guaranteed to be configured.
+        self.ga_token = GATokenAuthentication()
+        self.logger = get_logger()
 
     def process_request(self, request):
         """

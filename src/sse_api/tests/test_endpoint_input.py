@@ -2,11 +2,11 @@ from unittest.mock import patch
 
 from django.test import TestCase
 
-with patch("sse_api.authorization.utils.config.RdlAuthConfig.load_config"):
-    from sse_api.authorization.api.authorization import (
-        CreateRdlAuthToken,
-        RefreshToken,
-    )
+from sse_api.authorization.api.authorization import (
+    CreateRdlAuthToken,
+    RefreshToken,
+)
+from sse_api.authorization.core.handlers import RdlAuthGrantAccTokenHandler
 
 from sse_api.core.errors_constants import MSG
 from sse_api.tests.input_support import EndpointInputMixin
@@ -14,8 +14,10 @@ from sse_api.tests.input_support import EndpointInputMixin
 
 class SharedEndpointInputTests(EndpointInputMixin, TestCase):
     def test_authorization_bad_input_before_provider(self):
+        # The provider is patched on its class, not on an instance held by the
+        # view: the view builds its handler per request.
         with patch.object(
-            CreateRdlAuthToken.token_handler, "get_token_with_options"
+            RdlAuthGrantAccTokenHandler, "get_token_with_options"
         ) as provider:
             for key, value in (
                 ("code", None),
@@ -32,7 +34,7 @@ class SharedEndpointInputTests(EndpointInputMixin, TestCase):
                     )
             provider.assert_not_called()
         with patch.object(
-            RefreshToken.token_handler, "verify_and_decode_token"
+            RdlAuthGrantAccTokenHandler, "verify_and_decode_token"
         ) as verify:
             for token in (None, [], False, 0, " "):
                 self.assert_denial(

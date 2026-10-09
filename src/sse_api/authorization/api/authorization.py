@@ -1,3 +1,5 @@
+from functools import cached_property
+
 from rest_framework.views import APIView
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -22,8 +24,16 @@ from sse_api.authorization.core.handlers import RdlAuthGrantAccTokenHandler
 
 
 class GenerateLoginUrl(APIView):
-    state_handler = RdlAuthStateHandler()
     permission_classes = (AllowAny,)
+
+    # Handlers are resolved lazily, not as class attributes: building one
+    # reads configs/auth-config.json off disk, which made *importing* this
+    # module fail on a machine without a deployment config file -- and Django
+    # imports it while loading the URLconf. DRF creates the view per request,
+    # so this also stops one handler being shared across threads.
+    @cached_property
+    def state_handler(self) -> RdlAuthStateHandler:
+        return RdlAuthStateHandler()
 
     @get_default_language
     def post(self, language, request):
@@ -62,7 +72,10 @@ class CreateRdlAuthToken(APIView):
     permission_classes = (AllowAny,)
 
     logger = get_logger()
-    token_handler = RdlAuthGrantAccTokenHandler()
+
+    @cached_property
+    def token_handler(self) -> RdlAuthGrantAccTokenHandler:
+        return RdlAuthGrantAccTokenHandler()
 
     @required_params_exists(
         required_params=required_params, optional_params=optional_params
@@ -110,7 +123,10 @@ class RefreshToken(APIView):
     permission_classes = (AllowAny,)
 
     logger = get_logger()
-    token_handler = RdlAuthGrantAccTokenHandler()
+
+    @cached_property
+    def token_handler(self) -> RdlAuthGrantAccTokenHandler:
+        return RdlAuthGrantAccTokenHandler()
 
     @required_params_exists(required_params=required_params)
     @get_default_language
@@ -149,7 +165,10 @@ class RefreshToken(APIView):
 
 class DisableRdlAuthToken(APIView):
     logger = get_logger()
-    token_handler = RdlAuthGrantAccTokenHandler()
+
+    @cached_property
+    def token_handler(self) -> RdlAuthGrantAccTokenHandler:
+        return RdlAuthGrantAccTokenHandler()
 
     @get_default_language
     def post(self, language: str, request: Request) -> Response:
