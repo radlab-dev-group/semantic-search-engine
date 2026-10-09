@@ -1,0 +1,70 @@
+{
+  "main": {
+    "debug": false,
+    "allowed_hosts": ["localhost", "127.0.0.1"],
+    "api": {
+      "root_url": "api",
+      "major_version": "",
+      "minor_version": "",
+      "release_candidate": ""
+    },
+    "admin_window": false,
+    "public_api_available": true,
+    "default_language": "pl",
+    "use_keycloak_authentication": false,
+    "use_oauth_v1_authentication": false,
+    "use_oauth_v2_authentication": false,
+    "use_authorization_introspect": false,
+    "introspect_email_verification": false,
+    "use_celery": false,
+    "use_aws": false
+  },
+  "database": {
+    "ENGINE": "django.db.backends.postgresql",
+    "NAME": "sse_backend",
+    "USER": "admin",
+    "PASSWORD": "CHANGE_ME",
+    "HOST": "localhost",
+    "PORT": 5471
+  },
+  "session": {
+    "session_cookie_secure": true,
+    "csrf_cookie_secure": true
+  },
+  "logger": {
+    "use_logger": "prod",
+    "config": {
+      "version": 1,
+      "disable_existing_loggers": false,
+      "formatters": {
+        "default": {
+          "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+        }
+      },
+      "handlers": {
+        "console": {
+          "class": "logging.StreamHandler",
+          "formatter": "default",
+          "stream": "ext://sys.stdout"
+        }
+      },
+      "dev": {
+        "handlers": ["console"],
+        "level": "DEBUG"
+      },
+      "demo": {
+        "handlers": ["console"],
+        "level": "INFO"
+      },
+      "prod": {
+        "handlers": ["console"],
+        "level": "WARNING"
+      }
+    }
+  },
+  "installed_apps": [],
+  "celery": {
+    "broker_url": "amqp://CHANGE_ME:CHANGE_ME@localhost:5672/"
+  },
+  "aws": {}
+}

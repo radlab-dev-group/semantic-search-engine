@@ -1,0 +1,21 @@
+{
+  "authorization": {
+    "realm": "CHANGE_ME",
+    "client_id": "CHANGE_ME",
+    "client_secret": "CHANGE_ME",
+    "grant_type": "authorization_code",
+    "redirect_uri": "http://localhost:8000/api/authorization/login",
+    "auth_host": "https://CHANGE_ME/auth/realms/CHANGE_ME",
+    "public_sign_key": "CHANGE_ME",
+    "audience": "CHANGE_ME",
+    "scope": "openid profile email",
+    "algorithms": ["RS256"],
+    "connect_timeout": 3.05,
+    "read_timeout": 10.0,
+    "accepted_user_roles": [],
+    "user_role_main_scope": "roles",
+    "user_role_scope_variable": "",
+    "default_organisation": "RadLab",
+    "default_group": "all"
+  }
+}

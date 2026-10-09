@@ -1,0 +1,9 @@
+{
+  "organisation_name": "RadLab",
+  "organisation_description": "CHANGE_ME",
+  "user_group_name": "all",
+  "user_group_description": "CHANGE_ME",
+  "user_name": "default_user",
+  "user_email": "CHANGE_ME@example.com",
+  "user_pass": "CHANGE_ME"
+}
