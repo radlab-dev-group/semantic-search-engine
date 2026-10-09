@@ -178,6 +178,30 @@ class SSEClient:
     def __repr__(self) -> str:
         return f"SSEClient(base_url={self.base_url!r}, language={self.language!r})"
 
+    # --- service ---------------------------------------------------------
+    def health(self) -> Dict[str, Any]:
+        """Dependency status of the server (``GET healthz``).
+
+        Public endpoint, so this never triggers a login and works before any
+        credentials are set.  Raises when the server cannot be reached, or
+        answers 503 because a dependency is down (the status code is what
+        probes act on); use :meth:`is_healthy` for a boolean instead of an
+        exception.
+        """
+        body = self.transport.request("GET", endpoints.HEALTHZ)
+        return body if isinstance(body, dict) else {"healthy": False}
+
+    def is_healthy(self) -> bool:
+        """Whether the server answers and every dependency is up.
+
+        Returns ``False`` instead of raising, which is what a readiness check
+        or a test ``setUpClass`` usually wants.
+        """
+        try:
+            return bool(self.health().get("healthy"))
+        except Exception:  # pylint: disable=broad-except
+            return False
+
     def request(self, method: str, endpoint: str, **kwargs: Any) -> Any:
         """Escape hatch: call any endpoint and get the unwrapped ``body`` back.
 

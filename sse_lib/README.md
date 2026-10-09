@@ -87,6 +87,7 @@ Python 3.9+, `requests` as the only runtime dependency.
 | `list_generative_models()`, `list_embedders()`, `list_rerankers()` | `GET generative_models`, `GET embedders`, `GET rerankers` |
 | `new_chat(...)`, `send_chat_message(...)`, `save_chat(...)`, `get_chat_by_hash(...)`, `list_chats()` | `POST new_chat`, `POST add_user_message`, `POST save_chat`, `GET get_chat_by_hash`, `GET chats` |
 | `login()`, `login_with_code()`, `refresh_access_token()`, `logout()`, `login_url()` | `POST login`, `POST refresh_token`, `POST logout`, `POST login_url` |
+| `health()`, `is_healthy()` | `GET healthz` (public — no token, no login) |
 | `request(method, endpoint, ...)`, `get(...)`, `post(...)` | any endpoint, including ones this release does not wrap |
 
 Collections may be passed as a name, a `Collection` returned by

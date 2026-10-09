@@ -58,8 +58,15 @@ GET_CHAT_BY_HASH = "get_chat_by_hash"
 CHATS = "chats"
 
 
+# --- service -------------------------------------------------------------
+# Public probe used by nginx, load balancers and the Docker HEALTHCHECK.
+# It answers without a token and outside the usual response envelope.
+HEALTHZ = "healthz"
+
+
 ALL_ENDPOINTS = frozenset(
     {
+        HEALTHZ,
         LOGIN,
         LOGOUT,
         LOGIN_URL,
