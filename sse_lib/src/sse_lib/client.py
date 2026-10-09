@@ -741,7 +741,7 @@ def _prepare_files(
     opened: List[Any] = []
     prepared: List[Tuple[str, Tuple[str, Any, str]]] = []
     try:
-        for item in ([files] if isinstance(files, tuple) else _as_sequence(files)):
+        for item in [files] if isinstance(files, tuple) else _as_sequence(files):
             prepared.append((UPLOAD_FILE_FIELD, _unpack_file(item, opened)))
         if not prepared:
             raise SSEValueError("upload_files() needs at least one file")

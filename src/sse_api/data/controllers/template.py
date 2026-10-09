@@ -113,8 +113,9 @@ class QueryTemplatesSearchGrammar:
 
         def __init__(self):
             # Map public action names to private evaluator methods.
+            actions = QueryTemplatesSearchGrammar.Actions
             self._actions_mapping = {
-                QueryTemplatesSearchGrammar.Actions.END_DATE_OLDER_THAN_TODAY: self.__end_date_is_older_than_today
+                actions.END_DATE_OLDER_THAN_TODAY: self.__end_date_is_older_than_today
             }
 
         def accept_document(self, action: str, document: Document) -> bool:
@@ -326,8 +327,14 @@ class QueryTemplateFilterer:
                 """
                 "data_filter_expressions": {
                     "date": {
-                        "begin": "datetime.datetime.strptime('DATA_VALUE', '%Y-%m-%d') <= datetime.datetime.now() + datetime.timedelta(days=8)",
-                        "end": "datetime.datetime.strptime('DATA_VALUE', '%Y-%m-%d') >= datetime.datetime.now()"
+                        "begin": (
+                            "datetime.datetime.strptime('DATA_VALUE', '%Y-%m-%d') <= "
+                            "datetime.datetime.now() + datetime.timedelta(days=8)"
+                        ),
+                        "end": (
+                            "datetime.datetime.strptime('DATA_VALUE', '%Y-%m-%d') >= "
+                            "datetime.datetime.now()"
+                        )
                     }
                 },
                 """

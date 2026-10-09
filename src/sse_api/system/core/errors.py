@@ -1,7 +1,6 @@
 from sse_api.core.errors import ALL_ERRORS, MSG, MSG_PL, MSG_EN, ECODE
 from sse_api.system.core.constants import ERROR_MARK_SYSTEM
 
-
 GROUP_NAME_NOT_EXIST = "GROUP_NAME_NOT_EXIST"
 
 

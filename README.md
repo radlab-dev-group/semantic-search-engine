@@ -132,7 +132,7 @@ semantic-search-engine/
 │   ├── pyproject.toml
 │   ├── README.md
 │   └── src/sse_lib/              # client, transport, options, models, endpoints
-├── scripts/                      # Thin entry points (bash) into sse_tools
+├── scripts/                      # Thin entry points (bash) into sse_tools (admin/ + not_tested/)
 ├── nginx/                        # Reverse‑proxy configuration
 ├── Dockerfile
 ├── docker-compose.yml
@@ -238,7 +238,7 @@ Configuration files live under the `configs/` directory. The most important ones
 
 ### Django Settings
 
-`main/settings.py` loads configuration through the `SystemSettingsHandler` (see `main/src/settings.py`). The handler
+`sse_api/config/settings.py` loads configuration through the `SystemSettingsHandler` (see `sse_api/core/settings.py`). The handler
 reads values from:
 
 1. **JSON config files** (`django-config.json` by default).

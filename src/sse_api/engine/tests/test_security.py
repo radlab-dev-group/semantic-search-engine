@@ -2,9 +2,15 @@ from django.test import TestCase
 from django.contrib.auth.models import User
 from sse_api.system.models import Organisation, OrganisationUser
 from sse_api.data.models import CollectionOfDocuments
-from sse_api.engine.models import UserQuery, UserQueryResponse, UserQueryResponseAnswer
+from sse_api.engine.models import (
+    UserQuery,
+    UserQueryResponse,
+    UserQueryResponseAnswer,
+)
 from sse_api.engine.controllers.search.query import SearchQueryController
-from sse_api.engine.controllers.models_logic.generative import GenerativeModelController
+from sse_api.engine.controllers.models_logic.generative import (
+    GenerativeModelController,
+)
 
 
 class SecurityIDORTestCase(TestCase):

@@ -319,7 +319,8 @@ class AuthenticationSecurityTests(SimpleTestCase):
     def test_logout_disables_local_token_on_provider_failure(self, post):
         token = Mock(is_active=True, refresh_token="secret")
         with patch(
-            "sse_api.authorization.core.handlers.Token.objects.filter", return_value=[token]
+            "sse_api.authorization.core.handlers.Token.objects.filter",
+            return_value=[token],
         ):
             for failure in [
                 requests.Timeout("secret"),
@@ -339,8 +340,12 @@ class AuthenticationSecurityTests(SimpleTestCase):
         self.assertIsNone(auth.introspect_token(RequestFactory().get("/")))
 
     def test_middleware_revalidates_stored_token(self):
-        with patch("sse_api.authorization.core.authentication.GATokenAuthentication"):
-            from sse_api.authorization.core.middleware import AuthAuthenticationMiddleware
+        with patch(
+            "sse_api.authorization.core.authentication.GATokenAuthentication"
+        ):
+            from sse_api.authorization.core.middleware import (
+                AuthAuthenticationMiddleware,
+            )
         middleware = object.__new__(AuthAuthenticationMiddleware)
         middleware.ga_token = Mock()
         middleware.logger = Mock()

@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sse_api.engine.core.protocols import VectorStoreProtocol
 
-
 # ---------------------------------------------------------------------------
 # Pure computation helpers (previously methods on DBSemanticSearchController)
 # ---------------------------------------------------------------------------

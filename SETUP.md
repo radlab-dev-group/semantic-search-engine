@@ -22,7 +22,7 @@ Step-by-step details below. Search computes **cosine similarity** (see §11).
 - **Repo:** `semantic-search-engine/`
 - **Service (backend API): `src/sse_api/`** — `python -m sse_api.manage`, `initialize.sh`, `run-api.sh`, `configs/`,
   `requirements.txt`.
-- `sse_apps/admin/` + `scripts/admin/` — admin scripts (user, templates, Milvus, Postgres).
+- `src/sse_tools/admin/` + `scripts/admin/` — admin scripts (user, templates, Milvus, Postgres).
 - Stack: **Python 3.11, Django + DRF**. Hybrid search = **Milvus** (vectors) + **PostgreSQL** (full-text) + RRF.
   Optionally an **LLM router** (RAG/chat).
 

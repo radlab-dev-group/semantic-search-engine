@@ -36,7 +36,9 @@ with open(pl_wn_path, "r") as pl_wn_file:
 
 # import spacy
 #
-# text_str = "Dzisiaj około godziny 13 straż pożarna dostała wezwanie do jednego z domostw we wsi Bystre (gmina Oleśnica). Mieszkańcy zauważyli dym wydobywający się z gniazdek elektrycznych. Służby są już na miejscu i sprawdzają obiekt."
+# text_str = "Dzisiaj około godziny 13 straż pożarna dostała wezwanie do jednego"
+# z domostw we wsi Bystre (gmina Oleśnica). Mieszkańcy zauważyli dym wydobywający się
+# z gniazdek elektrycznych. Służby są już na miejscu i sprawdzają obiekt."
 #
 # nlp_spacy = spacy.load("pl_core_news_lg")
 #

@@ -358,17 +358,23 @@ class RelationalDBController:
         collection_name: str,
         check_in_organisation: bool = True,
     ) -> CollectionOfDocuments | None:
-        return RelationalDBController.get_visible_collections(
-            created_by, check_in_organisation=check_in_organisation
-        ).filter(name=collection_name).first()
+        return (
+            RelationalDBController.get_visible_collections(
+                created_by, check_in_organisation=check_in_organisation
+            )
+            .filter(name=collection_name)
+            .first()
+        )
 
     @staticmethod
     def get_collection_from_user_group(
         organisation_user: OrganisationUser, collection_name: str
     ) -> CollectionOfDocuments:
-        return RelationalDBController.get_visible_collections(
-            organisation_user
-        ).filter(name=collection_name).first()
+        return (
+            RelationalDBController.get_visible_collections(organisation_user)
+            .filter(name=collection_name)
+            .first()
+        )
 
     @staticmethod
     def get_organisation_templates(

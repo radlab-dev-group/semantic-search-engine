@@ -53,8 +53,11 @@ class CreateRdlAuthToken(APIView):
 
     required_params = ["code", "state"]
     optional_params = ["session_state"]
-    input_validators = {"code": required_text, "state": required_text,
-                        "session_state": optional_text}
+    input_validators = {
+        "code": required_text,
+        "state": required_text,
+        "session_state": optional_text,
+    }
 
     permission_classes = (AllowAny,)
 

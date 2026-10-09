@@ -26,7 +26,9 @@ import sys
 # Make the application packages importable when running from the repo root.
 # ---------------------------------------------------------------------------
 _APP_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, os.pardir, os.pardir)
+    os.path.join(
+        os.path.dirname(__file__), os.pardir, os.pardir, os.pardir, os.pardir
+    )
 )
 if _APP_DIR not in sys.path:
     sys.path.insert(0, _APP_DIR)
@@ -70,7 +72,6 @@ from sse_api.engine.core.search_engine import (  # noqa: E402
     SearchEngineCore,
     prepare_documents_stats,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -120,7 +121,9 @@ class _FakeMilvusClient:
 
 def _make_handler(distances):
     handler = MilvusHandler(
-        jsonl_config_path=os.path.join(_APP_DIR, "configs", "milvus_config.example.json"),
+        jsonl_config_path=os.path.join(
+            _APP_DIR, "configs", "milvus_config.example.json"
+        ),
         collection_name="test_collection",
         create_db_if_not_exists=False,
         load_embedder=False,

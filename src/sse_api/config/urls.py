@@ -7,7 +7,6 @@ from sse_api.data.urls import urlpatterns as data_urlpatterns
 from sse_api.engine.urls import urlpatterns as engine_urlpatterns
 from sse_api.system.urls import urlpatterns as system_urlpatterns
 
-
 urlpatterns = []
 
 if settings.SYSTEM_HANDLER.show_admin_window():

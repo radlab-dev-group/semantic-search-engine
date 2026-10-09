@@ -3,7 +3,6 @@ import os
 import django
 import argparse
 
-
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "sse_api.config.settings")
 django.setup()
 

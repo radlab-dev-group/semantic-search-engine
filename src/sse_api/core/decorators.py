@@ -25,7 +25,10 @@ def required_params_exists(required_params: list, optional_params: list = None):
             request = method_args[0]
             params = request_params(request)
             use_language = params.get("lang", default_app_language())
-            if not isinstance(use_language, str) or use_language not in AVAILABLE_LANGUAGES:
+            if (
+                not isinstance(use_language, str)
+                or use_language not in AVAILABLE_LANGUAGES
+            ):
                 return error_response(UNSUPPORTED_LANGUAGE, default_app_language())
             if request.method != "GET" and not isinstance(request.data, Mapping):
                 return error_response(INVALID_PARAMS, use_language)
@@ -68,8 +71,13 @@ def get_default_language(method):
         default_lang = default_app_language()
         for req_arg in method_args:
             if isinstance(req_arg, Request):
-                default_lang = request_params(req_arg).get("lang", default_app_language())
-                if not isinstance(default_lang, str) or default_lang not in AVAILABLE_LANGUAGES:
+                default_lang = request_params(req_arg).get(
+                    "lang", default_app_language()
+                )
+                if (
+                    not isinstance(default_lang, str)
+                    or default_lang not in AVAILABLE_LANGUAGES
+                ):
                     return error_response(
                         error_name=UNSUPPORTED_LANGUAGE,
                         language=default_app_language(),

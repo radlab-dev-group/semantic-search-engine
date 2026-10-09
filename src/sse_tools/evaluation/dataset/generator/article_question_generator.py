@@ -6,7 +6,6 @@ import argparse
 
 from radlab_data.utils.threads import WorkerCluster
 
-
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "sse_api.config.settings")
 django.setup()
 
@@ -15,7 +14,6 @@ from sse_tools.evaluation.dataset.generator.question_worker import (
     LLamaHandler,
     FileWriter,
 )
-
 
 LLAMA_SERVICES_HOSTS = [
     "http://192.168.100.66:8000/api/",

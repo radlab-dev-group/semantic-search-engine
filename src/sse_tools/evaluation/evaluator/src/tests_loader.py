@@ -10,8 +10,12 @@ from sse_api.system.models import OrganisationUser
 from sse_api.engine.controllers.database.relational_db import RelationalDBController
 
 from sse_api.engine.controllers.search.query import SearchQueryController
-from sse_api.engine.controllers.models_logic.generative import GenerativeModelController
-from sse_api.engine.controllers.models_logic.embedders_rerankers import EmbeddingModelsConfig
+from sse_api.engine.controllers.models_logic.generative import (
+    GenerativeModelController,
+)
+from sse_api.engine.controllers.models_logic.embedders_rerankers import (
+    EmbeddingModelsConfig,
+)
 
 TEST_STEP_SEM_SEARCH = "semantic_search"
 TEST_STEP_GEN_RESPONSE = "generative_response"

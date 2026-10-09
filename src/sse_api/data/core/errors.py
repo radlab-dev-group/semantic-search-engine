@@ -1,6 +1,5 @@
 from sse_api.core.errors import ALL_ERRORS, MSG, MSG_PL, MSG_EN, ECODE
 
-
 UPLOAD_REJECTED = "UPLOAD_REJECTED"
 
 ALL_ERRORS_DATA = {

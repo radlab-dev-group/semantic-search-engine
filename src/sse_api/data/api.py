@@ -4,8 +4,13 @@ from sse_api.engine.controllers.database.milvus import INDEX_QUERY_PARAMS
 
 from sse_api.core.decorators import required_params_exists, get_default_language
 from sse_api.core.response import response_with_status
-from sse_api.core.validation import (request_params, required_text, optional_text,
-                                     indexing_options, texts)
+from sse_api.core.validation import (
+    request_params,
+    required_text,
+    optional_text,
+    indexing_options,
+    texts,
+)
 from sse_api.core.errors import error_response
 from sse_api.core.errors_list import INVALID_PARAMS
 
@@ -160,7 +165,10 @@ class ListCollections(APIView):
 
 class UploadAndIndexFilesToCollection(APIView):
     required_params = ["files[]", "collection_name", "indexing_options"]
-    input_validators = {"collection_name": required_text, "indexing_options": indexing_options}
+    input_validators = {
+        "collection_name": required_text,
+        "indexing_options": indexing_options,
+    }
 
     @required_params_exists(required_params=required_params)
     @get_organisation_user
@@ -207,8 +215,11 @@ class UploadAndIndexFilesToCollection(APIView):
 
 class AddAndIndexTextsFromEP(APIView):
     required_params = ["texts[]", "collection_name", "indexing_options"]
-    input_validators = {"collection_name": required_text, "indexing_options": indexing_options,
-                        "texts[]": texts}
+    input_validators = {
+        "collection_name": required_text,
+        "indexing_options": indexing_options,
+        "texts[]": texts,
+    }
 
     @required_params_exists(required_params=required_params)
     @get_organisation_user
@@ -314,8 +325,9 @@ class ListDocumentsFromCollection(APIView):
             collection_name=collection_name, created_by=organisation_user
         )
         if collection is None:
-            return response_with_status(status=False, language=language,
-                                        error_name=COLLECTION_NOT_FOUND)
+            return response_with_status(
+                status=False, language=language, error_name=COLLECTION_NOT_FOUND
+            )
         documents = RelationalDBController.get_documents_to_search_from_collection(
             collection=collection,
         )

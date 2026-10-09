@@ -1,6 +1,10 @@
 from django.db import models
 
-from sse_api.engine.models import UserQuery, UserQueryResponse, UserQueryResponseAnswer
+from sse_api.engine.models import (
+    UserQuery,
+    UserQueryResponse,
+    UserQueryResponseAnswer,
+)
 from sse_api.data.models import OrganisationUser, CollectionOfDocuments
 
 

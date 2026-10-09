@@ -519,7 +519,9 @@ class ChatTest(unittest.TestCase):
         client.send_chat_message(
             1, "q", collection="docs", generative_model="m", answer_language="pl"
         )
-        self.assertEqual(client.fake_session.calls[0].json["collection_name"], "docs")
+        self.assertEqual(
+            client.fake_session.calls[0].json["collection_name"], "docs"
+        )
         self.assertEqual(
             client.fake_session.calls[0].json["options"],
             {"generative_model": "m", "answer_language": "pl"},

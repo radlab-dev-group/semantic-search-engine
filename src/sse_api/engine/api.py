@@ -5,12 +5,24 @@ from rest_framework.views import APIView
 from sse_api.core.response import response_with_status
 from sse_api.core.decorators import required_params_exists, get_default_language
 from sse_api.core.constants import CONFIG_DIR
-from sse_api.core.validation import (request_params, required_text, optional_text,
-                                     identifier, boolean, search_options, generation_options, rating_integer)
+from sse_api.core.validation import (
+    request_params,
+    required_text,
+    optional_text,
+    identifier,
+    boolean,
+    search_options,
+    generation_options,
+    rating_integer,
+)
 from sse_api.core.errors import error_response
 from sse_api.core.errors_list import INVALID_PARAMS
-from sse_api.engine.core.errors import (COLLECTION_ACCESS_DENIED, RESPONSE_ACCESS_DENIED,
-                                        ANSWER_ACCESS_DENIED, GENERATION_FAILED)
+from sse_api.engine.core.errors import (
+    COLLECTION_ACCESS_DENIED,
+    RESPONSE_ACCESS_DENIED,
+    ANSWER_ACCESS_DENIED,
+    GENERATION_FAILED,
+)
 
 from sse_api.system.core.decorators import get_organisation_user
 from sse_api.engine.controllers.search.query import SearchQueryController
@@ -38,8 +50,12 @@ class SearchWithOptions(APIView):
 
     required_params = ["collection_name", "query_str", "options"]
     optional_params = ["ignore_question_lang_detect"]
-    input_validators = {"collection_name": required_text, "query_str": required_text,
-                        "options": search_options, "ignore_question_lang_detect": boolean}
+    input_validators = {
+        "collection_name": required_text,
+        "query_str": required_text,
+        "options": search_options,
+        "ignore_question_lang_detect": boolean,
+    }
 
     @required_params_exists(
         required_params=required_params, optional_params=optional_params
@@ -51,7 +67,9 @@ class SearchWithOptions(APIView):
         query_str = params.get("query_str")
         collection_name = params.get("collection_name")
         options_dict = params.get("options")
-        ignore_question_lang_detect = params.get("ignore_question_lang_detect", False)
+        ignore_question_lang_detect = params.get(
+            "ignore_question_lang_detect", False
+        )
 
         collection = RelationalDBController.get_collection(
             collection_name=collection_name, created_by=organisation_user
@@ -94,8 +112,12 @@ class GenerativeAnswerForQuestion(APIView):
 
     required_params = ["query_response_id", "query_options"]
     optional_params = ["system_prompt"]
-    input_validators = {"query_response_id": identifier, "query_options": generation_options,
-                        "query_instruction": optional_text, "system_prompt": optional_text}
+    input_validators = {
+        "query_response_id": identifier,
+        "query_options": generation_options,
+        "query_instruction": optional_text,
+        "system_prompt": optional_text,
+    }
 
     @required_params_exists(required_params=required_params)
     @get_organisation_user
@@ -191,8 +213,12 @@ class ListRerankersModels(APIView):
 class SetRateForQueryResponseAnswer(APIView):
     required_params = ["answer_response_id", "rate_value", "rate_value_max"]
     optional_params = ["rate_comment"]
-    input_validators = {"answer_response_id": identifier, "rate_value": rating_integer,
-                        "rate_value_max": rating_integer, "rate_comment": optional_text}
+    input_validators = {
+        "answer_response_id": identifier,
+        "rate_value": rating_integer,
+        "rate_value_max": rating_integer,
+        "rate_comment": optional_text,
+    }
 
     @required_params_exists(
         required_params=required_params, optional_params=optional_params

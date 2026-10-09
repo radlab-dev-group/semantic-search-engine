@@ -200,6 +200,6 @@ Used for local development of PostgreSQL and Milvus services:
 | Directory | Purpose |
 |-----------|---------|
 | `mcp/` | Model Context Protocol server implementations (FastMCP servers and Ollama client) |
-| `sse_apps/` | Standalone admin utilities, evaluation scripts (BLEU, ROUGE scoring), and document converters |
+| `src/sse_tools/` | Standalone admin utilities, evaluation scripts (BLEU, ROUGE scoring), and document converters |
 | `sse_lib/` | Standalone Python client library of the SSE REST API (installable with pip) |
 | `scripts/` | Shell utility scripts for infrastructure management |

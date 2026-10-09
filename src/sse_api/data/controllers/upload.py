@@ -37,14 +37,26 @@ class UploadBudget:
 
     def __init__(self):
         self.max_files = getattr(settings, "UPLOAD_MAX_FILES", 1000)
-        self.max_bytes = getattr(settings, "UPLOAD_MAX_UNCOMPRESSED_BYTES", 100 * 1024 * 1024)
+        self.max_bytes = getattr(
+            settings, "UPLOAD_MAX_UNCOMPRESSED_BYTES", 100 * 1024 * 1024
+        )
         self.max_ratio = getattr(settings, "UPLOAD_MAX_COMPRESSION_RATIO", 100)
-        self.max_upload_bytes = getattr(settings, "UPLOAD_MAX_INPUT_BYTES", 100 * 1024 * 1024)
+        self.max_upload_bytes = getattr(
+            settings, "UPLOAD_MAX_INPUT_BYTES", 100 * 1024 * 1024
+        )
         limits = (self.max_files, self.max_bytes, self.max_upload_bytes)
         if any(type(value) is not int or value <= 0 for value in limits):
-            raise ImproperlyConfigured("Upload count and byte limits must be positive integers")
-        if not isinstance(self.max_ratio, (int, float)) or not math.isfinite(self.max_ratio) or self.max_ratio <= 0:
-            raise ImproperlyConfigured("Upload compression ratio must be positive and finite")
+            raise ImproperlyConfigured(
+                "Upload count and byte limits must be positive integers"
+            )
+        if (
+            not isinstance(self.max_ratio, (int, float))
+            or not math.isfinite(self.max_ratio)
+            or self.max_ratio <= 0
+        ):
+            raise ImproperlyConfigured(
+                "Upload compression ratio must be positive and finite"
+            )
         self.files = 0
         self.bytes = 0
         self.input_bytes = 0
@@ -67,14 +79,23 @@ class UploadBudget:
                 self.input_bytes += len(chunk)
                 if self.input_bytes > self.max_upload_bytes:
                     raise UploadRejected("Upload input limit exceeded")
-            if compressed_size is not None and size > compressed_size * self.max_ratio:
+            if (
+                compressed_size is not None
+                and size > compressed_size * self.max_ratio
+            ):
                 raise UploadRejected("Compression ratio exceeded")
             self.bytes += len(chunk)
             target.write(chunk)
 
 
 def contained_path(root, name):
-    if not isinstance(name, str) or not name or "\\" in name or ":" in name or "\x00" in name:
+    if (
+        not isinstance(name, str)
+        or not name
+        or "\\" in name
+        or ":" in name
+        or "\x00" in name
+    ):
         raise UploadRejected("Unsafe upload path")
     parts = name.rstrip("/").split("/")
     if any(part in ("", ".", "..") for part in parts) or name.startswith("/"):
@@ -87,7 +108,8 @@ def contained_path(root, name):
         if parent.is_symlink():
             raise UploadRejected("Symlink upload path")
         if parent.parent.is_dir() and any(
-            sibling.name.casefold() == parent.name.casefold() and sibling.name != parent.name
+            sibling.name.casefold() == parent.name.casefold()
+            and sibling.name != parent.name
             for sibling in parent.parent.iterdir()
         ):
             raise UploadRejected("Upload path collision")
@@ -128,7 +150,9 @@ class UploadDocumentsController:
             for file_to_save in files:
                 uploaded_files_paths.extend(
                     self._store_single_file_to_upload_dir(
-                        upload_dir=upload_dest_dir, file_to_save=file_to_save, budget=budget
+                        upload_dir=upload_dest_dir,
+                        file_to_save=file_to_save,
+                        budget=budget,
                     )
                 )
         except (UploadRejected, ImproperlyConfigured):
@@ -235,11 +259,15 @@ class UploadDocumentsController:
                     declared_bytes = 0
                     declared_files = 0
                     for entry in entries:
-                        target = contained_path(full_upload_path, entry.orig_filename)
+                        target = contained_path(
+                            full_upload_path, entry.orig_filename
+                        )
                         key = str(target).casefold()
                         mode = entry.external_attr >> 16
                         kind = stat.S_IFMT(mode)
-                        if kind not in (0, stat.S_IFREG, stat.S_IFDIR) or (kind == stat.S_IFDIR and not entry.is_dir()):
+                        if kind not in (0, stat.S_IFREG, stat.S_IFDIR) or (
+                            kind == stat.S_IFDIR and not entry.is_dir()
+                        ):
                             raise UploadRejected("Non-regular ZIP entry")
                         if key in seen or target.exists():
                             raise UploadRejected("Upload path collision")
@@ -248,17 +276,24 @@ class UploadDocumentsController:
                             if path == Path(full_upload_path).resolve():
                                 break
                             folded = str(path).casefold()
-                            if folded in components and components[folded] != str(path):
+                            if folded in components and components[folded] != str(
+                                path
+                            ):
                                 raise UploadRejected("Upload path collision")
                             components[folded] = str(path)
                         if not entry.is_dir():
                             declared_files += 1
                             declared_bytes += entry.file_size
-                            if entry.file_size > entry.compress_size * budget.max_ratio:
+                            if (
+                                entry.file_size
+                                > entry.compress_size * budget.max_ratio
+                            ):
                                 raise UploadRejected("Compression ratio exceeded")
                         budget.check(files=declared_files, size=declared_bytes)
                     for entry in entries:
-                        target = contained_path(full_upload_path, entry.orig_filename)
+                        target = contained_path(
+                            full_upload_path, entry.orig_filename
+                        )
                         missing = []
                         parent = target if entry.is_dir() else target.parent
                         while not parent.exists():
@@ -275,7 +310,16 @@ class UploadDocumentsController:
                                 budget.copy(source, output, entry.compress_size)
                         paths.append(str(target))
             return paths
-        except (UploadRejected, zipfile.BadZipFile, zipfile.LargeZipFile, OSError, RuntimeError, EOFError, NotImplementedError, zlib.error) as exc:
+        except (
+            UploadRejected,
+            zipfile.BadZipFile,
+            zipfile.LargeZipFile,
+            OSError,
+            RuntimeError,
+            EOFError,
+            NotImplementedError,
+            zlib.error,
+        ) as exc:
             for target in reversed(created):
                 if target.is_dir():
                     target.rmdir()
@@ -299,7 +343,11 @@ class UploadDocumentsController:
         date_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%s")
         root = Path(self.upload_dir).resolve()
         root.mkdir(parents=True, exist_ok=True)
-        for component in (organisation_name, organisation_user.auth_user.username, collection_name):
+        for component in (
+            organisation_name,
+            organisation_user.auth_user.username,
+            collection_name,
+        ):
             if "/" in component:
                 raise UploadRejected("Unsafe upload directory")
             root = contained_path(root, component)

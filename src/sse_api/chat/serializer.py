@@ -1,6 +1,10 @@
 from rest_framework import serializers
 
-from sse_api.engine.models import UserQuery, UserQueryResponse, UserQueryResponseAnswer
+from sse_api.engine.models import (
+    UserQuery,
+    UserQueryResponse,
+    UserQueryResponseAnswer,
+)
 from sse_api.chat.models import (
     Chat,
     Message,

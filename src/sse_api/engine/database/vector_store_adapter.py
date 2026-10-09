@@ -62,7 +62,8 @@ class MilvusVectorStoreAdapter(VectorStoreProtocol):
             min_similarity=min_similarity,
         )
 
-        # Flatten: MilvusHandler returns one hit-list per query; we take the first (and usually only) one.
+        # Flatten: MilvusHandler returns one hit-list per query;
+        # we take the first (and usually only) one.
         hits_list = all_hits[0] if all_hits else []
 
         # Each hit dict has keys: "score", "text", "metadata"

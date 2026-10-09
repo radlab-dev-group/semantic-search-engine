@@ -64,7 +64,9 @@ if not settings.configured:
 
 from pymilvus import MilvusClient  # noqa: E402
 
-from sse_api.engine.controllers.database.milvus import INDEX_QUERY_PARAMS  # noqa: E402
+from sse_api.engine.controllers.database.milvus import (
+    INDEX_QUERY_PARAMS,
+)  # noqa: E402
 
 CONFIG_JSON_FIELD = "milvus_db_connection"
 DEFAULT_CONFIG_PATH = os.path.join(

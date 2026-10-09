@@ -25,7 +25,9 @@ class VectorStoreProtocol(Protocol):
         metadata_filter: Optional[Dict[str, Any]] = None,
         min_similarity: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
-        """Search for similar vectors.  Returns hit dicts with ``score``, ``text_str``, ``metadata``.
+        """Search for similar vectors.
+
+        Returns hit dicts with ``score``, ``text_str``, ``metadata``.
 
         ``min_similarity`` is an optional cosine similarity cutoff; hits
         scoring below it are dropped.  ``None`` means no cutoff.

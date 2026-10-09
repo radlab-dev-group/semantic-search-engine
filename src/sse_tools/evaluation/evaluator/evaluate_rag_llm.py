@@ -6,14 +6,15 @@ import json
 import tqdm
 from typing import List, Dict
 
-
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "sse_api.config.settings")
 django.setup()
 
 from sse_api.system.models import OrganisationUser
 from sse_api.chat.controllers.chat import ChatController
 from sse_api.engine.controllers.database.relational_db import RelationalDBController
-from sse_api.engine.controllers.models_logic.generative import GenerativeModelController
+from sse_api.engine.controllers.models_logic.generative import (
+    GenerativeModelController,
+)
 
 
 def prepare_parser():
@@ -118,7 +119,10 @@ class RAGEvaluator:
             res = state.rag_message_state.sse_response
             if res and res.detailed_results_json:
                 for hit in res.detailed_results_json:
-                    context += f"Document: {hit.get('document_name')}\nContent: {hit.get('text_str')}\n\n"
+                    context += (
+                        f"Document: {hit.get('document_name')}"
+                        f"\nContent: {hit.get('text_str')}\n\n"
+                    )
 
         # 3. Evaluate using LLM-as-a-judge
         eval_results = self._llm_judge(
@@ -143,12 +147,16 @@ Odpowiedź systemu: {answer}
 {f'Oczekiwana odpowiedź (Ground Truth): {ground_truth}' if ground_truth else ''}
 
 Oceń odpowiedź w skali 1-5 w poniższych kategoriach (zwróć tylko JSON):
-1. Faithfulness (Wierność): Czy odpowiedź opiera się wyłącznie na podanym kontekście i nie zawiera halucynacji?
-2. Answer Relevance (Trafność): Czy odpowiedź bezpośrednio odpowiada na zadane pytanie?
-3. Context Precision (Precyzja kontekstu): Czy dostarczony kontekst był istotny dla odpowiedzi?
+1. Faithfulness (Wierność): Czy odpowiedź opiera się wyłącznie na podanym
+kontekście i nie zawiera halucynacji?
+2. Answer Relevance (Trafność): Czy odpowiedź bezpośrednio odpowiada na
+zadane pytanie?
+3. Context Precision (Precyzja kontekstu): Czy dostarczony kontekst był
+istotny dla odpowiedzi?
 
 Format wyjściowy (JSON):
-{{"faithfulness": score, "relevance": score, "precision": score, "explanation": "krótkie uzasadnienie"}}
+{{"faithfulness": score, "relevance": score, "precision": score,
+ "explanation": "krótkie uzasadnienie"}}
 """
         try:
             eval_str, _ = (

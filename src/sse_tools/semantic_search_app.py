@@ -7,7 +7,10 @@ from radlab_data.text.utils import TextUtils
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "sse_api.config.settings")
 django.setup()
 
-from sse_api.data.controllers import DBSemanticSearchController, DBTextSearchController
+from sse_api.data.controllers import (
+    DBSemanticSearchController,
+    DBTextSearchController,
+)
 
 
 def prepare_stats(postgres_docs):

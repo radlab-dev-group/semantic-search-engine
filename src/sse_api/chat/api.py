@@ -16,8 +16,15 @@ from rest_framework.views import APIView
 
 from sse_api.core.response import response_with_status
 from sse_api.core.decorators import required_params_exists, get_default_language
-from sse_api.core.validation import (request_params, required_text, optional_text,
-                                     identifier, boolean, options_object, search_options)
+from sse_api.core.validation import (
+    request_params,
+    required_text,
+    optional_text,
+    identifier,
+    boolean,
+    options_object,
+    search_options,
+)
 
 from sse_api.system.core.decorators import get_organisation_user
 
@@ -53,8 +60,11 @@ class NewChat(APIView):
 
     required_params = []
     optional_params = ["options", "collection_name", "search_options"]
-    input_validators = {"options": options_object, "collection_name": optional_text,
-                        "search_options": search_options}
+    input_validators = {
+        "options": options_object,
+        "collection_name": optional_text,
+        "search_options": search_options,
+    }
 
     chat_controller = ChatController()
 
@@ -120,9 +130,14 @@ class AddUserMessageToChatWithSystemResponse(APIView):
 
     required_params = ["chat_id", "user_message", "options"]
     optional_params = ["collection_name", "search_options", "system_prompt"]
-    input_validators = {"chat_id": identifier, "user_message": required_text,
-                        "options": options_object, "collection_name": optional_text,
-                        "search_options": search_options, "system_prompt": optional_text}
+    input_validators = {
+        "chat_id": identifier,
+        "user_message": required_text,
+        "options": options_object,
+        "collection_name": optional_text,
+        "search_options": search_options,
+        "system_prompt": optional_text,
+    }
 
     @required_params_exists(
         required_params=required_params, optional_params=optional_params

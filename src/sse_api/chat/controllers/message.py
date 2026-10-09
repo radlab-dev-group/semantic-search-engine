@@ -17,7 +17,9 @@ from sse_api.content_supervisor.supervisor import ContentSupervisor
 from sse_api.content_supervisor.processors.regex_processors import URLRegexProcessor
 
 from sse_api.engine.controllers.search.query import SearchQueryController
-from sse_api.engine.controllers.models_logic.generative import GenerativeModelController
+from sse_api.engine.controllers.models_logic.generative import (
+    GenerativeModelController,
+)
 
 
 class MessageLogicController:
@@ -281,8 +283,10 @@ class MessageLogicController:
             history_str += f"{role}: {msg.text}\n"
 
         prompt = (
-            "Na podstawie poniższej historii rozmowy, przeformułuj ostatnie pytanie użytkownika w samodzielne zapytanie "
-            "do wyszukiwarki dokumentów. Zapytanie powinno być zwięzłe i zawierać wszystkie niezbędne konteksty z historii. "
+            "Na podstawie poniższej historii rozmowy, przeformułuj ostatnie "
+            "pytanie użytkownika w samodzielne zapytanie do wyszukiwarki "
+            "dokumentów. Zapytanie powinno być zwięzłe i zawierać wszystkie "
+            "niezbędne konteksty z historii. "
             "Zwróć TYLKO przeformułowane pytanie, bez żadnych dodatkowych komentarzy.\n\n"
             f"Historia:\n{history_str}\n"
             f"Ostatnie pytanie: {query}\n"

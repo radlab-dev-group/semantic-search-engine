@@ -79,15 +79,25 @@ def rating_integer(value):
 
 def search_options(value):
     value = options_object(value)
-    for key in ("use_and_operator", "only_template_documents", "hybrid_search",
-                "rerank_results", "return_with_factored_fields"):
+    for key in (
+        "use_and_operator",
+        "only_template_documents",
+        "hybrid_search",
+        "rerank_results",
+        "return_with_factored_fields",
+    ):
         if key in value:
             value[key] = boolean(value[key])
     for key in ("max_results", "rerank_max_results", "rrf_k"):
         if key in value:
             value[key] = identifier(value[key])
-    for key in ("categories", "documents", "documents_names", "relative_paths",
-                "relative_path_contains"):
+    for key in (
+        "categories",
+        "documents",
+        "documents_names",
+        "relative_paths",
+        "relative_path_contains",
+    ):
         if key in value and value[key] is not None:
             if not isinstance(value[key], list):
                 raise ValueError("Expected filter list")
@@ -108,7 +118,9 @@ def generation_options(value):
     value["percentage_rank_mass"] = number(value.get("percentage_rank_mass"))
     if not 0 <= value["percentage_rank_mass"] <= 100:
         raise ValueError("Percentage out of range")
-    value["use_doc_names_in_response"] = boolean(value.get("use_doc_names_in_response", False))
+    value["use_doc_names_in_response"] = boolean(
+        value.get("use_doc_names_in_response", False)
+    )
     if "translate_answer" in value:
         value["translate_answer"] = boolean(value["translate_answer"])
     if value.get("translate_answer"):
@@ -118,8 +130,13 @@ def generation_options(value):
 
 def indexing_options(value):
     value = options_object(value)
-    for key in ("prepare_proper_pages", "merge_document_pages", "clear_text",
-                "use_text_denoiser", "check_text_lang"):
+    for key in (
+        "prepare_proper_pages",
+        "merge_document_pages",
+        "clear_text",
+        "use_text_denoiser",
+        "check_text_lang",
+    ):
         value[key] = boolean(value.get(key))
     value["max_tokens_in_chunk"] = identifier(value.get("max_tokens_in_chunk"))
     overlap = number(value.get("number_of_overlap_tokens"))
@@ -138,7 +155,11 @@ def texts(value):
         for key in ("filepath", "relative_filepath"):
             required_text(item.get(key))
         optional_text(item.get("category"))
-        if "category" not in item or not isinstance(item.get("pages"), list) or not item["pages"]:
+        if (
+            "category" not in item
+            or not isinstance(item.get("pages"), list)
+            or not item["pages"]
+        ):
             raise ValueError("Expected document pages and category")
         for page in item["pages"]:
             if not isinstance(page, dict):

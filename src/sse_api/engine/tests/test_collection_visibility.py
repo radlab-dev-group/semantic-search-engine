@@ -12,11 +12,17 @@ from sse_api.system.models import Organisation, OrganisationUser
 
 
 class EndpointVisibilityMixin:
-    indexing_options = json.dumps({
-        "prepare_proper_pages": True, "merge_document_pages": False,
-        "clear_text": True, "use_text_denoiser": False, "check_text_lang": False,
-        "max_tokens_in_chunk": 128, "number_of_overlap_tokens": 0,
-    })
+    indexing_options = json.dumps(
+        {
+            "prepare_proper_pages": True,
+            "merge_document_pages": False,
+            "clear_text": True,
+            "use_text_denoiser": False,
+            "check_text_lang": False,
+            "max_tokens_in_chunk": 128,
+            "number_of_overlap_tokens": 0,
+        }
+    )
 
     def request_view(self, view, user, payload=None):
         factory = APIRequestFactory()
@@ -24,31 +30,52 @@ class EndpointVisibilityMixin:
             request = factory.get("/")
         else:
             request = factory.post("/", payload, format="multipart")
-        force_authenticate(request, user=user.auth_user if hasattr(user, "auth_user") else user)
+        force_authenticate(
+            request, user=user.auth_user if hasattr(user, "auth_user") else user
+        )
         return view.as_view()(request)
 
     def test_filtering_categories_only_from_visible_searchable_documents(self):
         from sse_api.data.api import ListFilteringOptions
         from sse_api.data.models import Document
 
-        for collection in (self.private, self.shared, self.foreign, self.member_owned):
+        for collection in (
+            self.private,
+            self.shared,
+            self.foreign,
+            self.member_owned,
+        ):
             Document.objects.create(
-                name=collection.name, collection=collection, category=collection.name,
-                added_by=collection.created_by, path="/test", relative_path="test",
+                name=collection.name,
+                collection=collection,
+                category=collection.name,
+                added_by=collection.created_by,
+                path="/test",
+                relative_path="test",
                 document_hash=collection.name,
             )
         Document.objects.create(
-            name="disabled", collection=self.shared, category="disabled",
-            added_by=self.owner, use_in_search=False, path="/disabled",
-            relative_path="disabled", document_hash="disabled",
+            name="disabled",
+            collection=self.shared,
+            category="disabled",
+            added_by=self.owner,
+            use_in_search=False,
+            path="/disabled",
+            relative_path="disabled",
+            document_hash="disabled",
         )
-        for user, categories in ((self.owner, ["Private", "Shared"]),
-                                 (self.member, ["Shared", "Member owned", "Foreign"]),
-                                 (self.nonmember, []), (self.outsider, ["Foreign"])):
+        for user, categories in (
+            (self.owner, ["Private", "Shared"]),
+            (self.member, ["Shared", "Member owned", "Foreign"]),
+            (self.nonmember, []),
+            (self.outsider, ["Foreign"]),
+        ):
             with self.subTest(user=user.pk):
                 response = self.request_view(ListFilteringOptions, user)
                 self.assertTrue(response.data["status"])
-                self.assertCountEqual(response.data["body"]["categories"], categories)
+                self.assertCountEqual(
+                    response.data["body"]["categories"], categories
+                )
 
     def test_list_endpoint_filters_visibility_and_deduplicates(self):
         from sse_api.data.api import ListCollections
@@ -69,17 +96,29 @@ class EndpointVisibilityMixin:
         from sse_api.engine.api import SearchWithOptions
 
         with patch("sse_api.engine.api.SearchQueryController.new_query") as query:
-            response = self.request_view(SearchWithOptions, self.nonmember, {
-                "collection_name": self.shared.name, "query_str": "question", "options": "{}",
-            })
+            response = self.request_view(
+                SearchWithOptions,
+                self.nonmember,
+                {
+                    "collection_name": self.shared.name,
+                    "query_str": "question",
+                    "options": "{}",
+                },
+            )
             self.assertFalse(response.data["status"])
             query.assert_not_called()
 
     def test_search_passes_visible_collection_and_rejects_revocation(self):
         from sse_api.engine.api import SearchWithOptions
 
-        with patch("sse_api.engine.api.SearchQueryController.new_query", return_value={}) as query:
-            payload = {"collection_name": self.shared.name, "query_str": "question", "options": "{}"}
+        with patch(
+            "sse_api.engine.api.SearchQueryController.new_query", return_value={}
+        ) as query:
+            payload = {
+                "collection_name": self.shared.name,
+                "query_str": "question",
+                "options": "{}",
+            }
             response = self.request_view(SearchWithOptions, self.member, payload)
             self.assertTrue(response.data["status"])
             self.assertEqual(query.call_args.kwargs["collection"], self.shared)
@@ -93,10 +132,15 @@ class EndpointVisibilityMixin:
         from sse_api.data.api import UploadAndIndexFilesToCollection
 
         with patch("sse_api.data.api.UploadDocumentsController") as upload:
-            response = self.request_view(UploadAndIndexFilesToCollection, self.nonmember, {
-                "collection_name": self.shared.name, "indexing_options": self.indexing_options,
-                "files[]": SimpleUploadedFile("test.txt", b"test"),
-            })
+            response = self.request_view(
+                UploadAndIndexFilesToCollection,
+                self.nonmember,
+                {
+                    "collection_name": self.shared.name,
+                    "indexing_options": self.indexing_options,
+                    "files[]": SimpleUploadedFile("test.txt", b"test"),
+                },
+            )
             self.assertFalse(response.data["status"])
             upload.return_value.store_and_index_files_rel_db_post_request.assert_not_called()
 
@@ -105,22 +149,35 @@ class EndpointVisibilityMixin:
         from sse_api.data.models import UploadedDocuments
 
         uploaded = UploadedDocuments.objects.create(
-            dir_hash="visibility-upload", dir_path="/test", uploaded_by=self.member,
+            dir_hash="visibility-upload",
+            dir_path="/test",
+            uploaded_by=self.member,
         )
         with patch("sse_api.data.api.UploadDocumentsController") as upload:
-            upload.return_value.store_and_index_files_rel_db_post_request.return_value = uploaded
-            response = self.request_view(UploadAndIndexFilesToCollection, self.member, {
-                "collection_name": self.shared.name, "indexing_options": self.indexing_options,
-                "files[]": SimpleUploadedFile("test.txt", b"test"),
-            })
+            upload.return_value.store_and_index_files_rel_db_post_request.return_value = (
+                uploaded
+            )
+            response = self.request_view(
+                UploadAndIndexFilesToCollection,
+                self.member,
+                {
+                    "collection_name": self.shared.name,
+                    "indexing_options": self.indexing_options,
+                    "files[]": SimpleUploadedFile("test.txt", b"test"),
+                },
+            )
             self.assertTrue(response.data["status"])
             self.assertEqual(
-                upload.return_value.store_and_index_files_rel_db_post_request.call_args.kwargs["collection"],
+                upload.return_value.store_and_index_files_rel_db_post_request.call_args.kwargs[
+                    "collection"
+                ],
                 self.shared,
             )
 
     def test_rag_chat_creation_uses_visibility_and_revocation(self):
-        with patch("sse_api.engine.controllers.models_logic.generative.GenerativeModelConfig.load"):
+        with patch(
+            "sse_api.engine.controllers.models_logic.generative.GenerativeModelConfig.load"
+        ):
             from sse_api.chat.api import NewChat
         from sse_api.chat.models import Chat
 
@@ -143,8 +200,12 @@ class EndpointVisibilityMixin:
 
 class CollectionVisibilityTestCase(EndpointVisibilityMixin, TestCase):
     def setUp(self):
-        self.organisation = Organisation.objects.create(name="Visibility organisation")
-        self.other_organisation = Organisation.objects.create(name="Other organisation")
+        self.organisation = Organisation.objects.create(
+            name="Visibility organisation"
+        )
+        self.other_organisation = Organisation.objects.create(
+            name="Other organisation"
+        )
         self.owner = self.make_user("owner", self.organisation)
         self.member = self.make_user("member", self.organisation)
         self.nonmember = self.make_user("nonmember", self.organisation)
@@ -209,7 +270,8 @@ class CollectionVisibilityTestCase(EndpointVisibilityMixin, TestCase):
     def test_foreign_group_grant_does_not_expose_private_collection(self):
         group_model = OrganisationUser._meta.get_field("user_groups").related_model
         foreign_group = group_model.objects.create(
-            group_name="Foreign readers", organisation=self.other_organisation,
+            group_name="Foreign readers",
+            organisation=self.other_organisation,
         )
         self.member.user_groups.add(foreign_group)
         self.private.visible_to_groups.add(foreign_group)
@@ -224,12 +286,21 @@ class CollectionVisibilityTestCase(EndpointVisibilityMixin, TestCase):
             self.visible_ids(self.member, check_in_organisation=False),
             [self.member_owned.pk],
         )
-        self.assertIsNone(RelationalDBController.get_collection(
-            self.member, self.shared.name, check_in_organisation=False,
-        ))
-        self.assertEqual(RelationalDBController.get_collection(
-            self.member, self.member_owned.name, check_in_organisation=False,
-        ), self.member_owned)
+        self.assertIsNone(
+            RelationalDBController.get_collection(
+                self.member,
+                self.shared.name,
+                check_in_organisation=False,
+            )
+        )
+        self.assertEqual(
+            RelationalDBController.get_collection(
+                self.member,
+                self.member_owned.name,
+                check_in_organisation=False,
+            ),
+            self.member_owned,
+        )
         self.assertEqual(
             self.visible_ids(self.nonmember, check_in_organisation=False), []
         )
@@ -237,7 +308,8 @@ class CollectionVisibilityTestCase(EndpointVisibilityMixin, TestCase):
     def test_owner_and_multiple_group_matches_are_distinct(self):
         self.owner.user_groups.add(self.group, self.second_group)
         self.assertCountEqual(
-            self.visible_ids(self.owner), [self.private.pk, self.shared.pk, self.foreign.pk]
+            self.visible_ids(self.owner),
+            [self.private.pk, self.shared.pk, self.foreign.pk],
         )
 
     def test_membership_revocation_takes_effect_on_next_lookup(self):
@@ -248,14 +320,25 @@ class CollectionVisibilityTestCase(EndpointVisibilityMixin, TestCase):
     def test_collection_grant_revocation_takes_effect_on_next_lookup(self):
         self.assertIn(self.shared.pk, self.visible_ids(self.member))
         self.shared.visible_to_groups.clear()
-        self.assertCountEqual(self.visible_ids(self.member), [self.member_owned.pk, self.foreign.pk])
-        self.assertIsNone(RelationalDBController.get_collection(self.member, self.shared.name))
+        self.assertCountEqual(
+            self.visible_ids(self.member), [self.member_owned.pk, self.foreign.pk]
+        )
+        self.assertIsNone(
+            RelationalDBController.get_collection(self.member, self.shared.name)
+        )
 
     def test_collection_listing_uses_the_same_visibility_rules(self):
         for user in (self.owner, self.member, self.nonmember, self.outsider):
             with self.subTest(user=user.pk):
-                collections = RelationalDBController.get_user_organisation_collections(
-                    user, list(CollectionOfDocuments.objects.values_list("name", flat=True))
+                collections = (
+                    RelationalDBController.get_user_organisation_collections(
+                        user,
+                        list(
+                            CollectionOfDocuments.objects.values_list(
+                                "name", flat=True
+                            )
+                        ),
+                    )
                 )
                 self.assertCountEqual(
                     [collection.pk for collection in collections],
@@ -266,10 +349,15 @@ class CollectionVisibilityTestCase(EndpointVisibilityMixin, TestCase):
         for user in (self.owner, self.member, self.nonmember, self.outsider):
             visible_ids = self.visible_ids(user)
             for collection in (
-                self.private, self.shared, self.foreign, self.member_owned
+                self.private,
+                self.shared,
+                self.foreign,
+                self.member_owned,
             ):
                 with self.subTest(user=user.pk, collection=collection.pk):
-                    result = RelationalDBController.get_collection(user, collection.name)
+                    result = RelationalDBController.get_collection(
+                        user, collection.name
+                    )
                     if collection.pk in visible_ids:
                         self.assertIsNotNone(result)
                         self.assertEqual(result.pk, collection.pk)

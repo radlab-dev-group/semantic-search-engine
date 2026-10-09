@@ -51,9 +51,7 @@ class ClientRegressionTest(unittest.TestCase):
 
     def test_get_forwards_request_options(self):
         client = build_client([ok({"collections": []})])
-        result = client.get(
-            "collections", unwrap=False, headers={"X-Test": "yes"}
-        )
+        result = client.get("collections", unwrap=False, headers={"X-Test": "yes"})
         self.assertEqual(result, {"status": True, "body": {"collections": []}})
         self.assertEqual(client.fake_session.calls[0].headers["X-Test"], "yes")
 
@@ -70,8 +68,9 @@ class ClientRegressionTest(unittest.TestCase):
         client = build_client([ok({})])
         client.upload_files("docs", ("a.txt", b"text"))
         self.assertEqual(len(client.fake_session.calls[0].files), 1)
-        self.assertEqual(client.fake_session.calls[0].files[0][1][:2],
-                         ("a.txt", b"text"))
+        self.assertEqual(
+            client.fake_session.calls[0].files[0][1][:2], ("a.txt", b"text")
+        )
 
     def test_explicit_empty_prefix_overrides_environment(self):
         with patch.dict("os.environ", {"SSE_API_PREFIX": "custom"}):
