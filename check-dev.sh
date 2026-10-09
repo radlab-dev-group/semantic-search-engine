@@ -23,7 +23,7 @@ run_lint() {
 }
 
 run_types() {
-  mypy src/sse_api src/sse_lib
+  mypy src/sse_api sse_lib
 }
 
 run_test() {

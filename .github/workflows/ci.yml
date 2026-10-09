@@ -62,4 +62,4 @@ jobs:
         run: bandit -r src/ scripts/ -c .bandit -q
 
       - name: mypy
-        run: mypy src/sse_api src/sse_lib
+        run: mypy src/sse_api sse_lib

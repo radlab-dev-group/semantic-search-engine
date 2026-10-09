@@ -35,9 +35,6 @@ exclude = '''
 '''
 
 # --- static analysis --------------------------------------------------------
-[tool.bandit]
-skips = ["B101", "B110", "B112"]
-
 [tool.pylint.'messages control']
 disable = [
     "raw-checker-failed",
@@ -58,4 +55,3 @@ max-line-length = 100
 [tool.mypy]
 python_version = "3.12"
 ignore_missing_imports = false
-strict = true

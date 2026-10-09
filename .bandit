@@ -1,2 +1,7 @@
-[bandit]
-skips = B101,B110,B112
+# Bandit profile. Bandit >= 1.7 parses this file as YAML (see
+# bandit.core.config.BanditConfig); the pre-1.7 INI dialect is gone.
+# Excluded dirs are passed on the command line (bandit -x).
+skips:
+  - B101   # assert_used
+  - B110   # try_except_pass
+  - B112   # try_except_continue
