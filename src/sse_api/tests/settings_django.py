@@ -18,6 +18,12 @@ DEBUG = False
 ALLOWED_HOSTS = ["testserver", "localhost", "127.0.0.1"]
 DEFAULT_APP_LANGUAGE = "en"
 MAIN_API_URL = "api"
+# Without ROOT_URLCONF every test has to call a view directly through
+# APIRequestFactory, so a missing or misregistered route is invisible to the
+# suite (that is how ``/api/healthz`` shipped without ever existing).  Pointing
+# at the real URLconf lets tests assert on URLs the way the deployment calls
+# them; SYSTEM_HANDLER below is the stub that URLconf asks for.
+ROOT_URLCONF = "sse_api.config.urls"
 MAIN_LOGGER = logging.getLogger("sse.tests")
 USE_TZ = True
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
