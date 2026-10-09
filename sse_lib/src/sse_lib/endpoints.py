@@ -4,8 +4,8 @@ endpoints.py
 
 Every REST endpoint exposed by the SSE backend, in one place.
 
-The Django views live in ``sse_rest_api/{data,engine,chat,system}/api.py`` and
-their paths are built with ``main.src.constants.prepare_api_url``, i.e.
+The Django views live in ``sse_api/{data,engine,chat,system}/api.py`` and
+their paths are built with ``sse_api.core.constants.prepare_api_url``, i.e.
 ``<root_url>/<endpoint>`` where ``root_url`` comes from the ``api`` section of
 ``configs/django-config.json`` (``api`` by default, ``api/v1`` once the
 deployment is versioned).  Only the endpoint name is hardcoded here; the prefix
@@ -30,7 +30,7 @@ LOGIN_URL = "login_url"
 REFRESH_TOKEN = "refresh_token"
 
 
-# --- collections & indexing (sse_rest_api/data) -------------------------------
+# --- collections & indexing (sse_api/data) -------------------------------
 NEW_COLLECTION = "new_collection"
 COLLECTIONS = "collections"
 CATEGORIES = "categories"
@@ -41,7 +41,7 @@ QUESTION_TEMPLATES = "question_templates"
 FILTER_OPTIONS = "filter_options"
 
 
-# --- search & generation (sse_rest_api/engine) --------------------------------
+# --- search & generation (sse_api/engine) --------------------------------
 SEARCH_WITH_OPTIONS = "search_with_options"
 GENERATIVE_ANSWER = "generative_answer"
 RATE_GENERATIVE_ANSWER = "rate_generative_answer"
@@ -50,7 +50,7 @@ EMBEDDERS = "embedders"
 RERANKERS = "rerankers"
 
 
-# --- chat (sse_rest_api/chat) -------------------------------------------------
+# --- chat (sse_api/chat) -------------------------------------------------
 NEW_CHAT = "new_chat"
 ADD_USER_MESSAGE = "add_user_message"
 SAVE_CHAT = "save_chat"

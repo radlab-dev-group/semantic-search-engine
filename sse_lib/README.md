@@ -1,7 +1,7 @@
 # sse_lib
 
 Thin Python client for the **Semantic Search Engine** (SSE) REST API
-(`sse_rest_api/` in this repository).
+(`src/sse_api/` in this repository).
 
 `sse_lib` is a client-side layer only: it maps Python calls onto the HTTP
 endpoints of a running SSE backend and turns the JSON answers into small

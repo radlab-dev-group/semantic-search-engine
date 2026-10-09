@@ -4,7 +4,7 @@ sse_lib
 
 Thin client library for the **Semantic Search Engine** (SSE) REST API.
 
-It wraps the HTTP endpoints of ``sse_rest_api`` (collections, indexing, hybrid
+It wraps the HTTP endpoints of ``sse_api`` (collections, indexing, hybrid
 search, RAG answers, chats and model listings) behind a small Python facade;
 the server side stays untouched::
 

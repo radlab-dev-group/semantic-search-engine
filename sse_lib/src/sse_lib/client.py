@@ -5,7 +5,7 @@ client.py
 :class:`SSEClient` - a thin, dependency-light wrapper over the SSE REST API.
 
 ``SSEClient`` knows nothing about Milvus, Django or the models: it turns Python
-arguments into the HTTP calls of ``sse_rest_api`` and the JSON answers into
+arguments into the HTTP calls of ``sse_api`` and the JSON answers into
 small dataclasses.  The controllers of the backend stay untouched; this is just
 the client side of the same contract (including its quirks, e.g. ``options``
 sent as a JSON string by ``search_with_options``).
@@ -57,7 +57,7 @@ ENV_API_PREFIX = "SSE_API_PREFIX"
 ENV_API_LANGUAGE = "SSE_API_LANGUAGE"
 ENV_API_TIMEOUT = "SSE_API_TIMEOUT"
 
-#: ``main.src.constants.AVAILABLE_LANGUAGES``.
+#: ``sse_api.core.constants.AVAILABLE_LANGUAGES``.
 AVAILABLE_LANGUAGES = ("pl", "en")
 DEFAULT_LANGUAGE = "pl"
 
