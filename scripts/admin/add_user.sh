@@ -10,6 +10,14 @@ set -euo pipefail
 
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")/../.." >/dev/null 2>&1 && pwd -P)"
 export PYTHONPATH="${REPO_DIR}/src:${REPO_DIR}/sse_lib/src:${PYTHONPATH:-}"
+
+if [[ -f "${REPO_DIR}/.venv/bin/activate" ]]; then
+  # shellcheck disable=SC1091
+  source "${REPO_DIR}/.venv/bin/activate"
+elif [[ -f "${REPO_DIR}/venv/bin/activate" ]]; then
+  # shellcheck disable=SC1091
+  source "${REPO_DIR}/venv/bin/activate"
+fi
 USER_CONFIG="${1:-$REPO_DIR/configs/user-group-organisation.json}"
 
 cd "$REPO_DIR"

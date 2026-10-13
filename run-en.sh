@@ -87,18 +87,61 @@ have() { command -v "$1" >/dev/null 2>&1; }
 need() { err "Missing: $1. Install/start it first."; exit 1; }
 
 activate_venv() {
-  if [[ -f "$VENV_DIR/bin/activate" ]]; then
-    # shellcheck disable=SC1091
-    source "$VENV_DIR/bin/activate"
-  fi
+  local candidates=(
+    "${VENV_DIR:-}"
+    "$ROOT_DIR/.venv"
+    "$ROOT_DIR/venv"
+    "${VIRTUAL_ENV:-}"
+  )
+  for v in "${candidates[@]}"; do
+    if [[ -n "$v" && -f "$v/bin/activate" ]]; then
+      # shellcheck disable=SC1091
+      source "$v/bin/activate"
+      return 0
+    fi
+  done
 }
 pick_pip() {
-  if have pip; then echo "pip"; elif have pip3; then echo "pip3"; else err "Missing pip/pip3"; exit 1; fi
+  if [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/pip3" ]]; then
+    echo "${VIRTUAL_ENV}/bin/pip3"
+  elif [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/pip" ]]; then
+    echo "${VIRTUAL_ENV}/bin/pip"
+  elif [[ -x "$VENV_DIR/bin/pip3" ]]; then
+    echo "$VENV_DIR/bin/pip3"
+  elif [[ -x "$VENV_DIR/bin/pip" ]]; then
+    echo "$VENV_DIR/bin/pip"
+  elif have pip3; then
+    echo "pip3"
+  elif have pip; then
+    echo "pip"
+  else
+    err "Missing pip/pip3"; exit 1
+  fi
 }
 pick_python() {
-  if have python; then echo "python"
-  elif have python3; then echo "python3"
-  else err "Missing python/python3"; exit 1
+  if [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python3" ]]; then
+    echo "${VIRTUAL_ENV}/bin/python3"
+  elif [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python" ]]; then
+    echo "${VIRTUAL_ENV}/bin/python"
+  elif [[ -x "$VENV_DIR/bin/python3" ]]; then
+    echo "$VENV_DIR/bin/python3"
+  elif [[ -x "$VENV_DIR/bin/python" ]]; then
+    echo "$VENV_DIR/bin/python"
+  elif have python3; then
+    echo "python3"
+  elif have python; then
+    echo "python"
+  else
+    err "Missing python/python3"; exit 1
+  fi
+}
+docker_cmd() {
+  if docker info >/dev/null 2>&1; then
+    docker "$@"
+  elif have sudo; then
+    sudo docker "$@"
+  else
+    docker "$@"
   fi
 }
 wait_port() {
@@ -158,8 +201,8 @@ infra() {
   ( cd "$ROOT_DIR" && bash scripts/admin/postgres.sh )
 
   log "Milvus standalone (ports 19530, 19121)"
-  docker rm -f milvus-standalone >/dev/null 2>&1 || true
-  docker run -d --name milvus-standalone -p 19530:19530 -p 19121:19121 milvusdb/milvus:v2.3.0
+  docker_cmd rm -f milvus-standalone >/dev/null 2>&1 || true
+  docker_cmd run -d --name milvus-standalone -p 19530:19530 -p 19121:19121 milvusdb/milvus:v2.3.0
 
   log "Waiting for ports..."
   wait_port 5471  "PostgreSQL"
@@ -174,10 +217,11 @@ init() {
   fi
   [[ -d "$API_DIR/src/sse_api" ]] || { err "Missing src/sse_api/"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
-  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" python3 -m sse_api.manage migrate )
-  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" python3 src/sse_tools/admin/prepare_semantic_db.py )
-  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" python3 src/sse_tools/admin/add_org_group_user.py -u configs/user-group-organisation.json )
-  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" python3 src/sse_tools/admin/add_query_template_to_org.py )
+  local py; py="$(pick_python)"
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" -m sse_api.manage migrate )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" src/sse_tools/admin/prepare_semantic_db.py )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" src/sse_tools/admin/add_org_group_user.py -u configs/user-group-organisation.json )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" src/sse_tools/admin/add_query_template_to_org.py )
 }
 
 cosine() {
@@ -221,8 +265,8 @@ start() {
 down() {
   step "Stop: stopping and removing the PG + Milvus containers"
   have docker || need docker
-  docker rm -f pg_sse_backend_engine >/dev/null 2>&1 || true
-  docker rm -f milvus-standalone    >/dev/null 2>&1 || true
+  docker_cmd rm -f pg_sse_backend_engine >/dev/null 2>&1 || true
+  docker_cmd rm -f milvus-standalone    >/dev/null 2>&1 || true
   log "Stopped."
 }
 
@@ -230,7 +274,7 @@ status() {
   step "Status"
   if have docker; then
     log "Containers:"
-    docker ps -a --filter name=pg_sse_backend_engine --filter name=milvus-standalone \
+    docker_cmd ps -a --filter name=pg_sse_backend_engine --filter name=milvus-standalone \
       --format '  table {{.Names}}\t{{.Status}}\t{{.Ports}}' 2>/dev/null || true
   else
     warn "Docker unavailable — skipped the container list."
@@ -252,6 +296,7 @@ help() {
 }
 
 # ---------- dispatch ----------
+[[ "$NO_VENV" == "1" ]] || activate_venv
 case "$CMD" in
   all)
     setup

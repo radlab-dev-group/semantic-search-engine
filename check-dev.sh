@@ -9,7 +9,16 @@
 #   ./check-dev.sh test       # pytest (server + client)
 #
 set -euo pipefail
-cd "$(dirname -- "${BASH_SOURCE[0]:-$0}")"
+REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd -P)"
+cd "$REPO_DIR"
+
+if [[ -f "${REPO_DIR}/.venv/bin/activate" ]]; then
+  # shellcheck disable=SC1091
+  source "${REPO_DIR}/.venv/bin/activate"
+elif [[ -f "${REPO_DIR}/venv/bin/activate" ]]; then
+  # shellcheck disable=SC1091
+  source "${REPO_DIR}/venv/bin/activate"
+fi
 
 MODE="${1:-all}"
 

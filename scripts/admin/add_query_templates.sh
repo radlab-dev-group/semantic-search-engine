@@ -8,6 +8,14 @@ set -euo pipefail
 
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")/../.." >/dev/null 2>&1 && pwd -P)"
 export PYTHONPATH="${REPO_DIR}/src:${REPO_DIR}/sse_lib/src:${PYTHONPATH:-}"
+
+if [[ -f "${REPO_DIR}/.venv/bin/activate" ]]; then
+  # shellcheck disable=SC1091
+  source "${REPO_DIR}/.venv/bin/activate"
+elif [[ -f "${REPO_DIR}/venv/bin/activate" ]]; then
+  # shellcheck disable=SC1091
+  source "${REPO_DIR}/venv/bin/activate"
+fi
 AUTH_CONFIG="${AUTH_CONFIG:-$REPO_DIR/configs/auth-config.json}"
 QUERY_TEMPL_CONFIG="${QUERY_TEMPL_CONFIG:-$REPO_DIR/configs/query-templates.json}"
 
