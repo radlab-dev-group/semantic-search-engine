@@ -14,6 +14,7 @@ pypdf
 deepl
 pybind11
 xlsxwriter
+bs4
 
 # ml
 transformers

@@ -158,6 +158,43 @@ wait_port() {
 }
 
 # ---------- commands ----------
+config() {
+  step "Configuration: .env + config files from templates"
+  local created=0 skipped=0 example target name rel
+
+  if [[ -f "$ROOT_DIR/.env" ]]; then
+    log "Skipped (exists): .env"
+    skipped=$((skipped + 1))
+  elif [[ -f "$ROOT_DIR/.env.example" ]]; then
+    cp "$ROOT_DIR/.env.example" "$ROOT_DIR/.env"
+    log "Created: .env"
+    created=$((created + 1))
+  fi
+
+  for example in "$CONFIG_DIR"/*.example.*; do
+    [[ -e "$example" ]] || continue
+    name="$(basename "$example")"
+    target="$CONFIG_DIR/${name/.example./.}"
+    rel="configs/${name/.example./.}"
+    if [[ -f "$target" ]]; then
+      log "Skipped (exists): $rel"
+      skipped=$((skipped + 1))
+    else
+      cp "$example" "$target"
+      log "Created: $rel"
+      created=$((created + 1))
+    fi
+  done
+
+  log "Created files: $created, skipped (already existed): $skipped"
+}
+
+ensure_config() {
+  if [[ ! -f "$CONFIG_DIR/django-config.json" ]]; then
+    config
+  fi
+}
+
 setup() {
   step "Step 2: virtual environment + dependencies"
   [[ -d "$API_DIR/src/sse_api" ]] || { err "Missing src/sse_api/ directory — are you inside the repo?"; exit 1; }
@@ -216,6 +253,7 @@ init() {
     return 0
   fi
   [[ -d "$API_DIR/src/sse_api" ]] || { err "Missing src/sse_api/"; exit 1; }
+  ensure_config
   [[ "$NO_VENV" == "1" ]] || activate_venv
   local py; py="$(pick_python)"
   ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" -m sse_api.manage migrate )
@@ -309,6 +347,7 @@ case "$CMD" in
     start
     ;;
   setup)  setup ;;
+  config) config ;;
   infra)  infra ;;
   init)   init ;;
   cosine) cosine ;;

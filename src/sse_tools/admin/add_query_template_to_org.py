@@ -36,12 +36,17 @@ def main(argv=None):
     kc_config = RdlAuthConfig(cfg_path=args.auth_config)
     qt_controller = QueryTemplatesLoaderController(config_path=args.query_config)
 
+    org_name = (
+        kc_config.default_organisation["name"]
+        if isinstance(kc_config.default_organisation, dict)
+        else str(kc_config.default_organisation or "RadLab")
+    )
     organisation = sys_controller.get_organisation(
-        organisation_name=kc_config.default_organisation["name"]
+        organisation_name=org_name
     )
     if organisation is None:
         raise Exception(
-            f"Organisation {kc_config.default_organisation['name']} "
+            f"Organisation {org_name} "
             f"not found in database!"
         )
 

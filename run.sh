@@ -278,6 +278,12 @@ infra() {
   wait_port "$milvus_host" "Milvus"
 }
 
+ensure_config() {
+  if [[ ! -f "$CONFIG_DIR/django-config.json" ]]; then
+    config
+  fi
+}
+
 init() {
   step "Krok 6: inicjalizacja bazy + konto + szablony"
   if [[ "$NO_INIT" == "1" ]]; then
@@ -285,6 +291,7 @@ init() {
     return 0
   fi
   [[ -d "$API_DIR/src/sse_api" ]] || { err "Brak src/sse_api/"; exit 1; }
+  ensure_config
   [[ "$NO_VENV" == "1" ]] || activate_venv
   local py; py="$(pick_python)"
   ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" -m sse_api.manage migrate )
