@@ -216,7 +216,7 @@ If you don’t have a remote Milvus cluster, you can run a Docker container:
 ```shell script
 docker run -d --name milvus-standalone \
   -p 19530:19530 -p 19121:19121 \
-  milvusdb/milvus:2.3.0
+  milvusdb/milvus:v2.3.0
 ```
 
 Make sure the Milvus connection details match the values in `configs/milvus_config.json`.

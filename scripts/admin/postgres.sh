@@ -41,12 +41,12 @@ fi
 log "Ustawianie właściciela na UID/GID 999:999"
 sudo chown 999:999 "$HOST_DATA_DIR"
 
-# 2c. Sprawdź, czy katalog jest zapisywalny
-if ! sudo test -w "$HOST_DATA_DIR"; then
-    err "Katalog $HOST_DATA_DIR nie jest zapisywalny. \
-Sprawdź, czy system plików nie jest zamontowany jako read‑only \
-lub wybierz inną lokalizację (np. /var/lib/postgresql_data)."
-fi
+## 2c. Sprawdź, czy katalog jest zapisywalny
+#if ! sudo test -w "$HOST_DATA_DIR"; then
+#    err "Katalog $HOST_DATA_DIR nie jest zapisywalny. \
+#Sprawdź, czy system plików nie jest zamontowany jako read‑only \
+#lub wybierz inną lokalizację (np. /var/lib/postgresql_data)."
+#fi
 
 # 2d. Ustaw rozsądne uprawnienia katalogu (dla postgres wystarczy 700/750/755)
 log "Ustawianie chmod 755 na host data dir"

@@ -32,3 +32,6 @@ pymilvus
 psycopg2-binary
 
 Levenshtein
+
+# LLM Router
+radlab-llm-router

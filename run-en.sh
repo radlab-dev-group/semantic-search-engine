@@ -46,6 +46,8 @@ CONFIG_DIR="$ROOT_DIR/configs"
 VENV_DIR="$ROOT_DIR/.venv"
 PY_PREFERRED="python3.11"
 
+export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/sse_lib/src:${PYTHONPATH:-}"
+
 # ---------- logging ----------
 if [[ -t 1 ]]; then
   C_INFO=$'\e[32m'; C_WARN=$'\e[33m'; C_ERR=$'\e[31m'; C_DIM=$'\e[2m'; C_RST=$'\e[0m'
@@ -157,7 +159,7 @@ infra() {
 
   log "Milvus standalone (ports 19530, 19121)"
   docker rm -f milvus-standalone >/dev/null 2>&1 || true
-  docker run -d --name milvus-standalone -p 19530:19530 -p 19121:19121 milvusdb/milvus:2.3.0
+  docker run -d --name milvus-standalone -p 19530:19530 -p 19121:19121 milvusdb/milvus:v2.3.0
 
   log "Waiting for ports..."
   wait_port 5471  "PostgreSQL"

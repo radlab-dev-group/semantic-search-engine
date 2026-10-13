@@ -10,11 +10,11 @@
 #   ./run.sh                 # == all (pełny pipeline: setup+infra+init+start)
 #   ./run.sh all             # setup + infra + init + start
 #   ./run.sh setup           # venv + pip install + zależności z git (krok 2)
-#   ./run.sh infra           # uruchom PostgreSQL + Milvus (etcd + MinIO) w Dockerze (kroki 3-4)
+#   ./run.sh infra           # uruchom PostgreSQL + Milvus w Dockerze (kroki 3-4)
 #   ./run.sh init            # migrate + semantic + add_user + add_query_templates (krok 6)
 #   ./run.sh cosine          # migracja istniejących kolekcji na COSINE (domyślnie --all)
 #   ./run.sh start|up        # odpal serwer API w foreground → http://localhost:8271/api/ (krok 7)
-#   ./run.sh down            # zatrzymaj i usuń kontenery PG + Milvus (etcd/MinIO)
+#   ./run.sh down            # zatrzymaj i usuń kontenery PG + Milvus
 #   ./run.sh status          # pokaż stan kontenerów i portów (5471/19530/19121/8271)
 #   ./run.sh config          # utwórz .env i brakujące pliki configs/ z szablonów
 #
@@ -52,13 +52,9 @@ API_DIR="$ROOT_DIR"
 CONFIG_DIR="$ROOT_DIR/configs"
 VENV_DIR="$ROOT_DIR/.venv"
 PY_PREFERRED="python3.11"
-# Obrazy i sieć Dockera stosu Milvus standalone (te same wersje jak w
-# docker-compose.yml — utrzymuj oba miejsca synchronicznie).
-SSE_NETWORK="sse-net"
-ETCD_IMAGE="quay.io/coreos/etcd:v3.5.5"
-MINIO_IMAGE="minio/minio:RELEASE.2023-03-20T20-16-18Z"
-MINIO_MC_IMAGE="minio/mc:RELEASE.2023-03-22T18-34-53Z"
-MILVUS_IMAGE="milvusdb/milvus:2.3.0"
+MILVUS_IMAGE="milvusdb/milvus:v2.3.0"
+
+export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/sse_lib/src:${PYTHONPATH:-}"
 
 # ---------- logi ----------
 if [[ -t 1 ]]; then
@@ -198,9 +194,10 @@ setup() {
 
   local pip; pip="$(pick_pip)"
   log "Instaluję zależności: requirements.txt"
-  "$pip" install --upgrade pip >/dev/null
-  "$pip" install -r "$API_DIR/requirements.txt"
-  "$pip" install --no-deps -e "$API_DIR"
+  "$pip" install --upgrade pip --break-system-packages >/dev/null
+  "$pip" install -r "$API_DIR/requirements.txt" --break-system-packages
+
+  "$pip" install --no-deps -e "$API_DIR" --break-system-packages
 
   log "Instaluję zależności z git (radlab-data, llm-router)"
   ( cd "$API_DIR/src/sse_api" && ./initialize.sh dep )
@@ -217,68 +214,21 @@ infra() {
   log "PostgreSQL: bash scripts/admin/postgres.sh"
   ( cd "$ROOT_DIR" && bash scripts/admin/postgres.sh )
 
-  # Milvus standalone nie jest samowystarczalny: potrzebuje etcd (metadane) i
-  # MinIO (storage obiektowy). Sam obraz Milvus nigdy nie osiągnie healthy i
-  # nie ma trwałych danych, więc tworzę cały tercet — w jednej sieci i na
-  # nazwanych wolumenach (lustrzane odbicie serwisów milvus/etcd/minio z compose).
-  local minio_user="${MINIO_ACCESS_KEY:-}"
-  local minio_pass="${MINIO_SECRET_KEY:-}"
-  if [[ -z "$minio_user" || -z "$minio_pass" ]]; then
-    minio_user="minioadmin"; minio_pass="minioadmin"
-    warn "MINIO_ACCESS_KEY/MINIO_SECRET_KEY nie ustawione — używam wbudowanych danych minioadmin."
-    warn "Lokalnie OK; w produkcji ustaw własne sekrety w .env (docker-compose.yml ich wymaga)."
-  elif [[ "$minio_user" == "CHANGE_ME" || "$minio_pass" == "CHANGE_ME" ]]; then
-    warn "MINIO_ACCESS_KEY/MINIO_SECRET_KEY nadal zawierają placeholder CHANGE_ME — w produkcji je wymień."
-  fi
   local milvus_host="${MILVUS_HOST_PORT:-19530}"
   local milvus_metrics_host="${MILVUS_METRICS_HOST_PORT:-19121}"
-  # Domyślnie loopback (jak w docker-compose.yml); MILVUS_BIND_HOST=0.0.0.0 tylko w zaufanej sieci.
-  local milvus_bind="${MILVUS_BIND_HOST:-127.0.0.1}"
+  local milvus_bind="${MILVUS_BIND_HOST:-}"
+  local port_args=()
+  if [[ -n "$milvus_bind" ]]; then
+    port_args+=(-p "${milvus_bind}:${milvus_host}:19530" -p "${milvus_bind}:${milvus_metrics_host}:19121")
+  else
+    port_args+=(-p "${milvus_host}:19530" -p "${milvus_metrics_host}:19121")
+  fi
 
-  docker network create "$SSE_NETWORK" >/dev/null 2>&1 || true
-
-  log "etcd — metadane Milvus (wolumen sse_etcd_data)"
-  docker rm -f milvus-etcd >/dev/null 2>&1 || true
-  docker run -d --name milvus-etcd \
-    --network "$SSE_NETWORK" --network-alias etcd --restart unless-stopped \
-    -e ETCD_AUTO_COMPACTION_MODE=revision \
-    -e ETCD_AUTO_COMPACTION_RETENTION=1000 \
-    -e ETCD_QUOTA_BACKEND_BYTES=4294967296 \
-    -e ETCD_SNAPSHOT_COUNT=50000 \
-    -v sse_etcd_data:/etcd \
-    "$ETCD_IMAGE" \
-    etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
-
-  log "MinIO — storage obiektowy Milvus (wolumen sse_minio_data, bez portów na hoście)"
-  docker rm -f milvus-minio >/dev/null 2>&1 || true
-  docker run -d --name milvus-minio \
-    --network "$SSE_NETWORK" --network-alias minio --restart unless-stopped \
-    -e MINIO_ACCESS_KEY="$minio_user" \
-    -e MINIO_SECRET_KEY="$minio_pass" \
-    -v sse_minio_data:/minio_data \
-    "$MINIO_IMAGE" minio server /minio_data
-
-  log "Bucket MinIO milvus-bucket (czekam na serwis, maks. ~2 min)"
-  docker rm -f milvus-minio-init >/dev/null 2>&1 || true
-  docker run --rm --name milvus-minio-init \
-    --network "$SSE_NETWORK" \
-    -e MINIO_ACCESS_KEY="$minio_user" \
-    -e MINIO_SECRET_KEY="$minio_pass" \
-    --entrypoint /bin/sh "$MINIO_MC_IMAGE" -c \
-    'i=0; until mc alias set local http://minio:9000 "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"; do i=$((i+1)); [ "$i" -ge 60 ] && break; sleep 2; done; mc mb -p local/milvus-bucket || true'
-
-  log "Milvus standalone (${milvus_bind}:${milvus_host} SDK, ${milvus_bind}:${milvus_metrics_host} metryki)"
+  log "Milvus standalone (porty ${milvus_host}, ${milvus_metrics_host})"
   docker rm -f milvus-standalone >/dev/null 2>&1 || true
   docker run -d --name milvus-standalone \
-    --network "$SSE_NETWORK" --restart unless-stopped \
-    --security-opt seccomp=unconfined \
-    -e ETCD_ENDPOINTS=etcd:2379 \
-    -e MINIO_ADDRESS=minio:9000 \
-    -e COMMON_SECURITY_AUTHORIZATIONENABLED="${MILVUS_AUTH_ENABLED:-false}" \
-    -v sse_milvus_data:/var/lib/milvus \
-    -p "${milvus_bind}:${milvus_host}:19530" \
-    -p "${milvus_bind}:${milvus_metrics_host}:19121" \
-    "$MILVUS_IMAGE" milvus run standalone
+    "${port_args[@]}" \
+    "$MILVUS_IMAGE"
 
   log "Odczekuję na porty..."
   wait_port 5471  "PostgreSQL"
@@ -294,7 +244,7 @@ init() {
   [[ -d "$API_DIR/src/sse_api" ]] || { err "Brak src/sse_api/"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
   ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" python3 -m sse_api.manage migrate )
-  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" python3 -m sse_api.manage shell -c "pass" >/dev/null 2>&1 || true; python3 src/sse_tools/admin/prepare_semantic_db.py )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" python3 src/sse_tools/admin/prepare_semantic_db.py )
   ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" python3 src/sse_tools/admin/add_org_group_user.py -u configs/user-group-organisation.json )
   ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" python3 src/sse_tools/admin/add_query_template_to_org.py )
 }
@@ -339,14 +289,14 @@ start() {
 }
 
 down() {
-  step "Stop: zatrzymuję i usuwam kontenery PG + Milvus (etcd/MinIO)"
+  step "Stop: zatrzymuję i usuwam kontenery PG + Milvus"
   have docker || need docker
   docker rm -f pg_sse_backend_engine >/dev/null 2>&1 || true
   docker rm -f milvus-standalone    >/dev/null 2>&1 || true
   docker rm -f milvus-minio-init    >/dev/null 2>&1 || true
   docker rm -f milvus-minio         >/dev/null 2>&1 || true
   docker rm -f milvus-etcd          >/dev/null 2>&1 || true
-  docker network rm "$SSE_NETWORK"  >/dev/null 2>&1 || true
+  docker network rm sse-net         >/dev/null 2>&1 || true
   log "Zatrzymano."
 }
 
@@ -355,7 +305,6 @@ status() {
   if have docker; then
     log "Kontenery:"
     docker ps -a --filter name=pg_sse_backend_engine --filter name=milvus-standalone \
-      --filter name=milvus-etcd --filter name=milvus-minio \
       --format '  table {{.Names}}\t{{.Status}}\t{{.Ports}}' 2>/dev/null || true
   else
     warn "Docker niedostępny — pominąłem listę kontenerów."

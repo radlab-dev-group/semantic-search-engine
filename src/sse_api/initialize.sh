@@ -1,14 +1,19 @@
 #!/bin/bash
+set -euo pipefail
 
-INSTALLATION_MODE_NAME=${1}
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd -P)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
+export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/sse_lib/src:${PYTHONPATH:-}"
+
+INSTALLATION_MODE_NAME=${1:-all}
 
 
 if [[ "$INSTALLATION_MODE_NAME" == "dep" || "$INSTALLATION_MODE_NAME" == "all" ]]; then
   echo "📦 Installing dependencies"
   echo "   🔧 installing radlab-data"
-  pip install git+https://github.com/radlab-dev-group/radlab-data.git
-  echo "   🔧 installing llm-router"
-  pip install git+https://github.com/radlab-dev-group/llm-router.git
+  pip install git+https://github.com/radlab-dev-group/radlab-data.git --break-system-packages
+#  echo "   🔧 installing llm-router"
+#  pip install git+https://github.com/radlab-dev-group/llm-router.git
 fi
 
 if [[ "$INSTALLATION_MODE_NAME" == "migrate"  || "$INSTALLATION_MODE_NAME" == "all" ]]; then
