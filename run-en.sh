@@ -47,6 +47,7 @@ VENV_DIR="$ROOT_DIR/.venv"
 PY_PREFERRED="python3.11"
 
 export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/sse_lib/src:${PYTHONPATH:-}"
+export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-sse_api.config.settings}"
 
 # ---------- logging ----------
 if [[ -t 1 ]]; then
@@ -239,11 +240,41 @@ infra() {
 
   log "Milvus standalone (ports 19530, 19121)"
   docker_cmd rm -f milvus-standalone >/dev/null 2>&1 || true
-  docker_cmd run -d --name milvus-standalone -p 19530:19530 -p 19121:19121 milvusdb/milvus:v2.3.0
+  docker_cmd run -d --name milvus-standalone \
+    --security-opt seccomp:unconfined \
+    -e ETCD_USE_EMBED=true \
+    -e ETCD_DATA_DIR=/var/lib/milvus/etcd \
+    -e COMMON_STORAGETYPE=local \
+    -v milvus_data:/var/lib/milvus \
+    -p 19530:19530 -p 19121:19121 \
+    milvusdb/milvus:v2.3.0 \
+    milvus run standalone
 
   log "Waiting for ports..."
   wait_port 5471  "PostgreSQL"
   wait_port 19530 "Milvus"
+}
+
+ensure_infra() {
+  if [[ "$NO_INFRA" == "1" ]]; then
+    return 0
+  fi
+  local p_pg=5471
+  local p_milvus=19530
+  local pg_ready=0 milvus_ready=0
+
+  if (exec 3<>"/dev/tcp/127.0.0.1/${p_pg}") 2>/dev/null; then
+    exec 3>&- 2>/dev/null || true
+    pg_ready=1
+  fi
+  if (exec 3<>"/dev/tcp/127.0.0.1/${p_milvus}") 2>/dev/null; then
+    exec 3>&- 2>/dev/null || true
+    milvus_ready=1
+  fi
+
+  if [[ "$pg_ready" == "0" || "$milvus_ready" == "0" ]]; then
+    infra
+  fi
 }
 
 init() {
@@ -254,6 +285,9 @@ init() {
   fi
   [[ -d "$API_DIR/src/sse_api" ]] || { err "Missing src/sse_api/"; exit 1; }
   ensure_config
+  ensure_infra
+  wait_port 5471 "PostgreSQL" 30
+  wait_port 19530 "Milvus" 30
   [[ "$NO_VENV" == "1" ]] || activate_venv
   local py; py="$(pick_python)"
   ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" -m sse_api.manage migrate )

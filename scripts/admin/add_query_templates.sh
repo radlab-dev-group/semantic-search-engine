@@ -8,6 +8,7 @@ set -euo pipefail
 
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")/../.." >/dev/null 2>&1 && pwd -P)"
 export PYTHONPATH="${REPO_DIR}/src:${REPO_DIR}/sse_lib/src:${PYTHONPATH:-}"
+export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-sse_api.config.settings}"
 
 if [[ -f "${REPO_DIR}/.venv/bin/activate" ]]; then
   # shellcheck disable=SC1091

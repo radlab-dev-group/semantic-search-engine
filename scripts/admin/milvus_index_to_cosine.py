@@ -107,9 +107,15 @@ def load_connection_config(config_path: str) -> dict:
 
 
 def build_client(cfg: dict) -> MilvusClient:
-    uri = str(cfg.get("uri", "http")).rstrip("/").rstrip(":")
+    raw_uri = str(cfg.get("uri", "http")).strip()
+    scheme = (
+        raw_uri.split("://")[0].rstrip("/").rstrip(":")
+        if "://" in raw_uri
+        else raw_uri.rstrip("/").rstrip(":")
+    )
+    scheme = scheme or "http"
     host = str(cfg["host"]).strip("/")
-    uri_connection = f"{uri}://{host}:{cfg['port']}"
+    uri_connection = f"{scheme}://{host}:{cfg['port']}"
     return MilvusClient(
         uri=uri_connection,
         user=cfg["user"],

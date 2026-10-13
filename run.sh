@@ -55,6 +55,7 @@ PY_PREFERRED="python3.11"
 MILVUS_IMAGE="milvusdb/milvus:v2.3.0"
 
 export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/sse_lib/src:${PYTHONPATH:-}"
+export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-sse_api.config.settings}"
 
 # ---------- logi ----------
 if [[ -t 1 ]]; then
@@ -270,8 +271,14 @@ infra() {
   log "Milvus standalone (porty ${milvus_host}, ${milvus_metrics_host})"
   docker_cmd rm -f milvus-standalone >/dev/null 2>&1 || true
   docker_cmd run -d --name milvus-standalone \
+    --security-opt seccomp:unconfined \
+    -e ETCD_USE_EMBED=true \
+    -e ETCD_DATA_DIR=/var/lib/milvus/etcd \
+    -e COMMON_STORAGETYPE=local \
+    -v milvus_data:/var/lib/milvus \
     "${port_args[@]}" \
-    "$MILVUS_IMAGE"
+    "$MILVUS_IMAGE" \
+    milvus run standalone
 
   log "Odczekuję na porty..."
   wait_port 5471  "PostgreSQL"
@@ -284,6 +291,28 @@ ensure_config() {
   fi
 }
 
+ensure_infra() {
+  if [[ "$NO_INFRA" == "1" ]]; then
+    return 0
+  fi
+  local p_pg=5471
+  local p_milvus="${MILVUS_HOST_PORT:-19530}"
+  local pg_ready=0 milvus_ready=0
+
+  if (exec 3<>"/dev/tcp/127.0.0.1/${p_pg}") 2>/dev/null; then
+    exec 3>&- 2>/dev/null || true
+    pg_ready=1
+  fi
+  if (exec 3<>"/dev/tcp/127.0.0.1/${p_milvus}") 2>/dev/null; then
+    exec 3>&- 2>/dev/null || true
+    milvus_ready=1
+  fi
+
+  if [[ "$pg_ready" == "0" || "$milvus_ready" == "0" ]]; then
+    infra
+  fi
+}
+
 init() {
   step "Krok 6: inicjalizacja bazy + konto + szablony"
   if [[ "$NO_INIT" == "1" ]]; then
@@ -292,6 +321,9 @@ init() {
   fi
   [[ -d "$API_DIR/src/sse_api" ]] || { err "Brak src/sse_api/"; exit 1; }
   ensure_config
+  ensure_infra
+  wait_port 5471 "PostgreSQL" 30
+  wait_port "${MILVUS_HOST_PORT:-19530}" "Milvus" 30
   [[ "$NO_VENV" == "1" ]] || activate_venv
   local py; py="$(pick_python)"
   ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" -m sse_api.manage migrate )

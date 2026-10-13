@@ -67,7 +67,15 @@ Container `pg_sse_backend_engine`, `localhost:5471 → 5432`, user `admin`, db `
 ## 4. Start Milvus
 
 ```bash
-docker run -d --name milvus-standalone -p 19530:19530 -p 19121:19121 milvusdb/milvus:v2.3.0
+docker run -d --name milvus-standalone \
+  --security-opt seccomp:unconfined \
+  -e ETCD_USE_EMBED=true \
+  -e ETCD_DATA_DIR=/var/lib/milvus/etcd \
+  -e COMMON_STORAGETYPE=local \
+  -v milvus_data:/var/lib/milvus \
+  -p 19530:19530 -p 19121:19121 \
+  milvusdb/milvus:v2.3.0 \
+  milvus run standalone
 ```
 
 Target: `localhost:19530`, db `sse_backend_engine`, `sse_user`/`sse_password` (`configs/milvus_config.json`).

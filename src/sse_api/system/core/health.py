@@ -71,10 +71,16 @@ def check_milvus() -> bool:
         )
 
         config = milvus_connection_config()
-        uri = str(config["uri"]).rstrip("/").rstrip(":")
+        raw_uri = str(config.get("uri", "http")).strip()
+        scheme = (
+            raw_uri.split("://")[0].rstrip("/").rstrip(":")
+            if "://" in raw_uri
+            else raw_uri.rstrip("/").rstrip(":")
+        )
+        scheme = scheme or "http"
         host = str(config["host"]).strip("/")
         client = MilvusClient(
-            uri=f"{uri}://{host}:{config['port']}",
+            uri=f"{scheme}://{host}:{config['port']}",
             user=config["user"],
             password=config["password"],
             db_name=config["db_name"],

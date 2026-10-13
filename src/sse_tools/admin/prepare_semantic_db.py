@@ -1,4 +1,9 @@
+import os
 import argparse
+import django
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "sse_api.config.settings")
+django.setup()
 
 from sse_api.engine.controllers.database.milvus import MilvusHandler
 

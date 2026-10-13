@@ -585,8 +585,14 @@ class MilvusHandler:
         if self._milvus_client is None:
             port = self._connection_config["port"]
             host = self._connection_config["host"].strip("/")
-            uri = self._connection_config["uri"].rstrip("/").rstrip(":")
-            uri_connection = f"{uri}://{host}:{port}"
+            raw_uri = str(self._connection_config.get("uri", "http")).strip()
+            scheme = (
+                raw_uri.split("://")[0].rstrip("/").rstrip(":")
+                if "://" in raw_uri
+                else raw_uri.rstrip("/").rstrip(":")
+            )
+            scheme = scheme or "http"
+            uri_connection = f"{scheme}://{host}:{port}"
             self._milvus_client = MilvusClient(
                 uri=uri_connection,
                 user=self._connection_config["user"],
