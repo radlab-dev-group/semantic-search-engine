@@ -1,4 +1,5 @@
 import os
+import copy
 import json
 import torch
 
@@ -133,9 +134,9 @@ class MilvusHandler:
         self._collection_name = self.__prepare_collection_name(
             collection_name=collection_name
         )
+        self.__prepare_collection_index_params(params=collection_index_params)
 
         if create_db_if_not_exists:
-            self.__prepare_collection_index_params(params=collection_index_params)
             self._connect_to_milvus_db(check_db=True)
 
         if load_collection_and_schema:
@@ -441,9 +442,15 @@ class MilvusHandler:
 
     # ----------------------------------------------------------------------------
     def __prepare_collection_index_params(self, params: dict | None):
-        self._collection_index_params = (
-            params if params is not None else self.DEFAULT_INDEX_PARAMS
-        )
+        if params is None:
+            self._collection_index_params = copy.deepcopy(
+                self.DEFAULT_INDEX_PARAMS
+            )
+        else:
+            self._collection_index_params = copy.deepcopy(params)
+            self._collection_index_params.setdefault(
+                "field_name", self.DB_FIELD_EMBEDDING
+            )
 
     @staticmethod
     def __prepare_collection_name(collection_name: str | None) -> str | None:
@@ -546,14 +553,12 @@ class MilvusHandler:
             )
 
     def __add_index_to_collection(self):
-        index_params = self._milvus_client.prepare_index_params(
-            field_name=self.DB_FIELD_EMBEDDING
-        )
+        if self._collection_index_params is None:
+            self.__prepare_collection_index_params(None)
+
+        index_params = self._milvus_client.prepare_index_params()
         index_params.add_index(
-            index_type="IVF_FLAT",
-            metric_type="COSINE",
-            params={"nlist": 1024},
-            index_name="emb_idx",
+            **self._collection_index_params
         )
 
         self._milvus_client.create_index(
