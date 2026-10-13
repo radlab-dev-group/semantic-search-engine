@@ -1,0 +1,27 @@
+{
+  "authorization": {
+    "realm": "radlab",
+    "client_id": "sse_api",
+    "client_secret": "sse_secret",
+    "grant_type": "authorization_code",
+    "redirect_uri": "http://localhost:8000/api/authorization/login",
+    "auth_host": "https://login.radlab.dev/auth/realms/radlab",
+    "public_sign_key": "",
+    "audience": "sse_api",
+    "scope": "openid profile email",
+    "algorithms": ["RS256"],
+    "connect_timeout": 3.05,
+    "read_timeout": 10.0,
+    "accepted_user_roles": [],
+    "user_role_main_scope": "roles",
+    "user_role_scope_variable": "",
+    "default_organisation": {
+      "name": "RadLab",
+      "description": "RadLab organisation"
+    },
+    "default_group": {
+      "name": "all",
+      "description": "All users group"
+    }
+  }
+}

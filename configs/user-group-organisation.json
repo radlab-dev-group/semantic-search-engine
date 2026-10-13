@@ -1,0 +1,9 @@
+{
+  "organisation_name": "RadLab",
+  "organisation_description": "RadLab organisation",
+  "user_group_name": "all",
+  "user_group_description": "All users group",
+  "user_name": "default_user",
+  "user_email": "default_user@example.com",
+  "user_pass": "SuperSecretPassword123"
+}
