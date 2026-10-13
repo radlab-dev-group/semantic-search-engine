@@ -258,9 +258,12 @@ class RelationalDBController:
             document.save()
 
         document_pages_chunks = []
-        for doc_page in document_dict["pages"]:
+        for page_number, doc_page in enumerate(document_dict["pages"], start=1):
             d_page, d_page_text = self.get_add_document_page(
-                document, doc_page, use_text_denoiser=use_text_denoiser
+                document,
+                doc_page,
+                use_text_denoiser=use_text_denoiser,
+                page_number=page_number,
             )
             document_pages_chunks.append(d_page_text)
         return document, document_pages_chunks
@@ -283,18 +286,26 @@ class RelationalDBController:
         return document_category
 
     def get_add_document_page(
-        self, document: Document, doc_page: dict, use_text_denoiser: bool = False
+        self,
+        document: Document,
+        doc_page: dict,
+        use_text_denoiser: bool = False,
+        page_number: int = 1,
     ) -> (DocumentPage, DocumentPageText):
         """
         Adds a document when document doesn't exist, otherwise it will be returned
         :param document: Document to add
         :param doc_page: Document page (as dict)
         :param use_text_denoiser: Use text denoiser if is True
+        :param page_number: Fallback page number when reader metadata omits it
         :return: DocumentPage
         """
         metadata = doc_page["metadata"]
+        reader_page_number = metadata.get("page")
+        if reader_page_number is None:
+            reader_page_number = page_number
         page, _ = DocumentPage.objects.get_or_create(
-            document=document, page_number=int(metadata["page"])
+            document=document, page_number=int(reader_page_number)
         )
         doc_page_text_chunk = self.add_document_chunk(
             page, doc_page, use_text_denoiser=use_text_denoiser
