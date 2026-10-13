@@ -100,9 +100,16 @@ def _make_postgres_doc(name: str, score: float, page: int = 1) -> dict:
 class _FakeMilvusClient:
     """Records search calls and returns pre-canned hits."""
 
-    def __init__(self, distances):
+    def __init__(self, distances, metric_type="COSINE"):
         self._distances = distances
+        self._metric_type = metric_type
         self.last_kwargs = None
+
+    def list_indexes(self, collection_name, field_name=""):
+        return ["emb_idx"]
+
+    def describe_index(self, collection_name, index_name):
+        return {"metric_type": self._metric_type}
 
     def search(self, **kwargs):
         self.last_kwargs = kwargs
@@ -119,7 +126,7 @@ class _FakeMilvusClient:
         return [hits]
 
 
-def _make_handler(distances):
+def _make_handler(distances, metric_type="COSINE"):
     handler = MilvusHandler(
         jsonl_config_path=os.path.join(
             _APP_DIR, "configs", "milvus_config.example.json"
@@ -129,7 +136,7 @@ def _make_handler(distances):
         load_embedder=False,
         load_collection_and_schema=False,
     )
-    handler._milvus_client = _FakeMilvusClient(distances)
+    handler._milvus_client = _FakeMilvusClient(distances, metric_type)
     handler.prepare_embeddings = lambda texts: [[0.0] * 4]
     return handler, handler._milvus_client
 
@@ -208,6 +215,12 @@ def test_search_uses_cosine_query_params():
     handler, fake_client = _make_handler([0.9])
     handler.search(search_text="pytanie", max_results=5, min_similarity=0.5)
     assert fake_client.last_kwargs["search_params"]["metric_type"] == "COSINE"
+
+
+def test_search_uses_existing_index_metric_type():
+    handler, fake_client = _make_handler([0.9], metric_type="IP")
+    handler.search(search_text="pytanie", max_results=5)
+    assert fake_client.last_kwargs["search_params"]["metric_type"] == "IP"
 
 
 def test_search_cutoff_excludes_everything():

@@ -129,6 +129,7 @@ class MilvusHandler:
         self._collection = None
         self._collection_schema = None
         self._collection_index_params = None
+        self._search_params = None
 
         self._connection_config = self.__load_json_config(jsonl_config_path)
         self._collection_name = self.__prepare_collection_name(
@@ -274,7 +275,7 @@ class MilvusHandler:
             collection_name=self.collection_name,
             data=search_text_emb,
             filter=filter_expr,
-            search_params=INDEX_QUERY_PARAMS[self.index_name]["QUERY_PARAMS"],
+            search_params=self.__prepare_search_params(),
             limit=max_results * self.SEMANTIC_SEARCH_FACTOR_MAX_RESULTS,
             output_fields=return_fields,
         )
@@ -311,6 +312,26 @@ class MilvusHandler:
         for r in all_queries_results:
             all_queries_results_head.append(r[:max_results])
         return all_queries_results_head
+
+    def __prepare_search_params(self) -> dict:
+        if self._search_params is None:
+            self._search_params = copy.deepcopy(
+                INDEX_QUERY_PARAMS[self.index_name]["QUERY_PARAMS"]
+            )
+            index_names = self._milvus_client.list_indexes(
+                collection_name=self.collection_name,
+                field_name=self.DB_FIELD_EMBEDDING,
+            )
+            if index_names:
+                index_description = self._milvus_client.describe_index(
+                    collection_name=self.collection_name,
+                    index_name=index_names[0],
+                )
+                metric_type = index_description.get("metric_type")
+                if metric_type:
+                    self._search_params["metric_type"] = metric_type
+
+        return self._search_params
 
     # ----------------------------------------------------------------------------
     def __load_json_config(self, json_config_path: str):

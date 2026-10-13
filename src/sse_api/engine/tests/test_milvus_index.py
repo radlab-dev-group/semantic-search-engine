@@ -115,3 +115,32 @@ def test_add_index_to_collection_invokes_milvus_correctly():
         collection_name="test_collection",
         index_params=mock_index_params,
     )
+
+
+def test_search_uses_metric_type_of_existing_index():
+    handler = object.__new__(MilvusHandler)
+    handler._collection_name = "test_collection"
+    handler.index_name = DEFAULT_INDEX_TYPE
+    handler._search_params = None
+    handler._milvus_client = MagicMock()
+    handler._milvus_client.list_indexes.return_value = ["emb_idx"]
+    handler._milvus_client.describe_index.return_value = {
+        "metric_type": "IP"
+    }
+    handler._milvus_client.search.return_value = [[]]
+    handler._MilvusHandler__prepare_milvus_client = MagicMock()
+    handler._MilvusHandler__prepare_filtering_options = MagicMock(
+        return_value=""
+    )
+    handler.prepare_embeddings = MagicMock(return_value=[[0.1, 0.2]])
+
+    handler.search(search_text="test query")
+
+    handler._milvus_client.describe_index.assert_called_once_with(
+        collection_name="test_collection",
+        index_name="emb_idx",
+    )
+    search_params = handler._milvus_client.search.call_args.kwargs[
+        "search_params"
+    ]
+    assert search_params["metric_type"] == "IP"

@@ -9,6 +9,8 @@ from typing import Dict, List
 from radlab_data.text.utils import TextUtils
 
 from llm_router_lib.client import LLMRouterClient
+from llm_router_lib.data_models.builtin_chat import ConversationWithModelRequest
+from llm_router_lib.data_models.builtin_utils import GenerativeAnswerModel
 
 from sse_api.system.models import OrganisationUser
 from sse_api.chat.models import MessageState
@@ -248,19 +250,16 @@ class GenerativeModelControllerApi:
             api=self.models_config.active_local_models_hosts[qa_gen_model],
             timeout=120,
         )
-        generated_answer = _r_client.generative_answer(payload=request_data)
+        generated_answer = _r_client.generative_answer(
+            payload=GenerativeAnswerModel(**request_data)
+        )
 
-        generation_time = generated_answer["generation_time"]
-        if "response" not in generated_answer:
+        generation_time = generated_answer.generation_time
+        if generated_answer.response is None:
             logging.error(generated_answer)
-            return generated_answer, generation_time
+            return generated_answer.model_dump(), generation_time
 
-        generated_answer = generated_answer["response"]
-        if isinstance(generated_answer, dict):
-            logging.error(generated_answer)
-            return generated_answer, generation_time
-
-        return generated_answer, generation_time
+        return generated_answer.response, generation_time
 
     def conversation_with_local_model(
         self,
@@ -301,15 +300,15 @@ class GenerativeModelControllerApi:
             timeout=120,
         )
         chat_assistant_response = _r_client.conversation_with_model(
-            payload=request_data
+            payload=ConversationWithModelRequest(**request_data)
         )
 
-        if "response" not in chat_assistant_response:
+        if chat_assistant_response.response is None:
             logging.error(chat_assistant_response)
-            return chat_assistant_response, None
+            return chat_assistant_response.model_dump(), None
 
-        generation_time = chat_assistant_response["generation_time"]
-        assistant_message = chat_assistant_response["response"].strip()
+        generation_time = chat_assistant_response.generation_time
+        assistant_message = chat_assistant_response.response.strip()
         return assistant_message, generation_time
 
 
