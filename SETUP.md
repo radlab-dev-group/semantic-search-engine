@@ -83,7 +83,7 @@ Target: `localhost:19530`, db `sse_backend_engine`, `sse_user`/`sse_password` (`
 
 ## 5. (Optional) LLM router — RAG/chat only
 
-- Set `LLM_ROUTER_API` (in `run-api.sh`: `http://192.168.100.65:8080` — change it to yours).
+- Set `LLM_ROUTER_API` and, when authentication is enabled, `LLM_ROUTER_TOKEN` in `.env`.
 - Model as defined in `configs/generative-models.json` (`google/gemma-4-12b-it` → `localhost:8080`).
 - `OPENAI_API_KEY`/`DEEPL_AUTH_KEY` (placeholders in `run-api.sh`) — only when using those backends.
 

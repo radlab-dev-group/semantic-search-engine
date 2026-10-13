@@ -119,6 +119,8 @@ class GenerativeModelConfig:
         for model_name in active_models:
             host_url = all_api_hosts.get(model_name)
             if host_url:
+                if "://" not in host_url:
+                    host_url = f"http://{host_url}"
                 if host_url.endswith("/"):
                     host_url = host_url[:-1]
                 self._active_local_models_hosts[model_name] = host_url
@@ -187,6 +189,16 @@ class GenerativeModelControllerApi:
             config_path=os.path.join(CONFIG_DIR, "generative-models.json")
         )
 
+    def _create_router_client(self, model_name: str) -> LLMRouterClient:
+        api = os.getenv("LLM_ROUTER_API", "").strip()
+        if not api:
+            api = self.models_config.active_local_models_hosts[model_name]
+        if "://" not in api:
+            api = f"http://{api}"
+
+        token = os.getenv("LLM_ROUTER_TOKEN", "").strip() or None
+        return LLMRouterClient(api=api.rstrip("/"), token=token, timeout=120)
+
     def generative_answer_local_api_model(
         self,
         question_str: str,
@@ -246,10 +258,7 @@ class GenerativeModelControllerApi:
         if system_prompt is not None and len(system_prompt.strip()):
             request_data["system_prompt"] = system_prompt
 
-        _r_client = LLMRouterClient(
-            api=self.models_config.active_local_models_hosts[qa_gen_model],
-            timeout=120,
-        )
+        _r_client = self._create_router_client(qa_gen_model)
         generated_answer = _r_client.generative_answer(
             payload=GenerativeAnswerModel(**request_data)
         )
@@ -295,10 +304,7 @@ class GenerativeModelControllerApi:
         request_data["historical_messages"] = history
         request_data["model_name"] = model_name_path
 
-        _r_client = LLMRouterClient(
-            api=self.models_config.active_local_models_hosts[model_name_path],
-            timeout=120,
-        )
+        _r_client = self._create_router_client(model_name_path)
         chat_assistant_response = _r_client.conversation_with_model(
             payload=ConversationWithModelRequest(**request_data)
         )
