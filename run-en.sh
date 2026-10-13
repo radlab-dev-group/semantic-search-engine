@@ -14,7 +14,7 @@
 #   ./run-en.sh infra           # start PostgreSQL + Milvus in Docker (steps 3-4)
 #   ./run-en.sh init            # migrate + semantic + add_user + add_query_templates (step 6)
 #   ./run-en.sh cosine          # migrate existing collections to COSINE (defaults to --all)
-#   ./run-en.sh start|up        # run the API server in the foreground → http://localhost:8271/api/ (step 7)
+#   ./run-en.sh start|up        # run the API server in the foreground → http://0.0.0.0:8271/api/ (step 7)
 #   ./run-en.sh down            # stop and remove the PG + Milvus containers
 #   ./run-en.sh status          # show the state of containers and ports (5471/19530/19121/8271)
 #
@@ -246,7 +246,7 @@ infra() {
     -e ETCD_DATA_DIR=/var/lib/milvus/etcd \
     -e COMMON_STORAGETYPE=local \
     -v milvus_data:/var/lib/milvus \
-    -p 19530:19530 -p 19121:19121 \
+    -p 0.0.0.0:19530:19530 -p 0.0.0.0:19121:19121 \
     milvusdb/milvus:v2.3.0 \
     milvus run standalone
 
@@ -327,7 +327,7 @@ cosine() {
 }
 
 start() {
-  step "Step 7: starting the API server (foreground) → http://localhost:8271/api/"
+  step "Step 7: starting the API server (foreground) → http://0.0.0.0:8271/api/"
   [[ -d "$API_DIR/src/sse_api" ]] || { err "Missing src/sse_api/"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
   log "Test login: default_admin / password  (POST /api/login)"

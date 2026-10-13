@@ -13,7 +13,7 @@
 #   ./run.sh infra           # uruchom PostgreSQL + Milvus w Dockerze (kroki 3-4)
 #   ./run.sh init            # migrate + semantic + add_user + add_query_templates (krok 6)
 #   ./run.sh cosine          # migracja istniejących kolekcji na COSINE (domyślnie --all)
-#   ./run.sh start|up        # odpal serwer API w foreground → http://localhost:8271/api/ (krok 7)
+#   ./run.sh start|up        # odpal serwer API w foreground → http://0.0.0.0:8271/api/ (krok 7)
 #   ./run.sh down            # zatrzymaj i usuń kontenery PG + Milvus
 #   ./run.sh status          # pokaż stan kontenerów i portów (5471/19530/19121/8271)
 #   ./run.sh config          # utwórz .env i brakujące pliki configs/ z szablonów
@@ -260,12 +260,12 @@ infra() {
 
   local milvus_host="${MILVUS_HOST_PORT:-19530}"
   local milvus_metrics_host="${MILVUS_METRICS_HOST_PORT:-19121}"
-  local milvus_bind="${MILVUS_BIND_HOST:-}"
+  local milvus_bind="${MILVUS_BIND_HOST:-0.0.0.0}"
   local port_args=()
   if [[ -n "$milvus_bind" ]]; then
     port_args+=(-p "${milvus_bind}:${milvus_host}:19530" -p "${milvus_bind}:${milvus_metrics_host}:19121")
   else
-    port_args+=(-p "${milvus_host}:19530" -p "${milvus_metrics_host}:19121")
+    port_args+=(-p "0.0.0.0:${milvus_host}:19530" -p "0.0.0.0:${milvus_metrics_host}:19121")
   fi
 
   log "Milvus standalone (porty ${milvus_host}, ${milvus_metrics_host})"
@@ -363,7 +363,7 @@ cosine() {
 }
 
 start() {
-  step "Krok 7: start serwera API (foreground) → http://localhost:8271/api/"
+  step "Krok 7: start serwera API (foreground) → http://0.0.0.0:8271/api/"
   [[ -d "$API_DIR/src/sse_api" ]] || { err "Brak src/sse_api/"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
   log "Login testowy: default_admin / password  (POST /api/login)"
