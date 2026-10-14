@@ -19,6 +19,8 @@ from sse_api.engine.api import (
     ListEmbeddersModels,
     ListRerankersModels,
     SetRateForQueryResponseAnswer,
+    ListOfSearchHistory,
+    GetSearchHistoryById,
 )
 
 urlpatterns = [
@@ -26,6 +28,16 @@ urlpatterns = [
         prepare_api_url("search_with_options"),
         SearchWithOptions.as_view(),
         name="search_with_options",
+    ),
+    path(
+        prepare_api_url("search_history"),
+        ListOfSearchHistory.as_view(),
+        name="search_history",
+    ),
+    path(
+        prepare_api_url("get_search_history"),
+        GetSearchHistoryById.as_view(),
+        name="get_search_history",
     ),
     path(
         prepare_api_url("generative_answer"),

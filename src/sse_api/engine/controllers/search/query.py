@@ -1,8 +1,14 @@
+from typing import List, Optional
+
 from sse_api.system.models import OrganisationUser
 
 from sse_api.data.models import CollectionOfDocuments
 
-from sse_api.engine.models import UserQuery, UserQueryResponse
+from sse_api.engine.models import (
+    UserQuery,
+    UserQueryResponse,
+    UserQueryResponseAnswer,
+)
 from sse_api.engine.controllers.search.semantic import DBSemanticSearchController
 
 
@@ -123,3 +129,116 @@ class SearchQueryController:
             )
         except UserQueryResponse.DoesNotExist:
             return None
+
+    @staticmethod
+    def get_user_search_history(
+        organisation_user: OrganisationUser,
+        collection: Optional[CollectionOfDocuments] = None,
+        collection_name: Optional[str] = None,
+    ) -> List[UserQueryResponse]:
+        """
+        Retrieve all ``UserQueryResponse`` instances belonging to the given user,
+        optionally filtered by collection.
+
+        Parameters
+        ----------
+        organisation_user : OrganisationUser
+            The user whose query history is fetched.
+        collection : CollectionOfDocuments | None, optional
+            Collection instance to filter by.
+        collection_name : str | None, optional
+            Collection name to filter by.
+
+        Returns
+        -------
+        List[UserQueryResponse]
+            List of responses ordered from newest to oldest.
+        """
+        qs = UserQueryResponse.objects.filter(
+            user_query__organisation_user=organisation_user
+        ).select_related("user_query", "user_query__collection")
+        if collection is not None:
+            qs = qs.filter(user_query__collection=collection)
+        elif collection_name is not None and collection_name != "":
+            qs = qs.filter(user_query__collection__name=collection_name)
+        return list(qs.order_by("-id"))
+
+    @staticmethod
+    def format_search_history_entry(user_response: UserQueryResponse) -> dict:
+        """
+        Format a ``UserQueryResponse`` into a comprehensive dictionary containing
+        the full query metadata, complete search results, and all generated answers.
+
+        Parameters
+        ----------
+        user_response : UserQueryResponse
+            The response object to format.
+
+        Returns
+        -------
+        dict
+            Structured dictionary with search history details.
+        """
+        user_query = user_response.user_query
+        answers_qs = UserQueryResponseAnswer.objects.filter(
+            user_response=user_response
+        ).order_by("id")
+        answers = []
+        for ans in answers_qs:
+            answers.append(
+                {
+                    "id": ans.pk,
+                    "response_id": ans.pk,
+                    "is_generative": ans.is_generative,
+                    "answer_options": ans.answer_options or {},
+                    "query_instruction_prompt": ans.query_instruction_prompt,
+                    "generated_answer": ans.generated_answer,
+                    "generated_answer_translated": ans.generated_answer_translated,
+                    "rate_value": ans.rate_value,
+                    "rate_value_max": ans.rate_nax_value,
+                    "rate_comment": ans.rate_comment,
+                    "generation_time": (
+                        ans.generation_time.total_seconds()
+                        if ans.generation_time is not None
+                        else None
+                    ),
+                    "extractive_qa_result_json": ans.extractive_qa_result_json,
+                    "generative_qa_result_json": ans.generative_qa_result_json,
+                }
+            )
+        latest_answer = answers[-1] if answers else None
+
+        return {
+            "query_id": user_query.pk,
+            "query_response_id": user_response.pk,
+            "query": user_query.query_str_prompt,
+            "query_str": user_query.query_str_prompt,
+            "collection_id": (
+                user_query.collection.pk if user_query.collection else None
+            ),
+            "collection_name": (
+                user_query.collection.name if user_query.collection else None
+            ),
+            "query_options": user_query.query_options or {},
+            "results": {
+                "query": user_query.query_str_prompt,
+                "stats": user_response.general_stats_json or {},
+                "detailed_results": user_response.detailed_results_json or {},
+                "structured_results": user_response.structured_results or [],
+            },
+            "stats": user_response.general_stats_json or {},
+            "detailed_results": user_response.detailed_results_json or {},
+            "structured_results": user_response.structured_results or [],
+            "answers": answers,
+            "generated_answer": (
+                latest_answer.get("generated_answer") if latest_answer else None
+            ),
+            "generated_answer_translated": (
+                latest_answer.get("generated_answer_translated")
+                if latest_answer
+                else None
+            ),
+            "answer": (
+                latest_answer.get("generated_answer") if latest_answer else None
+            ),
+        }

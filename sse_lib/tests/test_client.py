@@ -24,6 +24,8 @@ from sse_lib import (
     SSEClient,
     SSEConfigError,
     SSEValueError,
+    SearchHistory,
+    SearchHistoryAnswer,
     SearchOptions,
     text_document,
 )
@@ -482,6 +484,119 @@ class GenerationTest(unittest.TestCase):
             client.list_generative_models(),
             {"radlab/model": {"host": "http://llm:8080"}},
         )
+
+
+class SearchHistoryTest(unittest.TestCase):
+    SAMPLE_HISTORY_ENTRY = {
+        "query_id": 10,
+        "query_response_id": 42,
+        "query": "data retention",
+        "collection_id": 1,
+        "collection_name": "my_docs",
+        "query_options": {"max_results": 20},
+        "results": {
+            "query": "data retention",
+            "stats": {"a.pdf": {"score_weighted": 0.8}},
+            "detailed_results": {
+                "0": {
+                    "score": 0.91,
+                    "document_name": "a.pdf",
+                    "relative_filepath": "/docs/a.pdf",
+                    "page_number": 3,
+                    "text_number": 1,
+                    "language": "en",
+                    "text_str": "Retention policy ...",
+                    "left_context": "",
+                    "right_context": "",
+                }
+            },
+            "structured_results": [],
+        },
+        "stats": {"a.pdf": {"score_weighted": 0.8}},
+        "detailed_results": {
+            "0": {
+                "score": 0.91,
+                "document_name": "a.pdf",
+                "relative_filepath": "/docs/a.pdf",
+                "page_number": 3,
+                "text_number": 1,
+                "language": "en",
+                "text_str": "Retention policy ...",
+                "left_context": "",
+                "right_context": "",
+            }
+        },
+        "structured_results": [],
+        "answers": [
+            {
+                "id": 101,
+                "response_id": 101,
+                "is_generative": True,
+                "answer_options": {"generative_model": "radlab/model"},
+                "query_instruction_prompt": "Summarize",
+                "generated_answer": "Data is retained for 30 days.",
+                "generated_answer_translated": "Dane są przechowywane przez 30 dni.",
+                "rate_value": 5,
+                "rate_value_max": 5,
+                "rate_comment": "accurate",
+                "generation_time": 1.25,
+            }
+        ],
+        "generated_answer": "Data is retained for 30 days.",
+        "generated_answer_translated": "Dane są przechowywane przez 30 dni.",
+        "answer": "Data is retained for 30 days.",
+    }
+
+    def test_list_search_history_all_and_filtered(self):
+        client = build_client(
+            [
+                ok({"history": [self.SAMPLE_HISTORY_ENTRY]}),
+                ok({"history": [self.SAMPLE_HISTORY_ENTRY]}),
+            ]
+        )
+        # All history
+        history = client.list_search_history()
+        self.assertEqual(len(history), 1)
+        entry = history[0]
+        self.assertEqual(entry.query_id, 10)
+        self.assertEqual(entry.query_response_id, 42)
+        self.assertEqual(entry.query, "data retention")
+        self.assertEqual(entry.collection_name, "my_docs")
+        self.assertEqual(entry.answer, "Data is retained for 30 days.")
+        self.assertEqual(entry.generated_answer, "Data is retained for 30 days.")
+        self.assertEqual(
+            entry.generated_answer_translated,
+            "Dane są przechowywane przez 30 dni.",
+        )
+        self.assertEqual(len(entry.hits), 1)
+        self.assertEqual(entry.hits[0].document_name, "a.pdf")
+        self.assertEqual(entry.hits[0].text, "Retention policy ...")
+        self.assertEqual(len(entry.answers), 1)
+        self.assertEqual(entry.answers[0].generated_answer, "Data is retained for 30 days.")
+        self.assertEqual(entry.answers[0].rate_value, 5)
+
+        # Filtered by collection
+        client.list_search_history(collection="my_docs")
+        self.assertEqual(
+            client.fake_session.calls[1].params.get("collection_name"), "my_docs"
+        )
+
+    def test_get_search_history_by_id(self):
+        client = build_client([ok(self.SAMPLE_HISTORY_ENTRY)])
+        entry = client.get_search_history(42)
+        call = client.fake_session.calls[0]
+        self.assertEqual(call.url, "http://sse.test:8271/api/get_search_history")
+        self.assertEqual(call.params, {"query_response_id": 42, "lang": "pl"})
+        self.assertEqual(entry.query_response_id, 42)
+        self.assertEqual(entry.query, "data retention")
+        self.assertEqual(entry.answer, "Data is retained for 30 days.")
+        self.assertEqual(len(entry.hits), 1)
+        self.assertEqual(len(entry.answers), 1)
+
+    def test_get_search_history_requires_id(self):
+        client = build_client([])
+        with self.assertRaises(SSEValueError):
+            client.get_search_history(None)
 
 
 class ChatTest(unittest.TestCase):
