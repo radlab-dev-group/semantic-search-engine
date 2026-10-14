@@ -14,7 +14,7 @@
 #   ./run-en.sh infra           # start PostgreSQL + Milvus in Docker (steps 3-4)
 #   ./run-en.sh init            # migrate + semantic + add_user + add_query_templates (step 6)
 #   ./run-en.sh cosine          # migrate existing collections to COSINE (defaults to --all)
-#   ./run-en.sh start|up        # run the API server in the foreground → http://localhost:8271/api/ (step 7)
+#   ./run-en.sh start|up        # run the API server in the foreground → http://0.0.0.0:8271/api/ (step 7)
 #   ./run-en.sh down            # stop and remove the PG + Milvus containers
 #   ./run-en.sh status          # show the state of containers and ports (5471/19530/19121/8271)
 #
@@ -41,9 +41,13 @@ set -euo pipefail
 # ---------- locations ----------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd -P)"
 ROOT_DIR="$SCRIPT_DIR"
-API_DIR="$ROOT_DIR/sse_rest_api"
+API_DIR="$ROOT_DIR"
+CONFIG_DIR="$ROOT_DIR/configs"
 VENV_DIR="$ROOT_DIR/.venv"
 PY_PREFERRED="python3.11"
+
+export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/sse_lib/src:${PYTHONPATH:-}"
+export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-sse_api.config.settings}"
 
 # ---------- logging ----------
 if [[ -t 1 ]]; then
@@ -84,18 +88,61 @@ have() { command -v "$1" >/dev/null 2>&1; }
 need() { err "Missing: $1. Install/start it first."; exit 1; }
 
 activate_venv() {
-  if [[ -f "$VENV_DIR/bin/activate" ]]; then
-    # shellcheck disable=SC1091
-    source "$VENV_DIR/bin/activate"
-  fi
+  local candidates=(
+    "${VENV_DIR:-}"
+    "$ROOT_DIR/.venv"
+    "$ROOT_DIR/venv"
+    "${VIRTUAL_ENV:-}"
+  )
+  for v in "${candidates[@]}"; do
+    if [[ -n "$v" && -f "$v/bin/activate" ]]; then
+      # shellcheck disable=SC1091
+      source "$v/bin/activate"
+      return 0
+    fi
+  done
 }
 pick_pip() {
-  if have pip; then echo "pip"; elif have pip3; then echo "pip3"; else err "Missing pip/pip3"; exit 1; fi
+  if [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/pip3" ]]; then
+    echo "${VIRTUAL_ENV}/bin/pip3"
+  elif [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/pip" ]]; then
+    echo "${VIRTUAL_ENV}/bin/pip"
+  elif [[ -x "$VENV_DIR/bin/pip3" ]]; then
+    echo "$VENV_DIR/bin/pip3"
+  elif [[ -x "$VENV_DIR/bin/pip" ]]; then
+    echo "$VENV_DIR/bin/pip"
+  elif have pip3; then
+    echo "pip3"
+  elif have pip; then
+    echo "pip"
+  else
+    err "Missing pip/pip3"; exit 1
+  fi
 }
 pick_python() {
-  if have python; then echo "python"
-  elif have python3; then echo "python3"
-  else err "Missing python/python3"; exit 1
+  if [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python3" ]]; then
+    echo "${VIRTUAL_ENV}/bin/python3"
+  elif [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python" ]]; then
+    echo "${VIRTUAL_ENV}/bin/python"
+  elif [[ -x "$VENV_DIR/bin/python3" ]]; then
+    echo "$VENV_DIR/bin/python3"
+  elif [[ -x "$VENV_DIR/bin/python" ]]; then
+    echo "$VENV_DIR/bin/python"
+  elif have python3; then
+    echo "python3"
+  elif have python; then
+    echo "python"
+  else
+    err "Missing python/python3"; exit 1
+  fi
+}
+docker_cmd() {
+  if docker info >/dev/null 2>&1; then
+    docker "$@"
+  elif have sudo; then
+    sudo docker "$@"
+  else
+    docker "$@"
   fi
 }
 wait_port() {
@@ -112,9 +159,46 @@ wait_port() {
 }
 
 # ---------- commands ----------
+config() {
+  step "Configuration: .env + config files from templates"
+  local created=0 skipped=0 example target name rel
+
+  if [[ -f "$ROOT_DIR/.env" ]]; then
+    log "Skipped (exists): .env"
+    skipped=$((skipped + 1))
+  elif [[ -f "$ROOT_DIR/.env.example" ]]; then
+    cp "$ROOT_DIR/.env.example" "$ROOT_DIR/.env"
+    log "Created: .env"
+    created=$((created + 1))
+  fi
+
+  for example in "$CONFIG_DIR"/*.example.*; do
+    [[ -e "$example" ]] || continue
+    name="$(basename "$example")"
+    target="$CONFIG_DIR/${name/.example./.}"
+    rel="configs/${name/.example./.}"
+    if [[ -f "$target" ]]; then
+      log "Skipped (exists): $rel"
+      skipped=$((skipped + 1))
+    else
+      cp "$example" "$target"
+      log "Created: $rel"
+      created=$((created + 1))
+    fi
+  done
+
+  log "Created files: $created, skipped (already existed): $skipped"
+}
+
+ensure_config() {
+  if [[ ! -f "$CONFIG_DIR/django-config.json" ]]; then
+    config
+  fi
+}
+
 setup() {
   step "Step 2: virtual environment + dependencies"
-  [[ -d "$API_DIR" ]] || { err "Missing sse_rest_api/ directory — are you inside the repo?"; exit 1; }
+  [[ -d "$API_DIR/src/sse_api" ]] || { err "Missing src/sse_api/ directory — are you inside the repo?"; exit 1; }
 
   local py="$PY_PREFERRED"
   have "$py" || { py="python3"; warn "$PY_PREFERRED not found, using python3"; }
@@ -134,12 +218,13 @@ setup() {
   fi
 
   local pip; pip="$(pick_pip)"
-  log "Installing dependencies: sse_rest_api/requirements.txt"
+  log "Installing dependencies: requirements.txt"
   "$pip" install --upgrade pip >/dev/null
   "$pip" install -r "$API_DIR/requirements.txt"
+  "$pip" install --no-deps -e "$API_DIR"
 
   log "Installing dependencies from git (radlab-data, llm-router)"
-  ( cd "$API_DIR" && ./initialize.sh dep )
+  ( cd "$API_DIR/src/sse_api" && ./initialize.sh dep )
 }
 
 infra() {
@@ -154,12 +239,42 @@ infra() {
   ( cd "$ROOT_DIR" && bash scripts/admin/postgres.sh )
 
   log "Milvus standalone (ports 19530, 19121)"
-  docker rm -f milvus-standalone >/dev/null 2>&1 || true
-  docker run -d --name milvus-standalone -p 19530:19530 -p 19121:19121 milvusdb/milvus:2.3.0
+  docker_cmd rm -f milvus-standalone >/dev/null 2>&1 || true
+  docker_cmd run -d --name milvus-standalone \
+    --security-opt seccomp:unconfined \
+    -e ETCD_USE_EMBED=true \
+    -e ETCD_DATA_DIR=/var/lib/milvus/etcd \
+    -e COMMON_STORAGETYPE=local \
+    -v milvus_data:/var/lib/milvus \
+    -p 0.0.0.0:19530:19530 -p 0.0.0.0:19121:19121 \
+    milvusdb/milvus:v2.3.0 \
+    milvus run standalone
 
   log "Waiting for ports..."
   wait_port 5471  "PostgreSQL"
   wait_port 19530 "Milvus"
+}
+
+ensure_infra() {
+  if [[ "$NO_INFRA" == "1" ]]; then
+    return 0
+  fi
+  local p_pg=5471
+  local p_milvus=19530
+  local pg_ready=0 milvus_ready=0
+
+  if (exec 3<>"/dev/tcp/127.0.0.1/${p_pg}") 2>/dev/null; then
+    exec 3>&- 2>/dev/null || true
+    pg_ready=1
+  fi
+  if (exec 3<>"/dev/tcp/127.0.0.1/${p_milvus}") 2>/dev/null; then
+    exec 3>&- 2>/dev/null || true
+    milvus_ready=1
+  fi
+
+  if [[ "$pg_ready" == "0" || "$milvus_ready" == "0" ]]; then
+    infra
+  fi
 }
 
 init() {
@@ -168,18 +283,23 @@ init() {
     warn "Skipping initialization (--no-init)."
     return 0
   fi
-  [[ -d "$API_DIR" ]] || { err "Missing sse_rest_api/"; exit 1; }
+  [[ -d "$API_DIR/src/sse_api" ]] || { err "Missing src/sse_api/"; exit 1; }
+  ensure_config
+  ensure_infra
+  wait_port 5471 "PostgreSQL" 30
+  wait_port 19530 "Milvus" 30
   [[ "$NO_VENV" == "1" ]] || activate_venv
-  ( cd "$API_DIR" && ./initialize.sh migrate )
-  ( cd "$API_DIR" && ./initialize.sh semantic )
-  ( cd "$API_DIR" && ./initialize.sh add_user )
-  ( cd "$API_DIR" && ./initialize.sh add_query_templates )
+  local py; py="$(pick_python)"
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" -m sse_api.manage migrate )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" src/sse_tools/admin/prepare_semantic_db.py )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" src/sse_tools/admin/add_org_group_user.py -u configs/user-group-organisation.json )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" src/sse_tools/admin/add_query_template_to_org.py )
 }
 
 cosine() {
   step "COSINE: migrating indexes of existing collections (no re-embedding)"
   local script="$SCRIPT_DIR/scripts/admin/milvus_index_to_cosine.py"
-  local cfg="$API_DIR/configs/milvus_config.json"
+  local cfg="$CONFIG_DIR/milvus_config.json"
   [[ -f "$script" ]] || { err "Missing migration script: $script"; exit 1; }
   [[ -f "$cfg" ]]    || { err "Missing Milvus config: $cfg"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
@@ -203,22 +323,22 @@ cosine() {
   fi
 
   local py; py="$(pick_python)"
-  ( cd "$API_DIR" && "$py" "$script" "${args[@]}" )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" "$script" "${args[@]}" )
 }
 
 start() {
-  step "Step 7: starting the API server (foreground) → http://localhost:8271/api/"
-  [[ -d "$API_DIR" ]] || { err "Missing sse_rest_api/"; exit 1; }
+  step "Step 7: starting the API server (foreground) → http://0.0.0.0:8271/api/"
+  [[ -d "$API_DIR/src/sse_api" ]] || { err "Missing src/sse_api/"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
   log "Test login: default_admin / password  (POST /api/login)"
-  ( cd "$API_DIR" && ./run-api.sh )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" ./src/sse_api/run-api.sh )
 }
 
 down() {
   step "Stop: stopping and removing the PG + Milvus containers"
   have docker || need docker
-  docker rm -f pg_sse_backend_engine >/dev/null 2>&1 || true
-  docker rm -f milvus-standalone    >/dev/null 2>&1 || true
+  docker_cmd rm -f pg_sse_backend_engine >/dev/null 2>&1 || true
+  docker_cmd rm -f milvus-standalone    >/dev/null 2>&1 || true
   log "Stopped."
 }
 
@@ -226,7 +346,7 @@ status() {
   step "Status"
   if have docker; then
     log "Containers:"
-    docker ps -a --filter name=pg_sse_backend_engine --filter name=milvus-standalone \
+    docker_cmd ps -a --filter name=pg_sse_backend_engine --filter name=milvus-standalone \
       --format '  table {{.Names}}\t{{.Status}}\t{{.Ports}}' 2>/dev/null || true
   else
     warn "Docker unavailable — skipped the container list."
@@ -248,6 +368,7 @@ help() {
 }
 
 # ---------- dispatch ----------
+[[ "$NO_VENV" == "1" ]] || activate_venv
 case "$CMD" in
   all)
     setup
@@ -260,6 +381,7 @@ case "$CMD" in
     start
     ;;
   setup)  setup ;;
+  config) config ;;
   infra)  infra ;;
   init)   init ;;
   cosine) cosine ;;

@@ -5,7 +5,7 @@ client.py
 :class:`SSEClient` - a thin, dependency-light wrapper over the SSE REST API.
 
 ``SSEClient`` knows nothing about Milvus, Django or the models: it turns Python
-arguments into the HTTP calls of ``sse_rest_api`` and the JSON answers into
+arguments into the HTTP calls of ``sse_api`` and the JSON answers into
 small dataclasses.  The controllers of the backend stay untouched; this is just
 the client side of the same contract (including its quirks, e.g. ``options``
 sent as a JSON string by ``search_with_options``).
@@ -48,6 +48,8 @@ from sse_lib.options import (
     SearchOptions,
     build_options,
     text_document,
+    validate_generative,
+    validate_indexing,
 )
 from sse_lib.transport import DEFAULT_TIMEOUT, Transport
 
@@ -57,7 +59,7 @@ ENV_API_PREFIX = "SSE_API_PREFIX"
 ENV_API_LANGUAGE = "SSE_API_LANGUAGE"
 ENV_API_TIMEOUT = "SSE_API_TIMEOUT"
 
-#: ``main.src.constants.AVAILABLE_LANGUAGES``.
+#: ``sse_api.core.constants.AVAILABLE_LANGUAGES``.
 AVAILABLE_LANGUAGES = ("pl", "en")
 DEFAULT_LANGUAGE = "pl"
 
@@ -85,11 +87,24 @@ class SSEClient:
                                  SearchOptions(max_results=20, rerank_results=True))
         answer = client.generate_answer(
             response.query_response_id,
-            GenerativeOptions(generative_model="radlab/pLLama-3-8B-DPO-L"),
+            GenerativeOptions(
+                generative_model="radlab/pLLama-3-8B-DPO-L",
+                percentage_rank_mass=40,
+            ),
         )
 
     With ``username``/``password`` the client logs in on the first call and
     keeps the returned token; pass ``token`` to reuse one across processes.
+
+    ``percentage_rank_mass`` is part of the example on purpose: the server
+    requires it in ``query_options``, and a ``GenerativeOptions`` that leaves
+    it out is serialised without the key and rejected.
+
+    When a preconfigured ``transport`` is passed, ``api_prefix``, ``timeout``,
+    ``verify``, ``session``, ``headers`` and ``max_retries`` are ignored — the
+    transport already carries them, and the client does not reach inside an
+    object it was handed.  ``token`` is the exception: it is applied to the
+    given transport.
     """
 
     def __init__(
@@ -177,6 +192,30 @@ class SSEClient:
 
     def __repr__(self) -> str:
         return f"SSEClient(base_url={self.base_url!r}, language={self.language!r})"
+
+    # --- service ---------------------------------------------------------
+    def health(self) -> Dict[str, Any]:
+        """Dependency status of the server (``GET healthz``).
+
+        Public endpoint, so this never triggers a login and works before any
+        credentials are set.  Raises when the server cannot be reached, or
+        answers 503 because a dependency is down (the status code is what
+        probes act on); use :meth:`is_healthy` for a boolean instead of an
+        exception.
+        """
+        body = self.transport.request("GET", endpoints.HEALTHZ)
+        return body if isinstance(body, dict) else {"healthy": False}
+
+    def is_healthy(self) -> bool:
+        """Whether the server answers and every dependency is up.
+
+        Returns ``False`` instead of raising, which is what a readiness check
+        or a test ``setUpClass`` usually wants.
+        """
+        try:
+            return bool(self.health().get("healthy"))
+        except Exception:  # pylint: disable=broad-except
+            return False
 
     def request(self, method: str, endpoint: str, **kwargs: Any) -> Any:
         """Escape hatch: call any endpoint and get the unwrapped ``body`` back.
@@ -386,6 +425,9 @@ class SSEClient:
             indexing_options,
             indexing_kwargs,
         )
+        # Checked before any file handle is opened: the server refuses these
+        # two as null, so there is nothing to upload until they are set.
+        validate_indexing(options, endpoint=endpoints.UPLOAD_AND_INDEX_FILES)
         prepared, opened = _prepare_files(files)
         try:
             body = self.request(
@@ -430,6 +472,7 @@ class SSEClient:
             indexing_options,
             indexing_kwargs,
         )
+        validate_indexing(resolved, endpoint=endpoints.ADD_AND_INDEX_TEXTS)
         payload = {
             "collection_name": _name(collection),
             TEXTS_FIELD: [
@@ -505,6 +548,10 @@ class SSEClient:
         generation = self._build_options(
             GenerativeOptions, None, options, generation_kwargs
         )
+        # Only here, not for chat: `generative_answer` validates query_options
+        # with generation_options (model and percentage_rank_mass mandatory),
+        # while add_user_message accepts any object.
+        validate_generative(generation, endpoint=endpoints.GENERATIVE_ANSWER)
         payload: Dict[str, Any] = {
             "query_response_id": query_response_id,
             "query_options": generation.to_json(),
@@ -741,7 +788,7 @@ def _prepare_files(
     opened: List[Any] = []
     prepared: List[Tuple[str, Tuple[str, Any, str]]] = []
     try:
-        for item in ([files] if isinstance(files, tuple) else _as_sequence(files)):
+        for item in [files] if isinstance(files, tuple) else _as_sequence(files):
             prepared.append((UPLOAD_FILE_FIELD, _unpack_file(item, opened)))
         if not prepared:
             raise SSEValueError("upload_files() needs at least one file")

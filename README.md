@@ -112,58 +112,37 @@ Django‑powered service for end‑to‑end pipelines.
 
 ```
 semantic-search-engine/
-├── apps_sse/                     # Core apps for SSE (semantic search engine)
-│   ├── admin/                    # Management scripts (add org, users, etc.)
-│   ├── dataset/                  # Generators for synthetic QA datasets
-│   ├── evaluator/                # Test harnesses and evaluation utilities
-│   ├── installed/                # Bundled third‑party utilities (denoiser, converters)
-│   ├── add_files_from_dir.py      # CLI for uploading & indexing a directory
-│   ├── index_collection_to_milvus.py
-│   ├── index_to_milvus.sh
-│   ├── index_to_postgresql.sh
-│   └── semantic_search_app.py     # Interactive REPL for ad‑hoc queries
-├── chat/                         # Conversational (RAG) service
-│   ├── models.py
-│   ├── controllers.py
-│   ├── api.py
-│   └── urls.py
-├── data/                         # Document, collection, and query‑template models
-│   ├── models.py
-│   ├── controllers.py
-│   ├── api.py
-│   └── urls.py
-├── engine/                       # Search & generative model orchestration
-│   ├── models.py
-│   ├── controllers/
-│   │   ├── search.py
-│   │   └── models.py
-│   ├── api.py
-│   └── urls.py
-├── system/                       # Organisation & authentication
-│   ├── models.py
-│   ├── controllers.py
-│   ├── api.py
-│   └── urls.py
-├── main/                         # Django project entry point
-│   ├── settings.py
-│   ├── urls.py
-│   ├── wsgi.py
-│   └── asgi.py
-├── semantic_search_engine/        # Shared utilities (AWS handler, constants)
-│   ├── __init__.py
-│   ├── aws_handler.py
-│   ├── constants.py
-│   └── models.json                # Model metadata registry
-├── sse_lib/                      # Standalone, pip-installable client of the REST API
+├── src/
+│   ├── sse_api/                  # Django project (the REST API server)
+│   │   ├── config/               # settings, urls, wsgi, asgi, celery
+│   │   ├── core/                 # shared utilities (errors, validation, AWS, constants)
+│   │   ├── chat/                 # Conversational (RAG) service
+│   │   ├── data/                 # Document, collection, query‑template models
+│   │   ├── engine/               # Search & generative model orchestration
+│   │   ├── system/               # Organisation & user model
+│   │   ├── authorization/        # Keycloak / OAuth integration
+│   │   └── content_supervisor/   # Web content sanitisation
+│   └── sse_tools/                # Standalone CLI tools
+│       ├── admin/                # Users, organisations, collections
+│       ├── evaluation/           # Dataset generators & search evaluators
+│       ├── indexing/             # Bulk indexing helpers
+│       └── installed/            # File & dataset converters
+├── configs/                      # Runtime configuration (*.example.* templates tracked)
+├── sse_lib/                      # Standalone, pip‑installable REST API client
 │   ├── pyproject.toml
 │   ├── README.md
 │   └── src/sse_lib/              # client, transport, options, models, endpoints
-├── doccano_converter.py          # Doccano → dataset conversion
-├── any_text_to_json.py           # Directory → JSON/JSONL conversion
-├── manage.py                     # Django management script
-├── requirements.txt
-├── README.md                     # <-- you are reading this file!
-└── scripts/                      # Optional helper scripts for CI / deployment
+├── scripts/                      # Thin entry points (bash) into sse_tools (admin/ + not_tested/)
+├── nginx/                        # Reverse‑proxy configuration
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt              # Server runtime dependencies
+├── requirements-dev.txt          # Tests, linters, type checkers
+├── pyproject.toml                # Build + tool configuration (black, mypy, bandit, pylint)
+├── setup.cfg                     # flake8 options
+├── run.sh / run-en.sh            # One‑command local startup (PL / EN)
+├── check-dev.sh                  # Local quality gate
+└── README.md                     # <-- you are reading this file!
 ```
 
 ---  
@@ -227,7 +206,7 @@ semantic_search TO sse_user;
 ### 5. Run Django migrations
 
 ```shell script
-python manage.py migrate
+python -m sse_api.manage migrate
 ```
 
 ### 6. (Optional) Install Milvus locally
@@ -236,8 +215,14 @@ If you don’t have a remote Milvus cluster, you can run a Docker container:
 
 ```shell script
 docker run -d --name milvus-standalone \
+  --security-opt seccomp:unconfined \
+  -e ETCD_USE_EMBED=true \
+  -e ETCD_DATA_DIR=/var/lib/milvus/etcd \
+  -e COMMON_STORAGETYPE=local \
+  -v milvus_data:/var/lib/milvus \
   -p 19530:19530 -p 19121:19121 \
-  milvusdb/milvus:2.3.0
+  milvusdb/milvus:v2.3.0 \
+  milvus run standalone
 ```
 
 Make sure the Milvus connection details match the values in `configs/milvus_config.json`.
@@ -259,7 +244,7 @@ Configuration files live under the `configs/` directory. The most important ones
 
 ### Django Settings
 
-`main/settings.py` loads configuration through the `SystemSettingsHandler` (see `main/src/settings.py`). The handler
+`sse_api/config/settings.py` loads configuration through the `SystemSettingsHandler` (see `sse_api/core/settings.py`). The handler
 reads values from:
 
 1. **JSON config files** (`django-config.json` by default).
@@ -656,16 +641,36 @@ with SSEClient("http://localhost:8271", token="...") as client:
         reranker="radlab/polish-cross-encoder",
         index_type="HNSW",
     )
-    client.upload_files("my_docs", ["invoice.pdf"])
-    client.index_documents("my_docs", ["Some text to index."], category="Notes")
+    client.upload_files(
+        "my_docs",
+        ["invoice.pdf"],
+        max_tokens_in_chunk=128,
+        number_of_overlap_tokens=0,
+    )
+    client.index_documents(
+        "my_docs",
+        ["Some text to index."],
+        category="Notes",
+        max_tokens_in_chunk=128,
+        number_of_overlap_tokens=0,
+    )
 
     found = client.search("my_docs", "data retention policy", SearchOptions(max_results=20))
     answer = client.generate_answer(
         found.query_response_id,
-        GenerativeOptions(generative_model="radlab/pLLama-3-8B-DPO-L"),
+        GenerativeOptions(
+            generative_model="radlab/pLLama-3-8B-DPO-L",
+            percentage_rank_mass=40,
+        ),
     )
     print(answer.answer)
 ```
+
+`max_tokens_in_chunk`, `number_of_overlap_tokens` and `percentage_rank_mass` are
+required by the backend and have no library-wide default on purpose: the chunk
+size follows the context window of the configured embedder. Omitting one raises
+`SSEValueError` naming the field before the request is sent — pass them per call
+as above, or once per client with `SSEClient(..., default_indexing_options=...)`.
 
 - **Coverage**: collections, file and raw-text indexing, hybrid search, RAG answers and their ratings, embedder/reranker/
   generative model listings, chats, and authentication (static token, username/password login, Keycloak code exchange).
@@ -687,13 +692,13 @@ Full documentation lives in [sse_lib/README.md](sse_lib/README.md).
 ### Django Management Commands
 
 All standard Django commands are available (`runserver`, `migrate`, `createsuperuser`).  
-Additional project‑specific commands are provided by the `apps_sse` scripts:
+Additional project‑specific commands are provided by the `sse_tools` scripts:
 
 | Command                                   | Description                                                                                    |
 |-------------------------------------------|------------------------------------------------------------------------------------------------|
-| `python manage.py runserver 0.0.0.0:8271` | Starts the development server (default port 8271 in `run-api.sh`).                             |
-| `python manage.py migrate`                | Applies database migrations (including the generated migration files under `chat/migrations`). |
-| `python manage.py createsuperuser`        | Creates a Django superuser for the admin UI (if `ENV_SHOW_ADMIN_WINDOW` is true).              |
+| `python -m sse_api.manage runserver 0.0.0.0:8271` | Starts the development server (default port 8271 in `run-api.sh`).                             |
+| `python -m sse_api.manage migrate`                | Applies database migrations (including the generated migration files under `chat/migrations`). |
+| `python -m sse_api.manage createsuperuser`        | Creates a Django superuser for the admin UI (if `ENV_SHOW_ADMIN_WINDOW` is true).              |
 
 ### Shell Scripts
 
@@ -712,7 +717,7 @@ error handling.
 
 ## Testing & Evaluation
 
-The **evaluator** package (`apps_sse/evaluator`) provides utilities for:
+The **evaluator** package (`src/sse_tools/evaluation/evaluator`) provides utilities for:
 
 - **Loading test configurations** (JSON files defining test cases).
 - **Running semantic search** with various parameters (max results, rerank, etc.).
@@ -723,7 +728,7 @@ The main entry point is `tests_loader.py`. It writes results to Excel (`.xlsx`) 
 usage:
 
 ```shell script
-python apps_sse/evaluator/src/tests_loader.py \
+python src/sse_tools/evaluation/evaluator/src/tests_loader.py \
   -u alice \
   -c ./tests/config.json \
   -o results.xlsx \
@@ -761,7 +766,7 @@ OpenAPI/Swagger UI if `django-rest-swagger` is enabled.
 ## Contribution Guidelines
 
 1. **Fork the repository** and create a feature branch (`git checkout -b feature/your‑idea`).
-2. **Write tests** for any new functionality (use the existing `apps_sse/evaluator` test harness as a reference).
+2. **Write tests** for any new functionality (use the existing `src/sse_tools/evaluation/evaluator` test harness as a reference).
 3. **Run the full test suite**: `pytest` (install via `pip install pytest`).
 4. **Format code** with `black` and lint with `flake8`.
 5. **Update documentation** – add a new section to this README, or improve docstrings.

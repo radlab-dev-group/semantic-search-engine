@@ -5,7 +5,7 @@ test_contract.py
 Guards against the library drifting away from the Django routes.
 
 The server side is the source of truth: every route registered with
-``prepare_api_url("...")`` in ``sse_rest_api/*/urls.py`` has to be known by
+``prepare_api_url("...")`` in ``sse_api/*/urls.py`` has to be known by
 ``sse_lib.endpoints`` and reachable through the client.  The check is skipped
 when the client is used outside of the server repository (installed wheel),
 because then the Django tree is simply not there.
@@ -20,7 +20,7 @@ from pathlib import Path
 
 from sse_lib import SSEClient, endpoints
 
-SERVER_ROOT = Path(__file__).resolve().parent.parent.parent / "sse_rest_api"
+SERVER_ROOT = Path(__file__).resolve().parent.parent.parent / "src" / "sse_api"
 ROUTE_PATTERN = re.compile(r'prepare_api_url\("([^"]+)"\)')
 
 
@@ -32,7 +32,7 @@ def server_endpoints() -> set:
 
 
 @unittest.skipUnless(
-    SERVER_ROOT.is_dir(), "sse_rest_api is not available (installed package)"
+    SERVER_ROOT.is_dir(), "sse_api is not available (installed package)"
 )
 class ApiContractTest(unittest.TestCase):
     def test_every_registered_route_is_known(self):

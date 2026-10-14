@@ -1,11 +1,49 @@
 #!/bin/bash
+#
+# Local quality gate: formatting + static analysis + type check + security.
+#
+#   ./check-dev.sh            # everything
+#   ./check-dev.sh format     # black (in-place)
+#   ./check-dev.sh lint       # flake8 + bandit
+#   ./check-dev.sh types      # mypy
+#   ./check-dev.sh test       # pytest (server + client)
+#
+set -euo pipefail
+REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd -P)"
+cd "$REPO_DIR"
 
-black .
+if [[ -f "${REPO_DIR}/.venv/bin/activate" ]]; then
+  # shellcheck disable=SC1091
+  source "${REPO_DIR}/.venv/bin/activate"
+elif [[ -f "${REPO_DIR}/venv/bin/activate" ]]; then
+  # shellcheck disable=SC1091
+  source "${REPO_DIR}/venv/bin/activate"
+fi
 
-flake8 .
+MODE="${1:-all}"
 
-pylint ./*
+run_format() {
+  black .
+}
 
-mypy .
+run_lint() {
+  flake8 .
+  bandit -r src/ scripts/ -c .bandit -q
+}
 
-bandit -r .
+run_types() {
+  mypy src/sse_api sse_lib
+}
+
+run_test() {
+  python3 -m pytest
+}
+
+case "$MODE" in
+  format) run_format ;;
+  lint)   run_lint ;;
+  types)  run_types ;;
+  test)   run_test ;;
+  all)    run_format; run_lint; run_types; run_test ;;
+  *) echo "usage: $0 [all|format|lint|types|test]"; exit 1 ;;
+esac

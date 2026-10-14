@@ -1,0 +1,32 @@
+#!/bin/bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd -P)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
+export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/sse_lib/src:${PYTHONPATH:-}"
+
+if [[ -f "${ROOT_DIR}/.venv/bin/activate" ]]; then
+  # shellcheck disable=SC1091
+  source "${ROOT_DIR}/.venv/bin/activate"
+elif [[ -f "${ROOT_DIR}/venv/bin/activate" ]]; then
+  # shellcheck disable=SC1091
+  source "${ROOT_DIR}/venv/bin/activate"
+fi
+
+export TOKENIZERS_PARALLELISM=true
+
+export CUDA_VISIBLE_DEVICES=0
+
+# DATA_UPLOAD_MAX_MEMORY_SIZE: 2621440000 = 2500 * 1024 * 1024
+export DATA_UPLOAD_MAX_MEMORY_SIZE=2621440000
+
+export OPENAI_API_KEY="foo"
+export DEEPL_AUTH_KEY="bar"
+
+export ENV_USE_KC_AUTH=0
+export ENV_USE_OAUTH_V1_AUTH=0
+export ENV_USE_OAUTH_V2_AUTH=0
+export ENV_USE_INTROSPECT=0
+export ENV_INTROSPECT_EMAIL_VERIFICATION=0
+
+python3 -m sse_api.manage runserver 0.0.0.0:8271

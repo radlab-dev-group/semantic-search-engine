@@ -1,7 +1,7 @@
 # sse_lib
 
 Thin Python client for the **Semantic Search Engine** (SSE) REST API
-(`sse_rest_api/` in this repository).
+(`src/sse_api/` in this repository).
 
 `sse_lib` is a client-side layer only: it maps Python calls onto the HTTP
 endpoints of a running SSE backend and turns the JSON answers into small
@@ -21,17 +21,40 @@ client.create_collection(
     reranker="radlab/polish-cross-encoder",
     index_type="HNSW",
 )
-client.upload_files("my_docs", ["invoice.pdf", "regulations.zip"])
-client.index_documents("my_docs", ["Some text to index."], category="Notes")
+client.upload_files(
+    "my_docs",
+    ["invoice.pdf", "regulations.zip"],
+    max_tokens_in_chunk=128,
+    number_of_overlap_tokens=0,
+)
+client.index_documents(
+    "my_docs",
+    ["Some text to index."],
+    category="Notes",
+    max_tokens_in_chunk=128,
+    number_of_overlap_tokens=0,
+)
 
 found = client.search("my_docs", "policy on data retention",
                       SearchOptions(max_results=20, rerank_results=True))
 answer = client.generate_answer(
     found.query_response_id,
-    GenerativeOptions(generative_model="radlab/pLLama-3-8B-DPO-L"),
+    GenerativeOptions(
+        generative_model="radlab/pLLama-3-8B-DPO-L",
+        percentage_rank_mass=40,
+    ),
 )
 print(answer.answer)
 ```
+
+Indexing and generation values above are **not decoration**. The backend
+requires `max_tokens_in_chunk`, `number_of_overlap_tokens` and
+`percentage_rank_mass` and rejects them as `null`, and the library deliberately
+ships no default for them: the right chunk size follows the context window of
+the embedder the deployment is configured with, which the library cannot know.
+Omit one and you get `SSEValueError` naming the field, before the request goes
+out. Set `SSEClient(..., default_indexing_options={...})` to give them once per
+client instead of per call.
 
 ## Installation
 
@@ -87,6 +110,7 @@ Python 3.9+, `requests` as the only runtime dependency.
 | `list_generative_models()`, `list_embedders()`, `list_rerankers()` | `GET generative_models`, `GET embedders`, `GET rerankers` |
 | `new_chat(...)`, `send_chat_message(...)`, `save_chat(...)`, `get_chat_by_hash(...)`, `list_chats()` | `POST new_chat`, `POST add_user_message`, `POST save_chat`, `GET get_chat_by_hash`, `GET chats` |
 | `login()`, `login_with_code()`, `refresh_access_token()`, `logout()`, `login_url()` | `POST login`, `POST refresh_token`, `POST logout`, `POST login_url` |
+| `health()`, `is_healthy()` | `GET healthz` (public — no token, no login) |
 | `request(method, endpoint, ...)`, `get(...)`, `post(...)` | any endpoint, including ones this release does not wrap |
 
 Collections may be passed as a name, a `Collection` returned by

@@ -1,12 +1,26 @@
 #!/bin/bash
+#
+# Load query templates into the default organisation.
+#
+#   bash scripts/admin/add_query_templates.sh
+#
+set -euo pipefail
 
-AUTH_CONFIG="configs/auth-config.json"
-QUERY_TEMPL_CONFIG="configs/query-templates.json"
+REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")/../.." >/dev/null 2>&1 && pwd -P)"
+export PYTHONPATH="${REPO_DIR}/src:${REPO_DIR}/sse_lib/src:${PYTHONPATH:-}"
+export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-sse_api.config.settings}"
 
-cp ../sse_apps/admin/add_query_template_to_org.py .
+if [[ -f "${REPO_DIR}/.venv/bin/activate" ]]; then
+  # shellcheck disable=SC1091
+  source "${REPO_DIR}/.venv/bin/activate"
+elif [[ -f "${REPO_DIR}/venv/bin/activate" ]]; then
+  # shellcheck disable=SC1091
+  source "${REPO_DIR}/venv/bin/activate"
+fi
+AUTH_CONFIG="${AUTH_CONFIG:-$REPO_DIR/configs/auth-config.json}"
+QUERY_TEMPL_CONFIG="${QUERY_TEMPL_CONFIG:-$REPO_DIR/configs/query-templates.json}"
 
-python3 add_query_template_to_org.py \
-  --auth-config ${AUTH_CONFIG} \
-  --query-config ${QUERY_TEMPL_CONFIG}
-
-rm add_query_template_to_org.py
+cd "$REPO_DIR"
+exec python3 src/sse_tools/admin/add_query_template_to_org.py \
+  --auth-config "$AUTH_CONFIG" \
+  --query-config "$QUERY_TEMPL_CONFIG"

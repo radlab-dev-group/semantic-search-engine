@@ -85,6 +85,14 @@ def api_error(errors, status_code=200, **kwargs):
     )
 
 
+# Fields the backend insists on: ``data`` runs indexing_options through
+# identifier()/number() and ``engine`` runs query_options through
+# generation_options(), all of which reject null.  Tests that assert on request
+# *shape* need valid values so validation is not what they trip over.
+INDEXING = {"max_tokens_in_chunk": 128, "number_of_overlap_tokens": 0}
+GENERATIVE = {"generative_model": "m", "percentage_rank_mass": 40}
+
+
 def build_client(
     responses=None,
     handler=None,

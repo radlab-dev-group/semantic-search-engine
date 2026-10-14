@@ -23,7 +23,7 @@ assessing the quality of answers when natural language varies.
 
 #### Script: `evaluate_rag_llm.py`
 
-Located at: `sse_apps/not_tested/evaluator/evaluate_rag_llm.py`
+Located at: `src/sse_tools/evaluation/evaluator/evaluate_rag_llm.py`
 
 #### Metrics Measured:
 
@@ -48,7 +48,7 @@ A list of objects containing at least a `question`. `ground_truth` is optional b
 #### How to Run:
 
 ```bash
-python sse_apps/not_tested/evaluator/evaluate_rag_llm.py \
+python src/sse_tools/evaluation/evaluator/evaluate_rag_llm.py \
   -u <username> \
   -c <collection_name> \
   -i <input_questions.json> \
@@ -65,7 +65,7 @@ with human-provided references.
 
 #### Script: `eavaluate_embedder_search.py`
 
-Located at: `sse_apps/not_tested/evaluator/eavaluate_embedder_search.py`
+Located at: `src/sse_tools/evaluation/evaluator/eavaluate_embedder_search.py`
 
 #### Metrics Measured:
 
@@ -142,7 +142,7 @@ Example structure:
 #### How to Run:
 
 ```bash
-python sse_apps/not_tested/evaluator/eavaluate_embedder_search.py \
+python src/sse_tools/evaluation/evaluator/eavaluate_embedder_search.py \
   -u <username> \
   --test-configuration <test_config.json> \
   -o <output_results.xlsx>
@@ -162,7 +162,7 @@ Before running evaluation scripts, ensure:
 
 1. **Environment is set up**: The script must be run from the project root with the appropriate `PYTHONPATH` or within
    the installed environment.
-2. **Django Settings**: `DJANGO_SETTINGS_MODULE` must be set (usually `main.settings`).
+2. **Django Settings**: `DJANGO_SETTINGS_MODULE` must be set (usually `sse_api.config.settings`).
 3. **Milvus & LLM Access**: The Milvus database and the generative model API must be reachable as configured in
    `configs/`.
 

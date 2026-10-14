@@ -10,13 +10,13 @@
 #   ./run.sh                 # == all (pełny pipeline: setup+infra+init+start)
 #   ./run.sh all             # setup + infra + init + start
 #   ./run.sh setup           # venv + pip install + zależności z git (krok 2)
-#   ./run.sh infra           # uruchom PostgreSQL + Milvus (etcd + MinIO) w Dockerze (kroki 3-4)
+#   ./run.sh infra           # uruchom PostgreSQL + Milvus w Dockerze (kroki 3-4)
 #   ./run.sh init            # migrate + semantic + add_user + add_query_templates (krok 6)
 #   ./run.sh cosine          # migracja istniejących kolekcji na COSINE (domyślnie --all)
-#   ./run.sh start|up        # odpal serwer API w foreground → http://localhost:8271/api/ (krok 7)
-#   ./run.sh down            # zatrzymaj i usuń kontenery PG + Milvus (etcd/MinIO)
+#   ./run.sh start|up        # odpal serwer API w foreground → http://0.0.0.0:8271/api/ (krok 7)
+#   ./run.sh down            # zatrzymaj i usuń kontenery PG + Milvus
 #   ./run.sh status          # pokaż stan kontenerów i portów (5471/19530/19121/8271)
-#   ./run.sh config          # utwórz .env i brakujące pliki sse_rest_api/configs/ z szablonów
+#   ./run.sh config          # utwórz .env i brakujące pliki configs/ z szablonów
 #
 # Flagi:
 #   --no-venv        nie twórz/wykorzystuj venv (użyj systemowego pythona/pipa)
@@ -48,16 +48,14 @@ set -euo pipefail
 # ---------- lokalizacja ----------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd -P)"
 ROOT_DIR="$SCRIPT_DIR"
-API_DIR="$ROOT_DIR/sse_rest_api"
+API_DIR="$ROOT_DIR"
+CONFIG_DIR="$ROOT_DIR/configs"
 VENV_DIR="$ROOT_DIR/.venv"
 PY_PREFERRED="python3.11"
-# Obrazy i sieć Dockera stosu Milvus standalone (te same wersje jak w
-# docker-compose.yml — utrzymuj oba miejsca synchronicznie).
-SSE_NETWORK="sse-net"
-ETCD_IMAGE="quay.io/coreos/etcd:v3.5.5"
-MINIO_IMAGE="minio/minio:RELEASE.2023-03-20T20-16-18Z"
-MINIO_MC_IMAGE="minio/mc:RELEASE.2023-03-22T18-34-53Z"
-MILVUS_IMAGE="milvusdb/milvus:2.3.0"
+MILVUS_IMAGE="milvusdb/milvus:v2.3.0"
+
+export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/sse_lib/src:${PYTHONPATH:-}"
+export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-sse_api.config.settings}"
 
 # ---------- logi ----------
 if [[ -t 1 ]]; then
@@ -109,18 +107,61 @@ load_env() {
 }
 
 activate_venv() {
-  if [[ -f "$VENV_DIR/bin/activate" ]]; then
-    # shellcheck disable=SC1091
-    source "$VENV_DIR/bin/activate"
-  fi
+  local candidates=(
+    "${VENV_DIR:-}"
+    "$ROOT_DIR/.venv"
+    "$ROOT_DIR/venv"
+    "${VIRTUAL_ENV:-}"
+  )
+  for v in "${candidates[@]}"; do
+    if [[ -n "$v" && -f "$v/bin/activate" ]]; then
+      # shellcheck disable=SC1091
+      source "$v/bin/activate"
+      return 0
+    fi
+  done
 }
 pick_pip() {
-  if have pip; then echo "pip"; elif have pip3; then echo "pip3"; else err "Brak pip/pip3"; exit 1; fi
+  if [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/pip3" ]]; then
+    echo "${VIRTUAL_ENV}/bin/pip3"
+  elif [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/pip" ]]; then
+    echo "${VIRTUAL_ENV}/bin/pip"
+  elif [[ -x "$VENV_DIR/bin/pip3" ]]; then
+    echo "$VENV_DIR/bin/pip3"
+  elif [[ -x "$VENV_DIR/bin/pip" ]]; then
+    echo "$VENV_DIR/bin/pip"
+  elif have pip3; then
+    echo "pip3"
+  elif have pip; then
+    echo "pip"
+  else
+    err "Brak pip/pip3"; exit 1
+  fi
 }
 pick_python() {
-  if have python; then echo "python"
-  elif have python3; then echo "python3"
-  else err "Brak python/python3"; exit 1
+  if [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python3" ]]; then
+    echo "${VIRTUAL_ENV}/bin/python3"
+  elif [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/python" ]]; then
+    echo "${VIRTUAL_ENV}/bin/python"
+  elif [[ -x "$VENV_DIR/bin/python3" ]]; then
+    echo "$VENV_DIR/bin/python3"
+  elif [[ -x "$VENV_DIR/bin/python" ]]; then
+    echo "$VENV_DIR/bin/python"
+  elif have python3; then
+    echo "python3"
+  elif have python; then
+    echo "python"
+  else
+    err "Brak python/python3"; exit 1
+  fi
+}
+docker_cmd() {
+  if docker info >/dev/null 2>&1; then
+    docker "$@"
+  elif have sudo; then
+    sudo docker "$@"
+  else
+    docker "$@"
   fi
 }
 wait_port() {
@@ -153,11 +194,11 @@ config() {
     exit 1
   fi
 
-  for example in "$API_DIR"/configs/*.example.*; do
+  for example in "$CONFIG_DIR"/*.example.*; do
     [[ -e "$example" ]] || continue
     name="$(basename "$example")"
-    target="$API_DIR/configs/${name/.example./.}"
-    rel="sse_rest_api/configs/${name/.example./.}"
+    target="$CONFIG_DIR/${name/.example./.}"
+    rel="configs/${name/.example./.}"
     if [[ -f "$target" ]]; then
       log "Pominięto (istnieje): $rel"
       skipped=$((skipped + 1))
@@ -176,7 +217,7 @@ config() {
 
 setup() {
   step "Krok 2: wirtualne środowisko + zależności"
-  [[ -d "$API_DIR" ]] || { err "Brak katalogu sse_rest_api/ — czy jesteś w repo?"; exit 1; }
+  [[ -d "$API_DIR/src/sse_api" ]] || { err "Brak katalogu src/sse_api/ — czy jesteś w repo?"; exit 1; }
 
   local py="$PY_PREFERRED"
   have "$py" || { py="python3"; warn "$PY_PREFERRED nie znaleziony, używam python3"; }
@@ -196,12 +237,14 @@ setup() {
   fi
 
   local pip; pip="$(pick_pip)"
-  log "Instaluję zależności: sse_rest_api/requirements.txt"
-  "$pip" install --upgrade pip >/dev/null
-  "$pip" install -r "$API_DIR/requirements.txt"
+  log "Instaluję zależności: requirements.txt"
+  "$pip" install --upgrade pip --break-system-packages >/dev/null
+  "$pip" install -r "$API_DIR/requirements.txt" --break-system-packages
+
+  "$pip" install --no-deps -e "$API_DIR" --break-system-packages
 
   log "Instaluję zależności z git (radlab-data, llm-router)"
-  ( cd "$API_DIR" && ./initialize.sh dep )
+  ( cd "$API_DIR/src/sse_api" && ./initialize.sh dep )
 }
 
 infra() {
@@ -215,72 +258,59 @@ infra() {
   log "PostgreSQL: bash scripts/admin/postgres.sh"
   ( cd "$ROOT_DIR" && bash scripts/admin/postgres.sh )
 
-  # Milvus standalone nie jest samowystarczalny: potrzebuje etcd (metadane) i
-  # MinIO (storage obiektowy). Sam obraz Milvus nigdy nie osiągnie healthy i
-  # nie ma trwałych danych, więc tworzę cały tercet — w jednej sieci i na
-  # nazwanych wolumenach (lustrzane odbicie serwisów milvus/etcd/minio z compose).
-  local minio_user="${MINIO_ACCESS_KEY:-}"
-  local minio_pass="${MINIO_SECRET_KEY:-}"
-  if [[ -z "$minio_user" || -z "$minio_pass" ]]; then
-    minio_user="minioadmin"; minio_pass="minioadmin"
-    warn "MINIO_ACCESS_KEY/MINIO_SECRET_KEY nie ustawione — używam wbudowanych danych minioadmin."
-    warn "Lokalnie OK; w produkcji ustaw własne sekrety w .env (docker-compose.yml ich wymaga)."
-  elif [[ "$minio_user" == "CHANGE_ME" || "$minio_pass" == "CHANGE_ME" ]]; then
-    warn "MINIO_ACCESS_KEY/MINIO_SECRET_KEY nadal zawierają placeholder CHANGE_ME — w produkcji je wymień."
-  fi
   local milvus_host="${MILVUS_HOST_PORT:-19530}"
   local milvus_metrics_host="${MILVUS_METRICS_HOST_PORT:-19121}"
-  # Domyślnie loopback (jak w docker-compose.yml); MILVUS_BIND_HOST=0.0.0.0 tylko w zaufanej sieci.
-  local milvus_bind="${MILVUS_BIND_HOST:-127.0.0.1}"
+  local milvus_bind="${MILVUS_BIND_HOST:-0.0.0.0}"
+  local port_args=()
+  if [[ -n "$milvus_bind" ]]; then
+    port_args+=(-p "${milvus_bind}:${milvus_host}:19530" -p "${milvus_bind}:${milvus_metrics_host}:19121")
+  else
+    port_args+=(-p "0.0.0.0:${milvus_host}:19530" -p "0.0.0.0:${milvus_metrics_host}:19121")
+  fi
 
-  docker network create "$SSE_NETWORK" >/dev/null 2>&1 || true
-
-  log "etcd — metadane Milvus (wolumen sse_etcd_data)"
-  docker rm -f milvus-etcd >/dev/null 2>&1 || true
-  docker run -d --name milvus-etcd \
-    --network "$SSE_NETWORK" --network-alias etcd --restart unless-stopped \
-    -e ETCD_AUTO_COMPACTION_MODE=revision \
-    -e ETCD_AUTO_COMPACTION_RETENTION=1000 \
-    -e ETCD_QUOTA_BACKEND_BYTES=4294967296 \
-    -e ETCD_SNAPSHOT_COUNT=50000 \
-    -v sse_etcd_data:/etcd \
-    "$ETCD_IMAGE" \
-    etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
-
-  log "MinIO — storage obiektowy Milvus (wolumen sse_minio_data, bez portów na hoście)"
-  docker rm -f milvus-minio >/dev/null 2>&1 || true
-  docker run -d --name milvus-minio \
-    --network "$SSE_NETWORK" --network-alias minio --restart unless-stopped \
-    -e MINIO_ACCESS_KEY="$minio_user" \
-    -e MINIO_SECRET_KEY="$minio_pass" \
-    -v sse_minio_data:/minio_data \
-    "$MINIO_IMAGE" minio server /minio_data
-
-  log "Bucket MinIO milvus-bucket (czekam na serwis, maks. ~2 min)"
-  docker rm -f milvus-minio-init >/dev/null 2>&1 || true
-  docker run --rm --name milvus-minio-init \
-    --network "$SSE_NETWORK" \
-    -e MINIO_ACCESS_KEY="$minio_user" \
-    -e MINIO_SECRET_KEY="$minio_pass" \
-    --entrypoint /bin/sh "$MINIO_MC_IMAGE" -c \
-    'i=0; until mc alias set local http://minio:9000 "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"; do i=$((i+1)); [ "$i" -ge 60 ] && break; sleep 2; done; mc mb -p local/milvus-bucket || true'
-
-  log "Milvus standalone (${milvus_bind}:${milvus_host} SDK, ${milvus_bind}:${milvus_metrics_host} metryki)"
-  docker rm -f milvus-standalone >/dev/null 2>&1 || true
-  docker run -d --name milvus-standalone \
-    --network "$SSE_NETWORK" --restart unless-stopped \
-    --security-opt seccomp=unconfined \
-    -e ETCD_ENDPOINTS=etcd:2379 \
-    -e MINIO_ADDRESS=minio:9000 \
-    -e COMMON_SECURITY_AUTHORIZATIONENABLED="${MILVUS_AUTH_ENABLED:-false}" \
-    -v sse_milvus_data:/var/lib/milvus \
-    -p "${milvus_bind}:${milvus_host}:19530" \
-    -p "${milvus_bind}:${milvus_metrics_host}:19121" \
-    "$MILVUS_IMAGE" milvus run standalone
+  log "Milvus standalone (porty ${milvus_host}, ${milvus_metrics_host})"
+  docker_cmd rm -f milvus-standalone >/dev/null 2>&1 || true
+  docker_cmd run -d --name milvus-standalone \
+    --security-opt seccomp:unconfined \
+    -e ETCD_USE_EMBED=true \
+    -e ETCD_DATA_DIR=/var/lib/milvus/etcd \
+    -e COMMON_STORAGETYPE=local \
+    -v milvus_data:/var/lib/milvus \
+    "${port_args[@]}" \
+    "$MILVUS_IMAGE" \
+    milvus run standalone
 
   log "Odczekuję na porty..."
   wait_port 5471  "PostgreSQL"
   wait_port "$milvus_host" "Milvus"
+}
+
+ensure_config() {
+  if [[ ! -f "$CONFIG_DIR/django-config.json" ]]; then
+    config
+  fi
+}
+
+ensure_infra() {
+  if [[ "$NO_INFRA" == "1" ]]; then
+    return 0
+  fi
+  local p_pg=5471
+  local p_milvus="${MILVUS_HOST_PORT:-19530}"
+  local pg_ready=0 milvus_ready=0
+
+  if (exec 3<>"/dev/tcp/127.0.0.1/${p_pg}") 2>/dev/null; then
+    exec 3>&- 2>/dev/null || true
+    pg_ready=1
+  fi
+  if (exec 3<>"/dev/tcp/127.0.0.1/${p_milvus}") 2>/dev/null; then
+    exec 3>&- 2>/dev/null || true
+    milvus_ready=1
+  fi
+
+  if [[ "$pg_ready" == "0" || "$milvus_ready" == "0" ]]; then
+    infra
+  fi
 }
 
 init() {
@@ -289,18 +319,23 @@ init() {
     warn "Pomijam inicjalizację (--no-init)."
     return 0
   fi
-  [[ -d "$API_DIR" ]] || { err "Brak sse_rest_api/"; exit 1; }
+  [[ -d "$API_DIR/src/sse_api" ]] || { err "Brak src/sse_api/"; exit 1; }
+  ensure_config
+  ensure_infra
+  wait_port 5471 "PostgreSQL" 30
+  wait_port "${MILVUS_HOST_PORT:-19530}" "Milvus" 30
   [[ "$NO_VENV" == "1" ]] || activate_venv
-  ( cd "$API_DIR" && ./initialize.sh migrate )
-  ( cd "$API_DIR" && ./initialize.sh semantic )
-  ( cd "$API_DIR" && ./initialize.sh add_user )
-  ( cd "$API_DIR" && ./initialize.sh add_query_templates )
+  local py; py="$(pick_python)"
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" -m sse_api.manage migrate )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" src/sse_tools/admin/prepare_semantic_db.py )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" src/sse_tools/admin/add_org_group_user.py -u configs/user-group-organisation.json )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" src/sse_tools/admin/add_query_template_to_org.py )
 }
 
 cosine() {
   step "COSINE: migracja indexów istniejących kolekcji (bez re-embedingu)"
   local script="$SCRIPT_DIR/scripts/admin/milvus_index_to_cosine.py"
-  local cfg="$API_DIR/configs/milvus_config.json"
+  local cfg="$CONFIG_DIR/milvus_config.json"
   [[ -f "$script" ]] || { err "Brak skryptu migracji: $script"; exit 1; }
   [[ -f "$cfg" ]]    || { err "Brak configu Milvus: $cfg"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
@@ -324,27 +359,27 @@ cosine() {
   fi
 
   local py; py="$(pick_python)"
-  ( cd "$API_DIR" && "$py" "$script" "${args[@]}" )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" "$script" "${args[@]}" )
 }
 
 start() {
-  step "Krok 7: start serwera API (foreground) → http://localhost:8271/api/"
-  [[ -d "$API_DIR" ]] || { err "Brak sse_rest_api/"; exit 1; }
+  step "Krok 7: start serwera API (foreground) → http://0.0.0.0:8271/api/"
+  [[ -d "$API_DIR/src/sse_api" ]] || { err "Brak src/sse_api/"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
   log "Login testowy: default_admin / password  (POST /api/login)"
   warn "W środowisku produkcyjnym natychmiast zmień hasło konta default_admin."
-  ( cd "$API_DIR" && ./run-api.sh )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" ./src/sse_api/run-api.sh )
 }
 
 down() {
-  step "Stop: zatrzymuję i usuwam kontenery PG + Milvus (etcd/MinIO)"
+  step "Stop: zatrzymuję i usuwam kontenery PG + Milvus"
   have docker || need docker
-  docker rm -f pg_sse_backend_engine >/dev/null 2>&1 || true
-  docker rm -f milvus-standalone    >/dev/null 2>&1 || true
-  docker rm -f milvus-minio-init    >/dev/null 2>&1 || true
-  docker rm -f milvus-minio         >/dev/null 2>&1 || true
-  docker rm -f milvus-etcd          >/dev/null 2>&1 || true
-  docker network rm "$SSE_NETWORK"  >/dev/null 2>&1 || true
+  docker_cmd rm -f pg_sse_backend_engine >/dev/null 2>&1 || true
+  docker_cmd rm -f milvus-standalone    >/dev/null 2>&1 || true
+  docker_cmd rm -f milvus-minio-init    >/dev/null 2>&1 || true
+  docker_cmd rm -f milvus-minio         >/dev/null 2>&1 || true
+  docker_cmd rm -f milvus-etcd          >/dev/null 2>&1 || true
+  docker_cmd network rm sse-net         >/dev/null 2>&1 || true
   log "Zatrzymano."
 }
 
@@ -352,8 +387,7 @@ status() {
   step "Status"
   if have docker; then
     log "Kontenery:"
-    docker ps -a --filter name=pg_sse_backend_engine --filter name=milvus-standalone \
-      --filter name=milvus-etcd --filter name=milvus-minio \
+    docker_cmd ps -a --filter name=pg_sse_backend_engine --filter name=milvus-standalone \
       --format '  table {{.Names}}\t{{.Status}}\t{{.Ports}}' 2>/dev/null || true
   else
     warn "Docker niedostępny — pominąłem listę kontenerów."
@@ -376,6 +410,7 @@ help() {
 
 # ---------- dispatch ----------
 load_env
+[[ "$NO_VENV" == "1" ]] || activate_venv
 case "$CMD" in
   all)
     setup

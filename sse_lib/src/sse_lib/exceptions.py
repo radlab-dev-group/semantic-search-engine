@@ -5,7 +5,7 @@ exceptions.py
 Errors raised by :class:`sse_lib.SSEClient`.
 
 The backend answers with an HTTP 200 plus ``{"status": false, "errors": [...]}``
-for business errors (see ``main.src.response.response_with_status``), so a
+for business errors (see ``sse_api.core.response.response_with_status``), so a
 plain ``raise_for_status()`` is not enough: those become
 :class:`SSEAPIError`.  Real transport/HTTP failures keep their status code and
 become :class:`SSEHTTPError`.

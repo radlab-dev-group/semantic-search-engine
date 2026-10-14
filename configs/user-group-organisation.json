@@ -1,0 +1,17 @@
+{
+  "organisation": {
+    "name": "RadLab",
+    "description": "RadLab organisation"
+  },
+  "group": {
+    "name": "all",
+    "description": "All users group"
+  },
+  "users": [
+    {
+      "name": "default_user",
+      "email": "default_user@example.com",
+      "password": "SuperSecretPassword123"
+    }
+  ]
+}
