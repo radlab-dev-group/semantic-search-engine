@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 from django.contrib.postgres.search import SearchVector, SearchQuery, SearchRank
 from sse_api.data.models import CollectionOfDocuments, DocumentPageText, Document
 
@@ -45,30 +47,11 @@ class DBTextSearchController:
         # Map IDs to objects to maintain order from texts_ids
         pages_map = {page.id: page for page in document_pages}
 
-        # Identify all needed context chunks
         context_map = {}
-        if surrounding_chunks > 0:
-            page_ids = set()
-            needed_context = []  # List of (page_id, text_number)
-            for page in document_pages:
-                page_ids.add(page.page_id)
-                tn = page.text_number
-                # Left context
-                for i in range(max(tn - surrounding_chunks, 0), tn):
-                    needed_context.append((page.page_id, i))
-                # Right context
-                for i in range(tn + 1, tn + surrounding_chunks + 1):
-                    needed_context.append((page.page_id, i))
-
-            # Batch fetch all potential context chunks for these pages
-            if page_ids:
-                all_possible_contexts = DocumentPageText.objects.filter(
-                    page_id__in=page_ids
-                ).values("page_id", "text_number", "text_str")
-                for ctx in all_possible_contexts:
-                    context_map[(ctx["page_id"], ctx["text_number"])] = ctx[
-                        "text_str"
-                    ]
+        if surrounding_chunks > 0 and document_pages:
+            context_map = self._get_surrounding_chunks(
+                document_pages, surrounding_chunks=surrounding_chunks
+            )
 
         doc_results = []
         for text_id, score in zip(texts_ids, texts_scores):
@@ -78,21 +61,85 @@ class DBTextSearchController:
                     self._prepare_document_page_with_map(
                         doc_page,
                         score=float(score),
-                        surrounding_chunks=surrounding_chunks,
                         context_map=context_map,
                     )
                 )
         return doc_results
 
+    @staticmethod
+    def _get_surrounding_chunks(
+        document_pages: list, surrounding_chunks: int
+    ) -> dict:
+        """
+        Find the neighbouring chunks of every text in ``document_pages``.
+
+        Neighbours are taken from the reading order of the whole document
+        (page number, then chunk number) among chunks of the same
+        ``text_chunk_type``. Readers without page metadata (txt, md, html)
+        store every chunk on its own ``DocumentPage``, so looking for
+        neighbours on the same page only would always return nothing.
+
+        Returns
+        -------
+        dict
+            ``{text_id: (left_context, right_context)}`` where both are lists
+            of ``{"text_number": ..., "text_str": ...}`` ordered as in the
+            document (the nearest left chunk is the last one, the nearest
+            right chunk is the first one).
+        """
+        document_ids = {page.page.document_id for page in document_pages}
+        ordered = DocumentPageText.objects.filter(
+            page__document_id__in=document_ids
+        ).order_by("page__document_id", "page__page_number", "text_number", "id")
+
+        sequences = defaultdict(list)  # (document_id, chunk_type) -> [(id, tn)]
+        positions = {}  # text_id -> (sequence key, index)
+        for text_id, document_id, chunk_type, text_number in ordered.values_list(
+            "id", "page__document_id", "text_chunk_type", "text_number"
+        ):
+            key = (document_id, chunk_type)
+            positions[text_id] = (key, len(sequences[key]))
+            sequences[key].append((text_id, text_number))
+
+        neighbours = {}
+        needed_ids = set()
+        for page in document_pages:
+            if page.id not in positions:
+                continue
+            key, index = positions[page.id]
+            sequence = sequences[key]
+            left = sequence[max(index - surrounding_chunks, 0) : index]
+            right = sequence[index + 1 : index + 1 + surrounding_chunks]
+            neighbours[page.id] = (left, right)
+            needed_ids.update(text_id for text_id, _ in left + right)
+
+        texts = dict(
+            DocumentPageText.objects.filter(id__in=needed_ids).values_list(
+                "id", "text_str"
+            )
+        )
+
+        def as_context(chunks: list) -> list:
+            return [
+                {"text_number": text_number, "text_str": texts[text_id]}
+                for text_id, text_number in chunks
+                if text_id in texts
+            ]
+
+        return {
+            text_id: (as_context(left), as_context(right))
+            for text_id, (left, right) in neighbours.items()
+        }
+
     def _prepare_document_page_with_map(
         self,
         doc_page: DocumentPageText,
         score: float,
-        surrounding_chunks: int,
         context_map: dict,
     ) -> dict:
         """
-        Build the result dictionary using a pre-fetched context map.
+        Build the result dictionary using a pre-fetched context map
+        (see ``_get_surrounding_chunks``).
         """
         main_text = {
             "score": score,
@@ -104,22 +151,7 @@ class DBTextSearchController:
             "text_str": doc_page.text_str,
         }
 
-        left_context = []
-        right_context = []
-
-        if surrounding_chunks > 0:
-            tn = doc_page.text_number
-            pid = doc_page.page_id
-            # Left
-            for i in range(max(tn - surrounding_chunks, 0), tn):
-                val = context_map.get((pid, i))
-                if val is not None:
-                    left_context.append({"text_number": i, "text_str": val})
-            # Right
-            for i in range(tn + 1, tn + surrounding_chunks + 1):
-                val = context_map.get((pid, i))
-                if val is not None:
-                    right_context.append({"text_number": i, "text_str": val})
+        left_context, right_context = context_map.get(doc_page.id, ([], []))
 
         return {
             "result": {
