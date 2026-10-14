@@ -263,3 +263,97 @@ class SetRateForQueryResponseAnswer(APIView):
             error_name=None,
             response_body={},
         )
+
+
+class ListOfSearchHistory(APIView):
+    """
+    Return the search history for the authenticated user.
+    Optionally filter by collection_name or query_response_id.
+    """
+
+    optional_params = ["collection_name", "query_response_id"]
+    input_validators = {
+        "collection_name": optional_text,
+        "query_response_id": identifier,
+    }
+
+    @required_params_exists(
+        required_params=[], optional_params=optional_params
+    )
+    @get_organisation_user
+    @get_default_language
+    def get(self, language, organisation_user, request):
+        params = request_params(request)
+        collection_name = params.get("collection_name")
+        query_response_id = params.get("query_response_id")
+
+        if query_response_id is not None:
+            user_response = SearchQueryController.get_user_response_by_id(
+                query_response_id=query_response_id,
+                organisation_user=organisation_user,
+            )
+            if user_response is None:
+                return response_with_status(
+                    status=False,
+                    language=language,
+                    error_name=RESPONSE_ACCESS_DENIED,
+                    response_body={},
+                )
+            history = [
+                SearchQueryController.format_search_history_entry(user_response)
+            ]
+        else:
+            responses = SearchQueryController.get_user_search_history(
+                organisation_user=organisation_user,
+                collection_name=collection_name,
+            )
+            history = [
+                SearchQueryController.format_search_history_entry(resp)
+                for resp in responses
+            ]
+
+        return response_with_status(
+            status=True,
+            language=language,
+            error_name=None,
+            response_body={"history": history},
+        )
+
+
+class GetSearchHistoryById(APIView):
+    """
+    Retrieve a specific search history entry by query_response_id.
+    """
+
+    required_params = ["query_response_id"]
+    input_validators = {
+        "query_response_id": identifier,
+    }
+
+    @required_params_exists(required_params=required_params)
+    @get_organisation_user
+    @get_default_language
+    def get(self, language, organisation_user, request):
+        params = request_params(request)
+        query_response_id = params.get("query_response_id")
+
+        user_response = SearchQueryController.get_user_response_by_id(
+            query_response_id=query_response_id,
+            organisation_user=organisation_user,
+        )
+        if user_response is None:
+            return response_with_status(
+                status=False,
+                language=language,
+                error_name=RESPONSE_ACCESS_DENIED,
+                response_body={},
+            )
+
+        return response_with_status(
+            status=True,
+            language=language,
+            error_name=None,
+            response_body=SearchQueryController.format_search_history_entry(
+                user_response
+            ),
+        )

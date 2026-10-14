@@ -36,6 +36,8 @@ from sse_lib.models import (
     ChatReply,
     Collection,
     IndexingResult,
+    SearchHistory,
+    SearchHistoryAnswer,
     SearchResponse,
     UploadResult,
 )
@@ -580,6 +582,30 @@ class SSEClient:
         if comment is not None:
             payload["rate_comment"] = comment
         self.post(endpoints.RATE_GENERATIVE_ANSWER, payload)
+
+    def list_search_history(
+        self, collection: Optional[CollectionLike] = None
+    ) -> List[SearchHistory]:
+        """Fetch search history of the authenticated user (``GET search_history``).
+
+        Optionally filtered by ``collection``.
+        """
+        params: Dict[str, Any] = {}
+        if collection is not None:
+            params["collection_name"] = _name(collection)
+        body = self.get(endpoints.SEARCH_HISTORY, params or None)
+        history = body.get("history") if isinstance(body, dict) else []
+        return [SearchHistory.from_api(entry) for entry in history or []]
+
+    def get_search_history(self, query_response_id: int) -> SearchHistory:
+        """Fetch a specific search history entry by ID (``GET get_search_history``)."""
+        if query_response_id is None:
+            raise SSEValueError("query_response_id is required")
+        body = self.get(
+            endpoints.GET_SEARCH_HISTORY,
+            {"query_response_id": int(query_response_id)},
+        )
+        return SearchHistory.from_api(body)
 
     def list_generative_models(self) -> Dict[str, Any]:
         """Active generative models and their hosts (``GET generative_models``)."""

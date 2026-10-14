@@ -145,6 +145,125 @@ class Answer:
 
 
 @dataclass
+class SearchHistoryAnswer:
+    """An answer recorded for a historical search."""
+
+    id: Optional[int] = None
+    response_id: Optional[int] = None
+    is_generative: bool = True
+    answer_options: Dict[str, Any] = field(default_factory=dict)
+    query_instruction_prompt: Optional[str] = None
+    generated_answer: str = ""
+    generated_answer_translated: Optional[str] = None
+    rate_value: Optional[int] = None
+    rate_value_max: Optional[int] = None
+    rate_comment: Optional[str] = None
+    generation_time: Optional[float] = None
+    raw: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_api(cls, data: Any) -> "SearchHistoryAnswer":
+        """Build an answer record from one entry of an answers list."""
+        payload = _as_dict(data)
+        return cls(
+            id=payload.get("id"),
+            response_id=payload.get("response_id"),
+            is_generative=bool(payload.get("is_generative", True)),
+            answer_options=_as_dict(payload.get("answer_options")),
+            query_instruction_prompt=payload.get("query_instruction_prompt"),
+            generated_answer=payload.get("generated_answer", "") or "",
+            generated_answer_translated=payload.get("generated_answer_translated"),
+            rate_value=payload.get("rate_value"),
+            rate_value_max=payload.get("rate_value_max"),
+            rate_comment=payload.get("rate_comment"),
+            generation_time=payload.get("generation_time"),
+            raw=payload,
+        )
+
+
+@dataclass
+class SearchHistory:
+    """A historical search entry with complete results and generated answer(s)."""
+
+    query_id: Optional[int] = None
+    query_response_id: Optional[int] = None
+    query: str = ""
+    collection_id: Optional[int] = None
+    collection_name: Optional[str] = None
+    query_options: Dict[str, Any] = field(default_factory=dict)
+    results: Dict[str, Any] = field(default_factory=dict)
+    stats: Dict[str, Any] = field(default_factory=dict)
+    detailed_results: Any = field(default_factory=dict)
+    structured_results: List[Any] = field(default_factory=list)
+    answers: List[SearchHistoryAnswer] = field(default_factory=list)
+    generated_answer: Optional[str] = None
+    generated_answer_translated: Optional[str] = None
+    raw: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_api(cls, body: Any) -> "SearchHistory":
+        """Build a search history entry from the ``body`` of a search history call."""
+        payload = _as_dict(body)
+        results = _as_dict(payload.get("results"))
+        answers_data = _as_list(payload.get("answers"))
+        answers = [SearchHistoryAnswer.from_api(a) for a in answers_data]
+
+        stats = payload.get("stats") or results.get("stats") or {}
+        detailed_results = (
+            payload.get("detailed_results")
+            if "detailed_results" in payload
+            else results.get("detailed_results", {})
+        )
+        structured_results = (
+            payload.get("structured_results")
+            if "structured_results" in payload
+            else results.get("structured_results", [])
+        )
+
+        gen_answer = payload.get("generated_answer")
+        if gen_answer is None and answers:
+            gen_answer = answers[-1].generated_answer
+
+        gen_answer_trans = payload.get("generated_answer_translated")
+        if gen_answer_trans is None and answers:
+            gen_answer_trans = answers[-1].generated_answer_translated
+
+        return cls(
+            query_id=payload.get("query_id"),
+            query_response_id=payload.get("query_response_id"),
+            query=str(
+                payload.get("query")
+                or payload.get("query_str")
+                or results.get("query", "")
+            ),
+            collection_id=payload.get("collection_id"),
+            collection_name=payload.get("collection_name"),
+            query_options=_as_dict(payload.get("query_options")),
+            results=results,
+            stats=_as_dict(stats),
+            detailed_results=detailed_results,
+            structured_results=_as_list(structured_results),
+            answers=answers,
+            generated_answer=gen_answer,
+            generated_answer_translated=gen_answer_trans,
+            raw=payload,
+        )
+
+    @property
+    def hits(self) -> List[SearchHit]:
+        """Reformatted hits, ready to display (``detailed_results``)."""
+        entries = self.detailed_results
+        if isinstance(entries, dict):
+            entries = list(entries.values())
+        return [SearchHit.from_api(entry) for entry in _as_list(entries)]
+
+    @property
+    def answer(self) -> Optional[str]:
+        """Shortcut for generated_answer."""
+        return self.generated_answer
+
+
+@dataclass
 class UploadResult:
     """Body of ``POST upload_and_index_files`` (``UploadedDocumentsSerializer``)."""
 

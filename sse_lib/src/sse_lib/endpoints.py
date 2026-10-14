@@ -43,6 +43,8 @@ FILTER_OPTIONS = "filter_options"
 
 # --- search & generation (sse_api/engine) --------------------------------
 SEARCH_WITH_OPTIONS = "search_with_options"
+SEARCH_HISTORY = "search_history"
+GET_SEARCH_HISTORY = "get_search_history"
 GENERATIVE_ANSWER = "generative_answer"
 RATE_GENERATIVE_ANSWER = "rate_generative_answer"
 GENERATIVE_MODELS = "generative_models"
@@ -80,6 +82,8 @@ ALL_ENDPOINTS = frozenset(
         QUESTION_TEMPLATES,
         FILTER_OPTIONS,
         SEARCH_WITH_OPTIONS,
+        SEARCH_HISTORY,
+        GET_SEARCH_HISTORY,
         GENERATIVE_ANSWER,
         RATE_GENERATIVE_ANSWER,
         GENERATIVE_MODELS,
