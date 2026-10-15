@@ -231,8 +231,8 @@ def resolve_chunking(
     options = dict(indexing_options) if isinstance(indexing_options, dict) else {}
     requested_max, requested_overlap = declared_chunking(options)
     declared = collection.chunking()
-    declared_max = _as_optional_int(declared.get(MAX_TOKENS_IN_CHUNK_KEY))
-    declared_overlap = _as_optional_int(declared.get(NUMBER_OF_OVERLAP_TOKENS_KEY))
+    declared_max = as_optional_int(declared.get(MAX_TOKENS_IN_CHUNK_KEY))
+    declared_overlap = as_optional_int(declared.get(NUMBER_OF_OVERLAP_TOKENS_KEY))
 
     if requested_max is None and requested_overlap is None:
         # Nothing asked for: the collection decides, or the global defaults
@@ -247,24 +247,24 @@ def resolve_chunking(
         max_tokens = (
             requested_max
             if requested_max is not None
-            else _as_int(declared_max, DEFAULT_MAX_TOKENS_IN_CHUNK)
+            else as_int(declared_max, DEFAULT_MAX_TOKENS_IN_CHUNK)
         )
         overlap = (
             requested_overlap
             if requested_overlap is not None
-            else _as_int(declared_overlap, DEFAULT_NUMBER_OF_OVERLAP_TOKENS)
+            else as_int(declared_overlap, DEFAULT_NUMBER_OF_OVERLAP_TOKENS)
         )
         if (
             collection.strict_chunking
             and declared_max is not None
             and (
-                max_tokens != declared_max or overlap != _as_int(declared_overlap, 0)
+                max_tokens != declared_max or overlap != as_int(declared_overlap, 0)
             )
         ):
             raise ChunkingMismatch(
                 {
                     MAX_TOKENS_IN_CHUNK_KEY: declared_max,
-                    NUMBER_OF_OVERLAP_TOKENS_KEY: _as_int(declared_overlap, 0),
+                    NUMBER_OF_OVERLAP_TOKENS_KEY: as_int(declared_overlap, 0),
                 },
                 {
                     MAX_TOKENS_IN_CHUNK_KEY: max_tokens,
@@ -291,13 +291,13 @@ def resolve_chunking(
     return options
 
 
-def _as_int(value: Any, default: int) -> int:
+def as_int(value: Any, default: int) -> int:
     """Read an integer of a chunking entry, ``default`` when absent."""
-    fallback = _as_optional_int(value)
+    fallback = as_optional_int(value)
     return default if fallback is None else fallback
 
 
-def _as_optional_int(value: Any) -> Optional[int]:
+def as_optional_int(value: Any) -> Optional[int]:
     """Read an integer of a chunking entry, ``None`` when it is no number.
 
     The values come from a JSON column, so they may be anything; a value
@@ -312,10 +312,62 @@ def _as_optional_int(value: Any) -> Optional[int]:
         return None
 
 
+def plan_chunking_fix(
+    collection: CollectionOfDocuments, embedder_limit: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    How the chunking of a collection should be declared, ``None`` when right.
+
+    The declaration of a collection is metadata only; nothing in the database
+    is re-split.  This function plans the change, a caller decides when to
+    apply it:
+
+    * a collection without chunking gets the global defaults,
+    * a chunk above the input of the embedder is clamped to it,
+    * a missing or impossible overlap is repaired.
+
+    Returns
+    -------
+    dict or None
+        ``{"from": <stored>, "to": {max_tokens_in_chunk,
+        number_of_overlap_tokens}, "reasons": [...]}`` or ``None``.
+    """
+    declared = collection.chunking()
+    max_tokens = as_optional_int(declared.get(MAX_TOKENS_IN_CHUNK_KEY))
+    overlap = as_optional_int(declared.get(NUMBER_OF_OVERLAP_TOKENS_KEY))
+
+    reasons = []
+    if max_tokens is None:
+        max_tokens = DEFAULT_MAX_TOKENS_IN_CHUNK
+        reasons.append("the collection does not declare a chunk size")
+    if embedder_limit is not None and max_tokens > embedder_limit:
+        max_tokens = embedder_limit
+        reasons.append(
+            f"the chunk is above the input of the embedder (max {embedder_limit} "
+            "tokens)"
+        )
+    if overlap is None:
+        overlap = DEFAULT_NUMBER_OF_OVERLAP_TOKENS
+        reasons.append("the collection does not declare an overlap")
+    elif overlap < 0 or overlap >= max_tokens:
+        overlap = DEFAULT_NUMBER_OF_OVERLAP_TOKENS
+        reasons.append("the overlap is outside the chunk")
+
+    target = {
+        MAX_TOKENS_IN_CHUNK_KEY: max_tokens,
+        NUMBER_OF_OVERLAP_TOKENS_KEY: overlap,
+    }
+    if declared == target:
+        return None
+    if not reasons:
+        reasons.append("the stored values are not whole numbers")
+    return {"from": declared, "to": target, "reasons": reasons}
+
+
 def _declared_or_defaults(declared_max, declared_overlap, bind_defaults, collection):
     """Chunking of the collection, or the global defaults bound onto it."""
     if declared_max is not None:
-        return _as_int(declared_max, DEFAULT_MAX_TOKENS_IN_CHUNK), _as_int(
+        return as_int(declared_max, DEFAULT_MAX_TOKENS_IN_CHUNK), as_int(
             declared_overlap, DEFAULT_NUMBER_OF_OVERLAP_TOKENS
         )
     if bind_defaults:

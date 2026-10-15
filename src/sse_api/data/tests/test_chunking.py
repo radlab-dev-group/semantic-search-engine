@@ -38,6 +38,7 @@ from sse_api.data.controllers.chunking import (
     InvalidChunking,
     check_chunk_size,
     declared_chunking,
+    plan_chunking_fix,
     resolve_chunking,
 )
 from sse_api.data.core.constants import (
@@ -706,3 +707,99 @@ class CheckCollectionChunkingCommandTests(ChunkingTestCase):
             report = json.loads(self.run_command("--verify", "--json"))
         entry = {e["collection"]: e for e in report}["declared-collection"]
         self.assertIsNone(entry["measured"])
+
+
+class PlanChunkingFixTests(ChunkingTestCase):
+    def test_collection_without_chunking_gets_the_defaults(self):
+        plan = plan_chunking_fix(self.collection)
+        self.assertEqual(
+            plan["to"],
+            {
+                MAX_TOKENS_IN_CHUNK_KEY: DEFAULT_MAX_TOKENS_IN_CHUNK,
+                NUMBER_OF_OVERLAP_TOKENS_KEY: DEFAULT_NUMBER_OF_OVERLAP_TOKENS,
+            },
+        )
+        self.assertEqual(plan["from"], {})
+
+    def test_collection_with_a_sane_chunking_needs_no_fix(self):
+        collection = self.make_collection("sane", chunking=(300, 30))
+        self.assertIsNone(plan_chunking_fix(collection, embedder_limit=2048))
+
+    def test_chunk_above_the_embedder_input_is_clamped(self):
+        collection = self.make_collection("too-long", chunking=(4096, 128))
+        plan = plan_chunking_fix(collection, embedder_limit=2048)
+        self.assertEqual(plan["to"][MAX_TOKENS_IN_CHUNK_KEY], 2048)
+        self.assertEqual(plan["to"][NUMBER_OF_OVERLAP_TOKENS_KEY], 128)
+
+    def test_overlap_is_brought_back_inside_the_chunk(self):
+        for name, chunking in (
+            ("overlap-too-big", (100, 200)),
+            ("overlap-negative", (100, -3)),
+        ):
+            with self.subTest(chunking=chunking):
+                collection = self.make_collection(name, chunking=chunking)
+                plan = plan_chunking_fix(collection)
+                self.assertEqual(
+                    plan["to"][NUMBER_OF_OVERLAP_TOKENS_KEY],
+                    DEFAULT_NUMBER_OF_OVERLAP_TOKENS,
+                )
+
+    def test_values_which_are_not_numbers_are_normalized(self):
+        collection = self.make_collection("junk")
+        collection.metadata_json = {
+            CHUNKING_METADATA_KEY: {
+                MAX_TOKENS_IN_CHUNK_KEY: "wide",
+                NUMBER_OF_OVERLAP_TOKENS_KEY: 0,
+            }
+        }
+        plan = plan_chunking_fix(collection)
+        self.assertEqual(
+            plan["to"][MAX_TOKENS_IN_CHUNK_KEY], DEFAULT_MAX_TOKENS_IN_CHUNK
+        )
+        self.assertTrue(plan["reasons"])
+
+
+class CheckCollectionChunkingFixTests(CheckCollectionChunkingCommandTests):
+    def test_dry_run_writes_nothing(self):
+        output = self.run_command("--collection", "collection", "--fix", "--dry-run")
+        self.assertIn("fix (dry run)", output)
+        self.assertEqual(self.reload(self.collection).metadata_json, None)
+
+    def test_fix_binds_the_defaults(self):
+        output = self.run_command("--collection", "collection", "--fix")
+        self.assertIn("fix applied", output)
+        self.assertEqual(
+            self.reload(self.collection).chunking(),
+            {
+                MAX_TOKENS_IN_CHUNK_KEY: DEFAULT_MAX_TOKENS_IN_CHUNK,
+                NUMBER_OF_OVERLAP_TOKENS_KEY: DEFAULT_NUMBER_OF_OVERLAP_TOKENS,
+            },
+        )
+
+    def test_fix_clamps_a_chunk_which_does_not_fit_the_embedder(self):
+        with patch.object(
+            check_collection_chunking, "embedder_max_length", return_value=5
+        ):
+            output = self.run_command(
+                "--collection", "declared-collection", "--fix", "--json"
+            )
+        entry = {e["collection"]: e for e in json.loads(output)}[
+            "declared-collection"
+        ]
+        self.assertTrue(entry["fix"]["changed"])
+        self.assertTrue(entry["fix"]["applied"])
+        self.assertEqual(entry["fix"]["to"][MAX_TOKENS_IN_CHUNK_KEY], 5)
+        self.assertEqual(
+            self.reload(self.declared).chunking()[MAX_TOKENS_IN_CHUNK_KEY], 5
+        )
+
+    def test_sane_collection_is_left_alone(self):
+        self.declared.set_chunking(64, 4)
+        self.declared.save(update_fields=["metadata_json"])
+        report = json.loads(
+            self.run_command(
+                "--collection", "declared-collection", "--fix", "--json"
+            )
+        )
+        entry = {e["collection"]: e for e in report}["declared-collection"]
+        self.assertFalse(entry["fix"]["changed"])

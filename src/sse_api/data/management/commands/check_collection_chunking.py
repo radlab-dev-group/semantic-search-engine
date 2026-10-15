@@ -11,10 +11,17 @@ same way.  This command reports what a collection declares and - with
 tokenizer of the embedder of the collection.  Chunks longer than the declared
 maximum come from an indexing call which used other settings.
 
+``--fix`` repairs the declarations, which is metadata only: a collection
+without chunking gets the defaults, a chunk above the input of its embedder is
+clamped to it and an impossible overlap is corrected.  ``--dry-run`` shows the
+plan without writing.  **No text is ever re-split** - chunks which are already
+in the database can only be corrected by indexing them again.
+
 Examples::
 
     python manage.py check_collection_chunking
     python manage.py check_collection_chunking --collection my_docs --verify
+    python manage.py check_collection_chunking --fix --dry-run
     python manage.py check_collection_chunking --json
 """
 
@@ -25,7 +32,7 @@ from typing import Any, Dict, List, Optional
 from django.core.management.base import BaseCommand
 from django.db.models import Count
 
-from sse_api.data.controllers.chunking import embedder_max_length
+from sse_api.data.controllers.chunking import embedder_max_length, plan_chunking_fix
 from sse_api.data.core.constants import MAX_TOKENS_IN_CHUNK_KEY
 from sse_api.data.models import CollectionOfDocuments, DocumentPageText
 from sse_api.engine.core.config.models_config import EmbeddingModelsConfig
@@ -127,6 +134,19 @@ class Command(BaseCommand):
             help="How many chunks per collection to measure (0 = all)",
         )
         parser.add_argument(
+            "--fix",
+            action="store_true",
+            help=(
+                "Repair the chunking declared on the collections (metadata "
+                "only, no text is re-split)"
+            ),
+        )
+        parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="With --fix: show what would change, write nothing",
+        )
+        parser.add_argument(
             "--json",
             action="store_true",
             dest="as_json",
@@ -185,7 +205,27 @@ class Command(BaseCommand):
                 if tokenizer is not None
                 else None
             )
+        if options.get("fix"):
+            entry["fix"] = self.fix(collection, entry, options.get("dry_run"))
         return entry
+
+    @staticmethod
+    def fix(collection: CollectionOfDocuments, entry, dry_run) -> Dict[str, Any]:
+        """Plan (and, unless ``--dry-run``, write) the fix of one collection."""
+        plan = plan_chunking_fix(collection, entry["embedder_max_model_length"])
+        if plan is None:
+            return {"changed": False}
+        plan = dict(plan, changed=True, applied=False)
+        if dry_run:
+            return plan
+        try:
+            collection.set_chunking(**plan["to"])
+            if collection.pk is not None:
+                collection.save(update_fields=["metadata_json"])
+            plan["applied"] = True
+        except Exception as error:  # a broken write must not stop the audit
+            plan["error"] = str(error)
+        return plan
 
     def write_lines(self, report: List[Dict[str, Any]]) -> None:
         if not report:
@@ -210,6 +250,23 @@ class Command(BaseCommand):
                         "every chunk is cut off by the model"
                     )
                 )
+            fix = entry.get("fix")
+            if fix is not None:
+                if not fix["changed"]:
+                    self.stdout.write("  chunking needs no fix")
+                else:
+                    self.stdout.write(
+                        f"  fix{' applied' if fix['applied'] else ' (dry run)'}: "
+                        f"{fix['from'] or 'nothing declared'} -> {fix['to']}"
+                    )
+                    for reason in fix["reasons"]:
+                        self.stdout.write(f"    - {reason}")
+                    if fix.get("error"):
+                        self.stdout.write(
+                            self.style.ERROR(
+                                f"    could not be written: {fix['error']}"
+                            )
+                        )
             measured = entry.get("measured")
             if measured is None:
                 continue
