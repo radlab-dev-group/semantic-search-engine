@@ -1436,7 +1436,7 @@ class DBSemanticSearchController:
             if len(a["left_context"]):
                 left_ctx_str = a["left_context"][-1]["text_str"]
             if len(a["right_context"]):
-                right_ctx_str = a["right_context"][-1]["text_str"]
+                right_ctx_str = a["right_context"][0]["text_str"]
             ans_dict[idx] = {
                 "score": a["text"]["score"],
                 "document_name": a["text"]["document_name"],

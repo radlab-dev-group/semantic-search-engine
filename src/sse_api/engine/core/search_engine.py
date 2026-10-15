@@ -310,7 +310,7 @@ def reformat_search_results_to_display(
         if len(a["left_context"]):
             left_ctx_str = a["left_context"][-1]["text_str"]
         if len(a["right_context"]):
-            right_ctx_str = a["right_context"][-1]["text_str"]
+            right_ctx_str = a["right_context"][0]["text_str"]
 
         text_info = a["text"]
         ans_dict[idx] = {
