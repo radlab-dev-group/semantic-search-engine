@@ -466,6 +466,7 @@ class RelationalDBController:
         embedder_index_params: str = None,
         embedder_search_params: str = None,
         add_to_group: OrganisationGroup = None,
+        metadata_json: dict = None,
     ) -> CollectionOfDocuments:
         collection, created = CollectionOfDocuments.objects.get_or_create(
             name=collection_name, created_by=created_by
@@ -484,6 +485,7 @@ class RelationalDBController:
             collection.embedder_index_type = embedder_index_type
             collection.embedder_index_params = embedder_index_params
             collection.embedder_search_params = embedder_search_params
+            collection.metadata_json = metadata_json
             if add_to_group is not None:
                 if not CollectionOfDocuments.objects.filter(
                     pk=collection.pk, visible_to_groups__in=[add_to_group]

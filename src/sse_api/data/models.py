@@ -98,7 +98,9 @@ class CollectionOfDocuments(models.Model):
         number_of_overlap_tokens : int
             Number of tokens repeated between neighbouring chunks.
         """
-        metadata = dict(self.metadata_json) if isinstance(self.metadata_json, dict) else {}
+        metadata = (
+            dict(self.metadata_json) if isinstance(self.metadata_json, dict) else {}
+        )
         metadata[CHUNKING_METADATA_KEY] = {
             MAX_TOKENS_IN_CHUNK_KEY: int(max_tokens_in_chunk),
             NUMBER_OF_OVERLAP_TOKENS_KEY: int(number_of_overlap_tokens),
@@ -117,7 +119,9 @@ class CollectionOfDocuments(models.Model):
 
     @strict_chunking.setter
     def strict_chunking(self, value: bool):
-        metadata = dict(self.metadata_json) if isinstance(self.metadata_json, dict) else {}
+        metadata = (
+            dict(self.metadata_json) if isinstance(self.metadata_json, dict) else {}
+        )
         metadata[STRICT_CHUNKING_METADATA_KEY] = bool(value)
         self.metadata_json = metadata
 
