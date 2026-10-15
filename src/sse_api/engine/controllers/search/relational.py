@@ -24,6 +24,7 @@ class DBTextSearchController:
         texts_scores: list,
         surrounding_chunks: int = 0,
         texts_similarity: list | None = None,
+        only_used_to_search: bool = True,
     ) -> list:
         """
         Retrieve ``DocumentPageText`` objects for the given IDs and attach
@@ -42,16 +43,21 @@ class DBTextSearchController:
             Cosine similarity of every id, reported next to ``score``.
             Entries are ``None`` for chunks which the vector search did not
             return; the whole argument may be ``None`` as well.
+        only_used_to_search : bool, default True
+            Drop the chunks of the documents disabled in the search
+            (``Document.use_in_search=False``), so that a deactivated
+            document never appears in the results.
 
         Returns
         -------
         list
             List of dictionaries containing the main text and its context.
         """
+        opts = {"id__in": texts_ids}
+        if only_used_to_search:
+            opts["page__document__use_in_search"] = True
         document_pages = list(
-            DocumentPageText.objects.filter(id__in=texts_ids).select_related(
-                "page__document"
-            )
+            DocumentPageText.objects.filter(**opts).select_related("page__document")
         )
         # Map IDs to objects to maintain order from texts_ids
         pages_map = {page.id: page for page in document_pages}
@@ -297,6 +303,7 @@ class DBTextSearchController:
         max_results: int = 100,
         filters: dict = None,
         language: str = None,
+        only_used_to_search: bool = True,
     ) -> list:
         """
         Perform a full-text search in PostgreSQL using FTS functionality.
@@ -313,15 +320,19 @@ class DBTextSearchController:
             Additional filters (e.g., document_names, relative_paths).
         language : str, optional
             Language for the FTS configuration (e.g., 'polish', 'english').
+        only_used_to_search : bool, default True
+            Limit to the chunks of the documents enabled in the search
+            (``Document.use_in_search=True``).
 
         Returns
         -------
         list
             List of tuples (text_id, rank).
         """
-        queryset = DocumentPageText.objects.filter(
-            page__document__collection=collection
-        )
+        opts = {"page__document__collection": collection}
+        if only_used_to_search:
+            opts["page__document__use_in_search"] = True
+        queryset = DocumentPageText.objects.filter(**opts)
 
         if filters:
             if "document_names" in filters and filters["document_names"]:

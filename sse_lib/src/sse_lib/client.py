@@ -561,6 +561,77 @@ class SSEClient:
         )
         return dict(body or {})
 
+    # --- visibility in the search --------------------------------------------
+    def set_documents_use_in_search(
+        self,
+        collection: CollectionLike,
+        documents: Optional[Union[str, Sequence[str]]] = None,
+        document_ids: Optional[Union[int, Sequence[int]]] = None,
+        use_in_search: bool = False,
+    ) -> Dict[str, Any]:
+        """Enable or disable documents in the search
+        (``POST set_documents_use_in_search``).
+
+        Documents are addressed by their names (as served by
+        :meth:`list_documents`) and/or by their ids; at least one of them has
+        to be given.  Disabling sets ``use_in_search=False`` on them: their
+        chunks stop being returned by the search, but nothing is removed —
+        the texts and the embeddings stay in both databases, so
+        :meth:`activate_documents` brings them back without any re-indexing.
+
+        Only the owner of the collection may change its documents.  The answer
+        reports how many documents were changed (``updated_documents``) and
+        which names/ids were not found (``not_found``).
+        """
+        names = [
+            _require_text(name, "document name") for name in _as_sequence(documents)
+        ]
+        ids = [
+            _as_identifier(document_id) for document_id in _as_sequence(document_ids)
+        ]
+        if not names and not ids:
+            raise SSEValueError(
+                "documents (names) or document_ids have to be given to change them"
+            )
+        payload: Dict[str, Any] = {
+            "collection_name": _name(collection),
+            "use_in_search": bool(use_in_search),
+        }
+        if names:
+            payload["documents[]"] = names
+        if ids:
+            payload["document_ids[]"] = ids
+        body = self.post(endpoints.SET_DOCUMENTS_USE_IN_SEARCH, payload)
+        return dict(body or {})
+
+    def deactivate_documents(
+        self,
+        collection: CollectionLike,
+        documents: Optional[Union[str, Sequence[str]]] = None,
+        document_ids: Optional[Union[int, Sequence[int]]] = None,
+    ) -> Dict[str, Any]:
+        """Exclude documents from the search (``use_in_search=False``)."""
+        return self.set_documents_use_in_search(
+            collection,
+            documents=documents,
+            document_ids=document_ids,
+            use_in_search=False,
+        )
+
+    def activate_documents(
+        self,
+        collection: CollectionLike,
+        documents: Optional[Union[str, Sequence[str]]] = None,
+        document_ids: Optional[Union[int, Sequence[int]]] = None,
+    ) -> Dict[str, Any]:
+        """Include documents in the search again (``use_in_search=True``)."""
+        return self.set_documents_use_in_search(
+            collection,
+            documents=documents,
+            document_ids=document_ids,
+            use_in_search=True,
+        )
+
     # --- search & generation -------------------------------------------------
     def search(
         self,

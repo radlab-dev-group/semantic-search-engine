@@ -27,6 +27,14 @@ class SimpleDocumentSerializer(serializers.ModelSerializer):
         fields = ["name"]
 
 
+class DocumentVisibilitySerializer(serializers.ModelSerializer):
+    """Name of the document and whether it takes part in the search."""
+
+    class Meta:
+        model = Document
+        fields = ["id", "name", "use_in_search"]
+
+
 class DocumentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Document
