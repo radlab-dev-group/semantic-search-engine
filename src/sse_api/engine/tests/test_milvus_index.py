@@ -5,13 +5,20 @@ from unittest.mock import MagicMock
 sys.modules.setdefault("sse_api.engine.controllers.search.semantic", MagicMock())
 sys.modules.setdefault("sse_api.engine.controllers.search.query", MagicMock())
 sys.modules.setdefault("sse_api.engine.controllers.search.relational", MagicMock())
-sys.modules.setdefault("sse_api.engine.controllers.database.relational_db", MagicMock())
-sys.modules.setdefault("sse_api.engine.controllers.database.semantic_db", MagicMock())
-sys.modules.setdefault("sse_api.engine.controllers.models_logic.embedders_rerankers", MagicMock())
+sys.modules.setdefault(
+    "sse_api.engine.controllers.database.relational_db", MagicMock()
+)
+sys.modules.setdefault(
+    "sse_api.engine.controllers.database.semantic_db", MagicMock()
+)
+sys.modules.setdefault(
+    "sse_api.engine.controllers.models_logic.embedders_rerankers", MagicMock()
+)
 sys.modules.setdefault("sse_api.engine.controllers.system_logic.system", MagicMock())
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "sse_api.tests.settings_django")
 import django
+
 django.setup()
 
 from sse_api.engine.controllers.database.milvus import (
@@ -124,14 +131,10 @@ def test_search_uses_metric_type_of_existing_index():
     handler._search_params = None
     handler._milvus_client = MagicMock()
     handler._milvus_client.list_indexes.return_value = ["emb_idx"]
-    handler._milvus_client.describe_index.return_value = {
-        "metric_type": "IP"
-    }
+    handler._milvus_client.describe_index.return_value = {"metric_type": "IP"}
     handler._milvus_client.search.return_value = [[]]
-    handler._MilvusHandler__prepare_milvus_client = MagicMock()
-    handler._MilvusHandler__prepare_filtering_options = MagicMock(
-        return_value=""
-    )
+    handler._prepare_milvus_client = MagicMock()
+    handler._MilvusHandler__prepare_filtering_options = MagicMock(return_value="")
     handler.prepare_embeddings = MagicMock(return_value=[[0.1, 0.2]])
 
     handler.search(search_text="test query")
@@ -140,7 +143,5 @@ def test_search_uses_metric_type_of_existing_index():
         collection_name="test_collection",
         index_name="emb_idx",
     )
-    search_params = handler._milvus_client.search.call_args.kwargs[
-        "search_params"
-    ]
+    search_params = handler._milvus_client.search.call_args.kwargs["search_params"]
     assert search_params["metric_type"] == "IP"

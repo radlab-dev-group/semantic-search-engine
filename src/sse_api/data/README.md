@@ -59,6 +59,17 @@ data/
 | **add_and_index_texts**                    | Accept raw JSON‑encoded texts (already split into pages) and index them directly.                                  |
 | **categories**, **documents**              | Retrieve distinct categories or document names for a given collection.                                             |
 | **question_templates**, **filter_options** | Expose the available query templates and mock filter data (useful for UI prototypes).                              |
+| **delete_texts**                           | Delete text chunks of a collection (`chunk_ids[]`), from the relational db and Milvus.                             |
+| **delete_documents**                       | Delete documents (by `documents[]` names and/or `document_ids[]`) with their pages and chunks, from both databases.|
+| **delete_collection**                      | Delete the whole collection with all of its content from the relational db and Milvus.                            |
+
+The deletion is performed by `data/controllers/deletion.py`
+(`ContentDeletionController`): rows are removed first and the embeddings of
+the removed texts afterwards, and the outcome (deleted rows, deleted vectors,
+not‑found names/ids) is reported in the response. Only the **owner** of a
+collection may delete it; a collection which is merely shared with the groups
+of the user is reported as not found. Deleting a collection also removes the
+chats and the search history which reference it (protected foreign keys).
 
 ### Typical Ingestion Flow
 
