@@ -18,6 +18,7 @@ from sse_api.data.controllers.upload import (
     UploadDocumentsController,
     UploadRejected,
 )
+from sse_api.data.models import CollectionOfDocuments
 from sse_api.tests.input_support import EndpointInputMixin, INDEXING_OPTIONS
 
 
@@ -191,7 +192,8 @@ class UploadPipelineTests(EndpointInputMixin, TestCase):
         self.controller = UploadDocumentsController(
             upload_dir=self.temp.name, store_to_db=False
         )
-        self.collection = SimpleNamespace(name="collection")
+        # Not saved: the chunking resolver keeps such a collection in memory.
+        self.collection = CollectionOfDocuments(name="collection")
 
     def run_upload(self, files):
         return self.controller.store_and_index_files_rel_db_post_request(

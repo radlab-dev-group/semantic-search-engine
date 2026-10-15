@@ -4,6 +4,8 @@ UPLOAD_REJECTED = "UPLOAD_REJECTED"
 DOCUMENT_NOT_FOUND = "DOCUMENT_NOT_FOUND"
 CHUNK_NOT_FOUND = "CHUNK_NOT_FOUND"
 DELETE_PROTECTED = "DELETE_PROTECTED"
+CHUNKING_TOO_LONG = "CHUNKING_TOO_LONG"
+CHUNKING_MISMATCH = "CHUNKING_MISMATCH"
 
 ALL_ERRORS_DATA = {
     DOCUMENT_NOT_FOUND: {
@@ -25,6 +27,32 @@ ALL_ERRORS_DATA = {
         MSG: {
             MSG_PL: "Nie można usunąć: inne dane są powiązane z usuwanymi.",
             MSG_EN: "Cannot delete: other data are related to the deleted ones.",
+        },
+    },
+    CHUNKING_TOO_LONG: {
+        ECODE: "000005_DATA",
+        MSG: {
+            MSG_PL: (
+                "Chunk jest dłuższy niż maksymalna długość wejścia embedera "
+                "użytego w kolekcji; teksty byłyby ucinane bez ostrzeżenia."
+            ),
+            MSG_EN: (
+                "The chunk is longer than the maximum input length of the "
+                "embedder of the collection; texts would be truncated silently."
+            ),
+        },
+    },
+    CHUNKING_MISMATCH: {
+        ECODE: "000006_DATA",
+        MSG: {
+            MSG_PL: (
+                "Parametry fragmentowania są niezgodne z ustawionymi dla kolekcji "
+                "(kolekcja ma włączony rygorystyczny podział tekstów)."
+            ),
+            MSG_EN: (
+                "Chunking settings differ from the ones of the collection "
+                "(the collection enforces its own chunking)."
+            ),
         },
     },
     UPLOAD_REJECTED: {

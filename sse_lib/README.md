@@ -20,20 +20,10 @@ client.create_collection(
     embedder="radlab/polish-bi-encoder-mean",
     reranker="radlab/polish-cross-encoder",
     index_type="HNSW",
+    chunking={"max_tokens_in_chunk": 128, "number_of_overlap_tokens": 0},
 )
-client.upload_files(
-    "my_docs",
-    ["invoice.pdf", "regulations.zip"],
-    max_tokens_in_chunk=128,
-    number_of_overlap_tokens=0,
-)
-client.index_documents(
-    "my_docs",
-    ["Some text to index."],
-    category="Notes",
-    max_tokens_in_chunk=128,
-    number_of_overlap_tokens=0,
-)
+client.upload_files("my_docs", ["invoice.pdf", "regulations.zip"])
+client.index_documents("my_docs", ["Some text to index."], category="Notes")
 
 found = client.search("my_docs", "policy on data retention",
                       SearchOptions(max_results=20, rerank_results=True))
@@ -47,14 +37,17 @@ answer = client.generate_answer(
 print(answer.answer)
 ```
 
-Indexing and generation values above are **not decoration**. The backend
-requires `max_tokens_in_chunk`, `number_of_overlap_tokens` and
-`percentage_rank_mass` and rejects them as `null`, and the library deliberately
-ships no default for them: the right chunk size follows the context window of
-the embedder the deployment is configured with, which the library cannot know.
-Omit one and you get `SSEValueError` naming the field, before the request goes
-out. Set `SSEClient(..., default_indexing_options={...})` to give them once per
-client instead of per call.
+Chunking belongs to the **collection**, not to a single call: declare it with
+`create_collection(..., chunking={...})` (or `strict_chunking=True` to forbid any
+deviation) and the indexing calls above may leave both keys out — the server takes
+the settings of the collection. `client.embedders_info()` returns
+`max_model_length` of every embedder, the largest chunk its model can take in
+(`client.rerankers_info()` the pair budget of the rerankers). Passing
+`max_tokens_in_chunk` / `number_of_overlap_tokens` per call, or once per client
+with `SSEClient(..., default_indexing_options={...})`, still works; a split which
+cannot exist (`overlap >= chunk`) raises `SSEValueError` before the request goes
+out. `percentage_rank_mass` of `generate_answer` is required by the backend and
+has no library-wide default on purpose.
 
 ## Installation
 
@@ -112,6 +105,7 @@ Python 3.9+, `requests` as the only runtime dependency.
 | `generate_answer(query_response_id, options, ...)` | `POST generative_answer` |
 | `rate_answer(answer_response_id, value, value_max, comment=None)` | `POST rate_generative_answer` |
 | `list_generative_models()`, `list_embedders()`, `list_rerankers()` | `GET generative_models`, `GET embedders`, `GET rerankers` |
+| `embedders_info()`, `rerankers_info()` | `GET embedders`, `GET rerankers` — `models_info` with `vector_size`, `device` and `max_model_length` |
 | `new_chat(...)`, `send_chat_message(...)`, `save_chat(...)`, `get_chat_by_hash(...)`, `list_chats()` | `POST new_chat`, `POST add_user_message`, `POST save_chat`, `GET get_chat_by_hash`, `GET chats` |
 | `login()`, `login_with_code()`, `refresh_access_token()`, `logout()`, `login_url()` | `POST login`, `POST refresh_token`, `POST logout`, `POST login_url` |
 | `health()`, `is_healthy()` | `GET healthz` (public — no token, no login) |
@@ -119,6 +113,8 @@ Python 3.9+, `requests` as the only runtime dependency.
 
 Collections may be passed as a name, a `Collection` returned by
 `create_collection()` / `list_collections()`, or any mapping with a `name` key.
+A `Collection` also carries the settings of the collection: `metadata_json`,
+`chunking` (`{}` when none was declared) and `strict_chunking`.
 
 `send_chat_message(..., collection="my_docs")` requires an explicit collection,
 even if the chat was created with one: the current server resolves the collection
@@ -132,7 +128,7 @@ provided empty prefix overrides `SSE_API_PREFIX`.
 | Class | Used by | Notes |
 |-------|---------|-------|
 | `SearchOptions` | `search()` | Only the fields that are set are sent; `extra` merges unknown keys |
-| `IndexingOptions` | `upload_files()`, `index_documents()` | Always serialises all seven keys the server reads with `options["..."]` |
+| `IndexingOptions` | `upload_files()`, `index_documents()` | Serialises the five cleaning keys the server reads with `options["..."]`; the two chunk keys appear only when set, so the collection decides |
 | `GenerativeOptions` | `generate_answer()`, `send_chat_message()` | `None` fields are dropped |
 
 Single options may also be passed as keyword arguments — the two calls below are

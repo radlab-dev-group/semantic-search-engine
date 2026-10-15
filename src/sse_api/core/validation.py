@@ -128,6 +128,45 @@ def generation_options(value):
     return value
 
 
+def chunk_overlap(value, max_tokens_in_chunk=None):
+    """
+    Validate an overlap between chunks: a whole number of tokens which is
+    smaller than the chunk itself (when that chunk size is already known).
+    """
+    overlap = number(value)
+    if not overlap.is_integer():
+        raise ValueError("Invalid overlap")
+    overlap = int(overlap)
+    if max_tokens_in_chunk is not None and not 0 <= overlap < max_tokens_in_chunk:
+        raise ValueError("Invalid overlap")
+    if overlap < 0:
+        raise ValueError("Invalid overlap")
+    return overlap
+
+
+def chunking(value):
+    """
+    Chunking settings of a collection: how its texts are split into chunks.
+
+    Accepts an object (or a JSON string) with ``max_tokens_in_chunk`` and the
+    optional ``number_of_overlap_tokens``, which defaults to no overlap. The
+    limit imposed by the embedder of the collection is checked later, where
+    that model is known.
+
+    Returns
+    -------
+    dict
+        ``{"max_tokens_in_chunk": int, "number_of_overlap_tokens": int}``.
+    """
+    value = options_object(value)
+    max_tokens = identifier(value.get("max_tokens_in_chunk"))
+    overlap = chunk_overlap(value.get("number_of_overlap_tokens", 0), max_tokens)
+    return {
+        "max_tokens_in_chunk": max_tokens,
+        "number_of_overlap_tokens": overlap,
+    }
+
+
 def indexing_options(value):
     value = options_object(value)
     for key in (
@@ -138,11 +177,21 @@ def indexing_options(value):
         "check_text_lang",
     ):
         value[key] = boolean(value.get(key))
-    value["max_tokens_in_chunk"] = identifier(value.get("max_tokens_in_chunk"))
-    overlap = number(value.get("number_of_overlap_tokens"))
-    if not overlap.is_integer() or not 0 <= overlap < value["max_tokens_in_chunk"]:
-        raise ValueError("Invalid overlap")
-    value["number_of_overlap_tokens"] = int(overlap)
+    # The size of a chunk belongs to the collection and may be declared there
+    # once, so both keys are optional here. When they are given, they still
+    # have to describe a consistent split.
+    max_tokens = value.get("max_tokens_in_chunk")
+    if max_tokens is None:
+        value.pop("max_tokens_in_chunk", None)
+    else:
+        value["max_tokens_in_chunk"] = identifier(max_tokens)
+    overlap = value.get("number_of_overlap_tokens")
+    if overlap is None:
+        value.pop("number_of_overlap_tokens", None)
+    else:
+        value["number_of_overlap_tokens"] = chunk_overlap(
+            overlap, value.get("max_tokens_in_chunk")
+        )
     return value
 
 

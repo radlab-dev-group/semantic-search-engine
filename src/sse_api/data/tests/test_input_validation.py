@@ -5,6 +5,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from rest_framework.test import force_authenticate
 
+from sse_api.data.models import CollectionOfDocuments
 from sse_api.data.api import (
     NewCollection,
     ListCategoriesFromCollection,
@@ -176,6 +177,11 @@ class DataInputTests(EndpointInputMixin, TestCase):
         with patch("sse_api.data.api.RelationalDBController") as relational:
             relational.return_value.add_documents_from_list_of_doc_as_dict.return_value = (
                 []
+            )
+            # A collection of its own: the chunking of the request is resolved
+            # against it, and an unsaved one is never written to.
+            relational.return_value.get_collection.return_value = (
+                CollectionOfDocuments(name="docs")
             )
             for options in (INDEXING_OPTIONS, json.dumps(INDEXING_OPTIONS)):
                 with self.subTest(options=options):

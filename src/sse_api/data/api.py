@@ -11,6 +11,7 @@ from sse_api.core.validation import (
     identifiers,
     text_list,
     boolean,
+    chunking,
     indexing_options,
     texts,
 )
@@ -40,6 +41,19 @@ from sse_api.data.core.errors import (
     CHUNK_NOT_FOUND,
     DOCUMENT_NOT_FOUND,
     DELETE_PROTECTED,
+    CHUNKING_TOO_LONG,
+    CHUNKING_MISMATCH,
+)
+from sse_api.data.core.constants import (
+    DEFAULT_MAX_TOKENS_IN_CHUNK,
+    DEFAULT_NUMBER_OF_OVERLAP_TOKENS,
+)
+from sse_api.data.controllers.chunking import (
+    ChunkingMismatch,
+    ChunkingTooLong,
+    InvalidChunking,
+    check_chunk_size,
+    resolve_chunking,
 )
 
 
@@ -53,6 +67,31 @@ from sse_api.data.models import Document, CollectionOfDocuments
 
 # Connection configuration of the vector database (Milvus).
 MILVUS_CONFIG_PATH = "./configs/milvus_config.json"
+
+
+def resolve_request_chunking(
+    collection: CollectionOfDocuments,
+    indexing_options: dict,
+    language: str,
+):
+    """
+    Resolve the chunking of one indexing call against the collection.
+
+    Returns
+    -------
+    tuple
+        ``(options, None)`` with the options to index with, or
+        ``(None, response)`` carrying the error to send back to the client.
+    """
+    try:
+        options = resolve_chunking(collection, indexing_options)
+    except ChunkingMismatch:
+        return None, error_response(CHUNKING_MISMATCH, language)
+    except ChunkingTooLong:
+        return None, error_response(CHUNKING_TOO_LONG, language)
+    except InvalidChunking:
+        return None, error_response(INVALID_PARAMS, language)
+    return options, None
 
 
 def get_owned_collection(
@@ -82,9 +121,11 @@ class NewCollection(APIView):
         "model_reranker",
         "embedder_index_type",
     ]
-    optional_params = ["group_name"]
+    optional_params = ["group_name", "chunking", "strict_chunking"]
     input_validators = {key: required_text for key in required_params}
     input_validators["group_name"] = optional_text
+    input_validators["chunking"] = chunking
+    input_validators["strict_chunking"] = boolean
 
     @required_params_exists(
         required_params=required_params, optional_params=optional_params
@@ -92,7 +133,8 @@ class NewCollection(APIView):
     @get_organisation_user
     @get_default_language
     def post(self, language, organisation_user, request, *args, **kwargs):
-        embedder_index_type = request.data.get("embedder_index_type")
+        params = request_params(request)
+        embedder_index_type = params.get("embedder_index_type")
         if embedder_index_type not in INDEX_QUERY_PARAMS:
             return error_response(INVALID_PARAMS, language)
         embedder_index_params = INDEX_QUERY_PARAMS[embedder_index_type][
@@ -102,10 +144,10 @@ class NewCollection(APIView):
             "QUERY_PARAMS"
         ]
 
-        collection_name = request.data.get("collection_name").replace(" ", "_")
+        collection_name = params.get("collection_name").replace(" ", "_")
 
         org_group = None
-        group_name = request.data.get("group_name") or ""
+        group_name = params.get("group_name") or ""
         if len(group_name.strip()):
             org_group = SystemController.get_organisation_group(
                 organisation=organisation_user.organisation, group_name=group_name
@@ -116,6 +158,26 @@ class NewCollection(APIView):
                     language=language,
                     error_name=GROUP_NAME_NOT_EXIST,
                 )
+
+        # The embedder of the new collection has to fit the declared chunks;
+        # a chunk which would be cut off by the model is refused here, where
+        # the choice of the model is made.
+        collection_draft = CollectionOfDocuments()
+        if "chunking" in params:
+            try:
+                check_chunk_size(
+                    params["chunking"]["max_tokens_in_chunk"],
+                    embedder_model=params.get("model_embedder"),
+                    reranker_model=params.get("model_reranker"),
+                )
+            except (ChunkingTooLong, InvalidChunking):
+                return error_response(CHUNKING_TOO_LONG, language)
+            collection_draft.set_chunking(
+                params["chunking"]["max_tokens_in_chunk"],
+                params["chunking"]["number_of_overlap_tokens"],
+            )
+        if params.get("strict_chunking"):
+            collection_draft.strict_chunking = True
 
         text_data_db_controller = RelationalDBController()
         semantic_db_controller = SemanticDBController(
@@ -132,6 +194,7 @@ class NewCollection(APIView):
             embedder_index_params=embedder_index_params,
             embedder_search_params=embedder_search_params,
             add_to_group=org_group,
+            metadata_json=collection_draft.metadata_json,
         )
 
         semantic_db_controller.get_add_collection(
@@ -144,7 +207,11 @@ class NewCollection(APIView):
             status=True,
             language=language,
             error_name=None,
-            response_body={"collection_id": collection.pk},
+            response_body={
+                "collection_id": collection.pk,
+                "chunking": collection.chunking_with_defaults(),
+                "strict_chunking": collection.strict_chunking,
+            },
         )
 
 
@@ -226,6 +293,14 @@ class UploadAndIndexFilesToCollection(APIView):
                 response_body=None,
             )
 
+        indexing_options, error = resolve_request_chunking(
+            collection=collection,
+            indexing_options=indexing_options,
+            language=language,
+        )
+        if error is not None:
+            return error
+
         upl_controller = UploadDocumentsController(upload_dir="./upload_sse")
         try:
             upl_doc = upl_controller.store_and_index_files_rel_db_post_request(
@@ -276,6 +351,14 @@ class AddAndIndexTextsFromEP(APIView):
                 error_name=COLLECTION_NOT_FOUND,
                 response_body=None,
             )
+
+        indexing_options, error = resolve_request_chunking(
+            collection=collection,
+            indexing_options=indexing_options,
+            language=language,
+        )
+        if error is not None:
+            return error
 
         results_doc = rel_db_controller.add_documents_from_list_of_doc_as_dict(
             collection=collection,
@@ -460,6 +543,10 @@ class ListFilteringOptions(APIView):
                 "templates": templates,
                 "urls": [],
                 "categories": categories,
+                "chunking_defaults": {
+                    "max_tokens_in_chunk": DEFAULT_MAX_TOKENS_IN_CHUNK,
+                    "number_of_overlap_tokens": DEFAULT_NUMBER_OF_OVERLAP_TOKENS,
+                },
             },
         )
 

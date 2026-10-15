@@ -47,13 +47,14 @@ data/
 | **RelationalDBController** (`engine/controllers/database/relational_db.py`) | - Retrieves user collections. <br> - Adds uploaded documents to the relational DB, handling page creation, optional denoising, and metadata extraction. <br> - Provides helper methods for fetching documents, pages, and categories.                                                            |
 | **SemanticDBController**   (`engine/controllers/database/semantic_db.py`)   | Thin wrapper around Milvus; prepares a collection, creates schemas, and offers a `collections()` helper.                                                                                                                                                          |
 | **UploadDocumentsController** (`upload_logic.py`)  | Orchestrates the full upload‑index pipeline: <br>  1️⃣ Stores files in a structured directory (`<upload_dir>/<org>/<user>/<collection>/<timestamp>/`). <br>  2️⃣ Calls `RelationalDBController.add_uploaded_documents_to_db()`. <br>  3️⃣ Triggers high-performance batch semantic indexing via `SemanticDBController`. |
+| **Chunking** (`controllers/chunking.py`) | `resolve_chunking()` resolves the chunking of one indexing call against the collection (the request wins → the collection → the defaults, bound onto the collection), `check_chunk_size()` refuses a chunk which does not fit `max_model_length` of the embedder of the collection, and a strict collection refuses values other than its own (`ChunkingMismatch`). |
 | **QueryTemplateController** (`template_logic.py`) | Parses a JSON configuration of query templates, validates grammar, and filters documents based on template‑defined data‑connector constraints.                                                                                                                                                   |
 
 ### Public API (`api.py`)
 
 | Endpoint                                   | Description                                                                                                        |
 |--------------------------------------------|--------------------------------------------------------------------------------------------------------------------|
-| **new_collection**                         | Create a new `CollectionOfDocuments` with embedding & reranker settings; optionally link to an organisation group. |
+| **new_collection**                         | Create a new `CollectionOfDocuments` with embedding & reranker settings, optional `chunking` (`max_tokens_in_chunk`, `number_of_overlap_tokens`) and `strict_chunking`; optionally link to an organisation group. |
 | **collections**                            | List all collections accessible to the authenticated user (personal + organisation‑wide).                          |
 | **upload_and_index_files**                 | Accept multipart file upload, store files, run relational indexing, and optionally trigger Milvus indexing.        |
 | **add_and_index_texts**                    | Accept raw JSON‑encoded texts (already split into pages) and index them directly.                                  |
@@ -79,12 +80,35 @@ not‑found names/ids. Nothing is removed, so a deactivated document may be
 enabled again without any re‑indexing. While disabled, its chunks are not
 returned by the search (vector and full‑text sides alike).
 
+### Chunking of a collection
+
+`CollectionOfDocuments.metadata_json` keeps the settings which belong to the collection as a
+whole: `chunking` (`max_tokens_in_chunk`, `number_of_overlap_tokens`) and the `strict_chunking`
+flag. They are declared with `new_collection`, read back with `collections` (the serializer
+exposes `metadata_json`), and every indexing call is resolved against them by
+`data/controllers/chunking.py`: the values of the request win, then the ones of the collection,
+then `DEFAULT_MAX_TOKENS_IN_CHUNK` / `DEFAULT_NUMBER_OF_OVERLAP_TOKENS`
+(`data/core/constants.py`), which are bound onto the collection so that the next call does not
+have to pass them. A strict collection raises `ChunkingMismatch` instead of accepting other
+values, and a chunk which does not fit `max_model_length` of the embedder of the collection
+raises `ChunkingTooLong`. Mixed chunk lengths are allowed — the invariant of a collection is its
+embedder and vector size, not a single chunk size.
+
+`python -m sse_api.manage check_collection_chunking` reports what every collection declares;
+`--verify` measures the stored chunks with the tokenizer of the embedder and points at the chunks
+which are longer than declared (`--collection NAME`, `--limit`, `--json` shape the report).
+`--fix` repairs the declarations through `plan_chunking_fix()` — defaults bound onto a collection
+which has none, a chunk clamped to `max_model_length` of the embedder, an overlap brought back
+inside the chunk — and `--dry-run` prints the plan without writing it. Metadata only: no text is
+re-split, existing chunks require re-indexing.
+
 ### Typical Ingestion Flow
 
-1. **Create a collection** – POST to `/api/<version>/new_collection/` with embedding model names, index type, etc.
+1. **Create a collection** – POST to `/api/<version>/new_collection/` with embedding model names, index type and,
+   optionally, the `chunking` every later indexing call falls back to.
 2. **Upload files** – POST multipart to `/api/<version>/upload_and_index_files/` with `files[]`, `collection_name`, and
-   `indexing_options` (e.g., `use_text_denoiser`, `max_tokens_in_chunk`). The controller stores files, extracts pages,
-   optionally denoises, and finally indexes the cleaned text into Milvus.
+   `indexing_options` (e.g., `use_text_denoiser`; `max_tokens_in_chunk` may be left to the collection). The controller
+   stores files, extracts pages, optionally denoises, and finally indexes the cleaned text into Milvus.
 3. **Optional text‑only indexing** – Use `/api/<version>/add_and_index_texts/` when the client already has pre‑processed
    JSON text chunks.
 

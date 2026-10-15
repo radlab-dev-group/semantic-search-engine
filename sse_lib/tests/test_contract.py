@@ -85,6 +85,8 @@ class ApiContractTest(unittest.TestCase):
             "list_chats",
             "list_embedders",
             "list_rerankers",
+            "embedders_info",
+            "rerankers_info",
             "list_generative_models",
         ):
             self.assertTrue(callable(getattr(SSEClient, method)), method)

@@ -237,8 +237,8 @@ Configuration files live under the `configs/` directory. The most important ones
 |----------------------------------|--------------------------------------------------------------------------|
 | `configs/milvus_config.json`     | Milvus connection, index settings, and embedding model references.       |
 | `configs/aws_config.json`        | S3 credentials and bucket name (used by `AwsHandler`).                   |
-| `configs/embedders.json`         | Registry of available embedding models (paths, vector size, device).     |
-| `configs/rerankers.json`         | Registry of cross‑encoder reranker models.                               |
+| `configs/embedders.json`         | Registry of available embedding models (paths, vector size, device, `max_model_length`). |
+| `configs/rerankers.json`         | Registry of cross‑encoder reranker models (paths, device, `max_model_length`). |
 | `configs/generative-models.json` | Mapping of generative model names to LLMRouter instances.                |
 | `configs/query-templates.json`   | Definition of query‑template grammars and per‑template metadata filters. |
 
@@ -302,7 +302,22 @@ looks like:
 }
 ```
 
-You can add new models by extending the JSON and updating `embedders.json` / `rerankers.json` accordingly.
+You can add new models by extending the JSON and updating `embedders.json` / `rerankers.json`
+accordingly.
+
+#### `max_model_length`
+
+Both registries may declare `max_model_length`, the largest number of tokens the model takes in:
+the input text of an **embedder**, the whole `query + text` pair of a **reranker**.
+
+- A chunk longer than the input of the embedder is truncated by the model silently, so the API
+  refuses such chunking with `CHUNKING_TOO_LONG` — see *Chunking of a collection* below.
+- A chunk which does not fit the pair budget of a reranker is only reported in the server log,
+  because the query already occupies part of that budget and the truncation depends on its length.
+- An entry without `max_model_length` is treated as unlimited, so configurations written before
+  this key existed keep working.
+
+The values are exposed by `GET embedders` / `GET rerankers` in `models_info`.
 
 ### Environment Variables (summary)
 
@@ -474,13 +489,15 @@ each app.
 
 | Method | URL (example)                  | Description                                                                     |
 |--------|--------------------------------|---------------------------------------------------------------------------------|
-| `POST` | `/api/new_collection/`         | Create a new document collection (specify embedder, reranker, index type).      |
+| `POST` | `/api/new_collection/`         | Create a new document collection (embedder, reranker, index type, chunking).    |
 | `GET`  | `/api/collections/`            | List all collections visible to the authenticated user.                         |
 | `POST` | `/api/upload_and_index_files/` | Upload files (multipart) and trigger indexing.                                  |
 | `POST` | `/api/search_with_options/`    | Perform a **Hybrid Search** (vector + text) with rich filtering options.        |
 | `POST` | `/api/generative_answer/`      | Generate a RAG answer for a previously stored query response.                   |
 | `GET`  | `/api/question_templates/`     | List available query‑template collections.                                      |
-| `GET`  | `/api/filter_options/`         | Retrieve mock filter metadata (URLs, categories) – useful for UI drop‑downs.    |
+| `GET`  | `/api/filter_options/`         | Filter metadata for UI drop‑downs (URLs, categories, `chunking_defaults`).      |
+| `GET`  | `/api/embedders/`              | Configured embedders: names and `models_info` (vector size, `max_model_length`).|
+| `GET`  | `/api/rerankers/`              | Configured rerankers: names and `models_info` (`max_model_length` of a pair).   |
 | `GET`  | `/api/categories/`             | List distinct categories present in a collection.                               |
 | `GET`  | `/api/documents/`              | List document names within a collection (used for UI selectors).                |
 | `POST` | `/api/delete_texts/`           | Delete text chunks (`chunk_ids[]`) from PostgreSQL and their vectors from Milvus.|
@@ -553,6 +570,48 @@ chunks and the embeddings of a disabled document stay in both databases, so the 
 enabled again (with `use_in_search: true`) without any re-indexing. While disabled, its chunks
 are not returned by `search_with_options` — neither from the vector search nor from the
 full-text side.
+
+### Chunking of a collection
+
+How the texts of a collection are split into chunks is decided **once**, when the collection is
+created, so that one collection does not drift between uploads:
+
+| Where | What |
+|-------|------|
+| `POST new_collection/` | optional `chunking` (`{"max_tokens_in_chunk": 500, "number_of_overlap_tokens": 64}`) and `strict_chunking`; the answer reports both |
+| `POST upload_and_index_files/`, `POST add_and_index_texts/` | `max_tokens_in_chunk` / `number_of_overlap_tokens` of `indexing_options` are optional — without them the settings of the collection are used |
+| `GET collections/` | every collection carries `metadata_json`, i.e. its `chunking` and `strict_chunking` |
+| `GET filter_options/` | `chunking_defaults` — the values a UI form can be prefilled with |
+| `GET embedders/`, `GET rerankers/` | `models_info` with `max_model_length`, the ceiling of `max_tokens_in_chunk` |
+
+`resolve_chunking` (`data/controllers/chunking.py`) applies, in this order:
+
+1. A request which declares the values wins; the collection is not rewritten.
+2. Otherwise the settings of the collection are used.
+3. When neither side declares anything, the global defaults (500 tokens, no overlap) are used
+   **and remembered on the collection**, so the next call does not have to pass anything.
+4. A collection created with `strict_chunking: true` refuses indexing options which differ from
+   its own — `CHUNKING_MISMATCH` (`000006_DATA`).
+5. A chunk longer than `max_model_length` of the embedder of the collection is refused with
+   `CHUNKING_TOO_LONG` (`000005_DATA`) — a longer text would be truncated by the model without
+   any warning. `number_of_overlap_tokens` always has to stay inside `[0, max_tokens_in_chunk)`.
+
+Chunk sizes are not frozen: a collection *may* hold chunks of several lengths (the vectors stay
+comparable, only the thresholds and the context windows get fuzzier), which is why a request may
+override the settings at all. The hard invariant of a collection is its embedder, its vector size
+and the distance metric. What is already in the database can be audited with
+
+```shell script
+python -m sse_api.manage check_collection_chunking --verify
+python -m sse_api.manage check_collection_chunking --fix --dry-run
+```
+
+`--verify` reports the settings of every collection and measures the stored chunks with the
+tokenizer of the embedder, pointing at the chunks longer than declared. `--fix` repairs the
+**declarations** (defaults bound onto a collection which has none, a chunk clamped to the input
+of the embedder, an impossible overlap corrected) and `--dry-run` only shows that plan. No text
+is ever re-split: chunks which are already in the database can be corrected by indexing them
+again, and `--collection NAME` / `--limit` / `--json` select and format the report.
 
 ### Search Options & Filters
 
@@ -766,11 +825,13 @@ with SSEClient("http://localhost:8271", token="...") as client:
     print(answer.answer)
 ```
 
-`max_tokens_in_chunk`, `number_of_overlap_tokens` and `percentage_rank_mass` are
-required by the backend and have no library-wide default on purpose: the chunk
-size follows the context window of the configured embedder. Omitting one raises
-`SSEValueError` naming the field before the request is sent — pass them per call
-as above, or once per client with `SSEClient(..., default_indexing_options=...)`.
+Chunking belongs to the collection: declare it once with
+`client.create_collection(..., chunking={"max_tokens_in_chunk": 128, "number_of_overlap_tokens": 0})`
+and leave both keys out of the indexing calls; `client.embedders_info()` reports the
+`max_model_length` of each embedder, which is the ceiling of a chunk. Passing the values per call
+(or once per client with `default_indexing_options`) still works, and a split which cannot exist
+(`overlap >= chunk`) raises `SSEValueError` before the request goes out.
+`percentage_rank_mass` of `generate_answer` stays required.
 
 - **Coverage**: collections, file and raw-text indexing, hybrid search, RAG answers and their ratings, embedder/reranker/
   generative model listings, chats, and authentication (static token, username/password login, Keycloak code exchange).
@@ -799,6 +860,7 @@ Additional project‑specific commands are provided by the `sse_tools` scripts:
 | `python -m sse_api.manage runserver 0.0.0.0:8271` | Starts the development server (default port 8271 in `run-api.sh`).                             |
 | `python -m sse_api.manage migrate`                | Applies database migrations (including the generated migration files under `chat/migrations`). |
 | `python -m sse_api.manage createsuperuser`        | Creates a Django superuser for the admin UI (if `ENV_SHOW_ADMIN_WINDOW` is true).              |
+| `python -m sse_api.manage check_collection_chunking` | Reports the chunking of every collection; `--verify` measures the stored chunks with the tokenizer of the embedder, `--fix` repairs the declarations of the collections and `--dry-run` shows that plan (`--collection NAME`, `--limit`, `--json`). |
 
 ### Shell Scripts
 

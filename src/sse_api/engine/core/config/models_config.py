@@ -8,10 +8,17 @@ reranking models.
 The module defines two global registries:
 
 * ``ALL_AVAILABLE_EMBEDDERS_MODELS`` – a mapping from embedder name to its
-  configuration dictionary (containing ``path``, ``vector_size`` and ``device``).
+  configuration dictionary (containing ``path``, ``vector_size``, ``device`` and
+  the optional ``max_model_length``).
 
 * ``ALL_AVAILABLE_RERANKERS_MODELS`` – a mapping from reranker name to its
-  configuration dictionary (containing ``path`` and ``device``).
+  configuration dictionary (containing ``path``, ``device`` and the optional
+  ``max_model_length``).
+
+``max_model_length`` is the largest number of tokens a model takes in: the
+input text of an embedder, the ``query + passage`` pair of a reranker. Entries
+without it are treated as unlimited, because a missing value must not break an
+existing installation.
 
 A helper class :class:`EmbeddingModelsConfig` reads JSON configuration files
 and populates these registries.  The class also provides static lookup helpers
@@ -32,6 +39,41 @@ def _ensure_config_loaded():
     global _config_instance
     if _config_instance is None:
         _config_instance = EmbeddingModelsConfig()
+
+
+#: Returned when a model declares no input length limit.
+UNKNOWN_MAX_MODEL_LENGTH = None
+
+
+def _max_model_length(model_config: dict):
+    """
+    Read ``max_model_length`` from one model entry of the configuration.
+
+    A missing, blank or nonsensical value means "unknown" and is reported as
+    :data:`UNKNOWN_MAX_MODEL_LENGTH`, so that a configuration written before
+    this key existed keeps working.
+
+    Parameters
+    ----------
+    model_config : dict
+        One entry of ``ALL_AVAILABLE_EMBEDDERS_MODELS`` or
+        ``ALL_AVAILABLE_RERANKERS_MODELS``.
+
+    Returns
+    -------
+    int | None
+        The declared limit in tokens, or ``None`` when unknown.
+    """
+    value = model_config.get("max_model_length")
+    if value is None or isinstance(value, bool):
+        return UNKNOWN_MAX_MODEL_LENGTH
+    try:
+        length = int(value)
+    except (TypeError, ValueError):
+        return UNKNOWN_MAX_MODEL_LENGTH
+    if length < 1:
+        return UNKNOWN_MAX_MODEL_LENGTH
+    return length
 
 
 class EmbeddingModelsConfig:
@@ -136,6 +178,26 @@ class EmbeddingModelsConfig:
         return ALL_AVAILABLE_EMBEDDERS_MODELS[model_name]["device"]
 
     @staticmethod
+    def get_embedder_max_model_length(model_name: str):
+        """
+        Return the maximum input length of an embedder, in tokens.
+
+        Parameters
+        ----------
+        model_name : str
+            Name of the embedder model.
+
+        Returns
+        -------
+        int | None
+            The ``max_model_length`` declared in the configuration, or
+            ``None`` when the model does not declare one. A text longer than
+            this value is silently truncated by the model.
+        """
+        _ensure_config_loaded()
+        return _max_model_length(ALL_AVAILABLE_EMBEDDERS_MODELS[model_name])
+
+    @staticmethod
     def get_reranker_path(model_name: str) -> str:
         """
         Return the filesystem path for the given reranker model.
@@ -172,6 +234,30 @@ class EmbeddingModelsConfig:
         return ALL_AVAILABLE_RERANKERS_MODELS[model_name]["device"]
 
     @staticmethod
+    def get_reranker_max_model_length(model_name: str):
+        """
+        Return the maximum length of a ``query + passage`` pair, in tokens.
+
+        A reranker scores pairs, not single texts, so its limit is shared
+        between the query and the text: a chunk which fits the embedder may
+        still be truncated here, and the score is then computed from a
+        prefix of the text.
+
+        Parameters
+        ----------
+        model_name : str
+            Name of the reranker model.
+
+        Returns
+        -------
+        int | None
+            The ``max_model_length`` declared in the configuration, or
+            ``None`` when the model does not declare one.
+        """
+        _ensure_config_loaded()
+        return _max_model_length(ALL_AVAILABLE_RERANKERS_MODELS[model_name])
+
+    @staticmethod
     def embedders() -> list:
         _ensure_config_loaded()
         return list(ALL_AVAILABLE_EMBEDDERS_MODELS.keys())
@@ -180,6 +266,51 @@ class EmbeddingModelsConfig:
     def rerankers() -> list:
         _ensure_config_loaded()
         return list(ALL_AVAILABLE_RERANKERS_MODELS.keys())
+
+    @staticmethod
+    def embedders_info() -> list:
+        """
+        Describe the configured embedders, one dictionary per model.
+
+        Returns
+        -------
+        list
+            ``[{"name", "vector_size", "max_model_length", "device"}, ...]``
+            for every active embedder. A model which declares no length
+            appears with ``max_model_length: None``.
+        """
+        _ensure_config_loaded()
+        return [
+            {
+                "name": name,
+                "vector_size": config.get("vector_size"),
+                "max_model_length": _max_model_length(config),
+                "device": config.get("device"),
+            }
+            for name, config in ALL_AVAILABLE_EMBEDDERS_MODELS.items()
+        ]
+
+    @staticmethod
+    def rerankers_info() -> list:
+        """
+        Describe the configured rerankers, one dictionary per model.
+
+        Returns
+        -------
+        list
+            ``[{"name", "max_model_length", "device"}, ...]`` for every active
+            reranker; here ``max_model_length`` is the limit of a
+            ``query + text`` pair.
+        """
+        _ensure_config_loaded()
+        return [
+            {
+                "name": name,
+                "max_model_length": _max_model_length(config),
+                "device": config.get("device"),
+            }
+            for name, config in ALL_AVAILABLE_RERANKERS_MODELS.items()
+        ]
 
     def _load_embedders_cfg(self) -> None:
         """

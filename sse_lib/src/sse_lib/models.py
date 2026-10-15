@@ -33,6 +33,7 @@ class Collection:
     display_name: str = ""
     description: str = ""
     created_on: Optional[str] = None
+    metadata_json: Dict[str, Any] = field(default_factory=dict)
     raw: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -40,14 +41,27 @@ class Collection:
         """Build a collection from a serialized object, plus known local values."""
         payload = _as_dict(data)
         merged = {**payload, **{key: value for key, value in known.items() if value}}
+        metadata = merged.get("metadata_json")
         return cls(
             id=merged.get("id"),
             name=merged.get("name", ""),
             display_name=merged.get("display_name", ""),
             description=merged.get("description", ""),
             created_on=merged.get("created_on"),
+            metadata_json=metadata if isinstance(metadata, dict) else {},
             raw=payload,
         )
+
+    @property
+    def chunking(self) -> Dict[str, Any]:
+        """Chunking declared for this collection, ``{}`` when it has none."""
+        chunking = self.metadata_json.get("chunking")
+        return chunking if isinstance(chunking, dict) else {}
+
+    @property
+    def strict_chunking(self) -> bool:
+        """Whether the collection enforces its own chunking on indexing."""
+        return bool(self.metadata_json.get("strict_chunking"))
 
 
 @dataclass

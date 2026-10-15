@@ -80,8 +80,11 @@ class SearchOptions:
 class IndexingOptions:
     """Options of ``upload_and_index_files`` / ``add_and_index_texts``.
 
-    The server reads all seven keys with ``indexing_options["..."]``, so
-    :meth:`to_dict` always emits the complete set.
+    The five cleaning options are read with ``indexing_options["..."]``, so
+    :meth:`to_dict` always emits them.  The two chunking keys belong to the
+    collection (see :meth:`SSEClient.create_collection`): left out here, the
+    settings of the collection are used, and only :meth:`to_dict` emits a key
+    once it has been set.
     """
 
     prepare_proper_pages: bool = True
@@ -93,16 +96,19 @@ class IndexingOptions:
     check_text_lang: bool = True
 
     def to_dict(self) -> Dict[str, Any]:
-        """Full option dictionary, including the keys the server requires."""
-        return {
+        """Option dictionary; unset chunk keys are omitted on purpose."""
+        payload: Dict[str, Any] = {
             "prepare_proper_pages": self.prepare_proper_pages,
             "merge_document_pages": self.merge_document_pages,
             "clear_text": self.clear_text,
             "use_text_denoiser": self.use_text_denoiser,
-            "max_tokens_in_chunk": self.max_tokens_in_chunk,
-            "number_of_overlap_tokens": self.number_of_overlap_tokens,
             "check_text_lang": self.check_text_lang,
         }
+        if self.max_tokens_in_chunk is not None:
+            payload["max_tokens_in_chunk"] = self.max_tokens_in_chunk
+        if self.number_of_overlap_tokens is not None:
+            payload["number_of_overlap_tokens"] = self.number_of_overlap_tokens
+        return payload
 
     def to_json(self) -> str:
         """JSON string, the wire format of the multipart form field."""
@@ -239,14 +245,12 @@ def text_document(
     return document
 
 
-# Fields the backend insists on, per validated endpoint.  ``data`` runs
-# ``indexing_options`` through identifier()/number() and ``engine`` runs
-# ``query_options`` through generation_options(); all of those reject ``None``,
-# so a client that leaves them unset used to get an opaque INVALID_PARAMS back.
+# Fields the backend insists on, per validated endpoint.  ``engine`` runs
+# ``query_options`` through generation_options(), which rejects ``None``, so a
+# client that leaves them unset used to get an opaque INVALID_PARAMS back.
 # The chat endpoints are deliberately *not* covered: they validate ``options``
 # with the permissive ``options_object`` and accept anything, so requiring
 # these fields when sending a chat message would reject valid requests.
-INDEXING_REQUIRED_FIELDS = ("max_tokens_in_chunk", "number_of_overlap_tokens")
 GENERATIVE_REQUIRED_FIELDS = ("generative_model", "percentage_rank_mass")
 
 
@@ -269,23 +273,65 @@ def validate_indexing(options: "IndexingOptions", *, endpoint: str) -> None:
     """Check what ``data``'s ``indexing_options`` validator demands.
 
     Mirrors ``core/validation.py`` so the caller gets the message before a
-    round trip: both chunk size and overlap are mandatory, the chunk size is a
-    positive identifier and the overlap must satisfy ``0 <= overlap < chunk``.
+    round trip.  Chunk size and overlap are optional - they belong to the
+    collection - but when they are given the chunk size has to be a positive
+    identifier and the overlap has to satisfy ``0 <= overlap < chunk``.
     """
-    _require(options, INDEXING_REQUIRED_FIELDS, endpoint)
     chunk = options.max_tokens_in_chunk
     overlap = options.number_of_overlap_tokens
-    _reject_out_of_range(chunk, "max_tokens_in_chunk", endpoint)
-    _reject_out_of_range(overlap, "number_of_overlap_tokens", endpoint)
-    if chunk <= 0:
+    if chunk is not None:
+        _reject_out_of_range(chunk, "max_tokens_in_chunk", endpoint)
+        if chunk <= 0:
+            raise SSEValueError(
+                f"{endpoint} requires max_tokens_in_chunk > 0, got {chunk!r}"
+            )
+    if overlap is not None:
+        _reject_out_of_range(overlap, "number_of_overlap_tokens", endpoint)
+        if overlap < 0:
+            raise SSEValueError(
+                f"{endpoint} requires number_of_overlap_tokens >= 0, got {overlap!r}"
+            )
+        if chunk is not None and not overlap < chunk:
+            raise SSEValueError(
+                f"{endpoint} requires 0 <= number_of_overlap_tokens < "
+                f"max_tokens_in_chunk, got {overlap!r} for {chunk!r}"
+            )
+
+
+def chunking_payload(
+    chunking: Any, *, endpoint: str = "new_collection"
+) -> Dict[str, int]:
+    """
+    Normalise the chunking of a collection into the payload of the API.
+
+    Accepts ``{"max_tokens_in_chunk": 500, "number_of_overlap_tokens": 64}``,
+    an :class:`IndexingOptions` carrying the same two keys, or the short
+    ``{"max_tokens_in_chunk": 500}`` form (no overlap).
+
+    Raises
+    ------
+    SSEValueError
+        When the chunk size is missing or the two values do not describe a
+        usable split.  The size of a chunk itself is not checked here; the
+        server refuses a chunk which does not fit the embedder of the
+        collection with ``CHUNKING_TOO_LONG``.
+    """
+    data = _as_dict(IndexingOptions, chunking)
+    max_tokens = data.get("max_tokens_in_chunk")
+    overlap = data.get("number_of_overlap_tokens", 0)
+    if max_tokens is None:
         raise SSEValueError(
-            f"{endpoint} requires max_tokens_in_chunk > 0, got {chunk!r}"
+            f"{endpoint} chunking requires max_tokens_in_chunk; pass e.g. "
+            '{"max_tokens_in_chunk": 500, "number_of_overlap_tokens": 64}'
         )
-    if not 0 <= overlap < chunk:
-        raise SSEValueError(
-            f"{endpoint} requires 0 <= number_of_overlap_tokens < "
-            f"max_tokens_in_chunk, got {overlap!r} for {chunk!r}"
-        )
+    options = IndexingOptions(
+        max_tokens_in_chunk=max_tokens, number_of_overlap_tokens=overlap
+    )
+    validate_indexing(options, endpoint=endpoint)
+    return {
+        "max_tokens_in_chunk": options.max_tokens_in_chunk,
+        "number_of_overlap_tokens": options.number_of_overlap_tokens,
+    }
 
 
 def validate_generative(options: "GenerativeOptions", *, endpoint: str) -> None:
@@ -318,6 +364,7 @@ __all__ = [
     "IndexingOptions",
     "SearchOptions",
     "build_options",
+    "chunking_payload",
     "text_document",
     "validate_generative",
     "validate_indexing",

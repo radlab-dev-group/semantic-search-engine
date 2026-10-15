@@ -10,9 +10,24 @@ from sse_api.data.models import (
 
 
 class CollectionOfDocumentsSerializer(serializers.ModelSerializer):
+    """
+    A collection as listed by ``GET collections``.
+
+    ``metadata_json`` carries the chunking settings of the collection
+    (``chunking`` and ``strict_chunking``), so the UI can prefill its
+    indexing form from what the collection already uses.
+    """
+
     class Meta:
         model = CollectionOfDocuments
-        fields = ["id", "name", "display_name", "description", "created_on"]
+        fields = [
+            "id",
+            "name",
+            "display_name",
+            "description",
+            "created_on",
+            "metadata_json",
+        ]
 
 
 class UploadedDocumentsSerializer(serializers.ModelSerializer):
