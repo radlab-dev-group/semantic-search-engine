@@ -12,6 +12,7 @@ from sse_api.data.api import (
     DeleteTextsFromCollection,
     DeleteDocumentsFromCollection,
     DeleteCollection,
+    SetDocumentsUseInSearch,
 )
 from sse_api.core.constants import prepare_api_url
 
@@ -60,6 +61,11 @@ urlpatterns = [
         prepare_api_url("delete_collection"),
         DeleteCollection.as_view(),
         name="delete_collection",
+    ),
+    path(
+        prepare_api_url("set_documents_use_in_search"),
+        SetDocumentsUseInSearch.as_view(),
+        name="set_documents_use_in_search",
     ),
     path(
         prepare_api_url("question_templates"),

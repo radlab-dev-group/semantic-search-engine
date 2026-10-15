@@ -105,6 +105,7 @@ Python 3.9+, `requests` as the only runtime dependency.
 | `delete_texts(collection, chunk_ids)` | `POST delete_texts` |
 | `delete_documents(collection, documents=None, document_ids=None)` | `POST delete_documents` |
 | `delete_collection(collection)` | `POST delete_collection` |
+| `set_documents_use_in_search(collection, documents=None, document_ids=None, use_in_search=False)`, `deactivate_documents(...)`, `activate_documents(...)` | `POST set_documents_use_in_search` |
 | `list_question_templates()` | `GET question_templates` |
 | `list_filter_options()` | `GET filter_options` |
 | `search(collection, query, options, ...)` | `POST search_with_options` |

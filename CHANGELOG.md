@@ -4,7 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
-| [0.1.1](#0.1.1) | Deletion API (PostgreSQL + Milvus) and normalized `[0, 1]` document ranking weights |
+| [0.1.1](#0.1.1) | Deletion API (PostgreSQL + Milvus), document deactivation (`use_in_search`) and normalized `[0, 1]` document ranking weights |
 | [0.1.0](#010) | Python client library, hybrid search, production deployment tooling, `src/` layout and CI |
 | [0.0.1](#001) | Initial version |
 
@@ -36,11 +36,38 @@ All notable changes to the Semantic Search Engine are documented in this file.
   `drop_collection`.
 - New errors: `DOCUMENT_NOT_FOUND`, `CHUNK_NOT_FOUND`, `DELETE_PROTECTED`.
 
+#### API — document deactivation in the search
+- **`POST set_documents_use_in_search`** — enable or disable documents of a
+  collection in the search, i.e. set the `Document.use_in_search` flag.
+  Documents are addressed by their names (`documents[]`) and/or by their ids
+  (`document_ids[]`); `use_in_search` defaults to `false`, so the call
+  deactivates them.
+- Nothing is removed: the pages, the text chunks and the embeddings of a
+  disabled document stay in both databases, so the document may be enabled
+  again without any re-indexing.
+- While disabled, its chunks are not returned by `search_with_options`: the
+  full-text side (`DBTextSearchController.search_texts`) and the chunk
+  resolution (`DBTextSearchController.get_texts`, used by the vector side and
+  by the protocol-based engine) skip the chunks of the documents with
+  `use_in_search=False` (opt-out via `only_used_to_search=False`).
+- The answer reports `updated_documents`, the value which was set
+  (`use_in_search`) and the names/ids which were not found (`not_found`);
+  identifiers which match nothing are refused with `DOCUMENT_NOT_FOUND`.
+  Changing the documents is allowed only for the **owner** of the collection,
+  like the deletion endpoints.
+- `ContentVisibilityController` (`data/controllers/visibility.py`) flips the
+  flag in the relational db, with `VisibilityResult` as the outcome; the
+  update itself lives in
+  `RelationalDBController.set_documents_use_in_search`.
+
 #### Client library
 - **`SSEClient.delete_texts`, `SSEClient.delete_documents` and
   `SSEClient.delete_collection`** with client side validation of the given
   ids/names, plus `DELETE_TEXTS`, `DELETE_DOCUMENTS`, `DELETE_COLLECTION`
   endpoint constants.
+- **`SSEClient.set_documents_use_in_search`** with the
+  **`SSEClient.deactivate_documents`** / **`SSEClient.activate_documents`**
+  shortcuts and the `SET_DOCUMENTS_USE_IN_SEARCH` endpoint constant.
 
 #### Document ranking — normalized weights
 - Chunk scores are now normalized onto `[0, 1]` before document statistics

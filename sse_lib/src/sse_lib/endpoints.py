@@ -45,6 +45,7 @@ FILTER_OPTIONS = "filter_options"
 DELETE_TEXTS = "delete_texts"
 DELETE_DOCUMENTS = "delete_documents"
 DELETE_COLLECTION = "delete_collection"
+SET_DOCUMENTS_USE_IN_SEARCH = "set_documents_use_in_search"
 
 
 # --- search & generation (sse_api/engine) --------------------------------
@@ -90,6 +91,7 @@ ALL_ENDPOINTS = frozenset(
         DELETE_TEXTS,
         DELETE_DOCUMENTS,
         DELETE_COLLECTION,
+        SET_DOCUMENTS_USE_IN_SEARCH,
         SEARCH_WITH_OPTIONS,
         SEARCH_HISTORY,
         GET_SEARCH_HISTORY,

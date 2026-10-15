@@ -421,6 +421,25 @@ class RelationalDBController:
         return Document.objects.filter(collection=collection, use_in_search=True)
 
     @staticmethod
+    def set_documents_use_in_search(
+        documents,
+        use_in_search: bool,
+    ) -> int:
+        """
+        Enable or disable the use of documents in the search
+        (``Document.use_in_search``).
+        :param documents: Documents to change (iterable of Document)
+        :param use_in_search: Value to set on the documents
+        :return: Count of the updated documents
+        """
+        document_ids = [document.pk for document in documents]
+        if not document_ids:
+            return 0
+        return Document.objects.filter(pk__in=document_ids).update(
+            use_in_search=use_in_search
+        )
+
+    @staticmethod
     def get_document_from_col_by_name_and_rel_path(
         collection: CollectionOfDocuments,
         document_name: str,

@@ -486,6 +486,7 @@ each app.
 | `POST` | `/api/delete_texts/`           | Delete text chunks (`chunk_ids[]`) from PostgreSQL and their vectors from Milvus.|
 | `POST` | `/api/delete_documents/`       | Delete documents (`documents[]` names and/or `document_ids[]`) with their pages and chunks. |
 | `POST` | `/api/delete_collection/`      | Delete the whole collection with all of its content from both databases.        |
+| `POST` | `/api/set_documents_use_in_search/` | Enable/disable documents in the search (`use_in_search` flag).              |
 | `GET`  | `/api/chats/`                  | Retrieve all chats for the current user.                                        |
 | `POST` | `/api/add_user_message/`       | Append a user message to a chat, optionally run RAG and return assistant reply. |
 | `POST` | `/api/save_chat/`              | Mark a chat as saved and optionally set it to read‑only.                        |
@@ -527,6 +528,31 @@ Answers look like:
 * Content which other rows still reference is refused with `DELETE_PROTECTED`, and identifiers
   which match nothing with `DOCUMENT_NOT_FOUND` / `CHUNK_NOT_FOUND`. Names or ids which do not
   exist are additionally listed in `not_found`.
+
+### Document visibility
+
+`POST set_documents_use_in_search` enables or disables documents of a collection in the
+search, i.e. sets the `use_in_search` flag of the `Document` rows. Documents are addressed by
+their names (`documents[]`) and/or by their ids (`document_ids[]`); `use_in_search` defaults
+to `false`, so the call deactivates them. Only the **owner** of the collection may change its
+documents.
+
+```json
+{
+  "status": true,
+  "body": {
+    "updated_documents": 1,
+    "use_in_search": false,
+    "not_found": []
+  }
+}
+```
+
+Deactivation is reversible and touches **nothing** in the vector database: the pages, the text
+chunks and the embeddings of a disabled document stay in both databases, so the document may be
+enabled again (with `use_in_search: true`) without any re-indexing. While disabled, its chunks
+are not returned by `search_with_options` — neither from the vector search nor from the
+full-text side.
 
 ### Search Options & Filters
 
