@@ -495,6 +495,72 @@ class SSEClient:
         body = self.post(endpoints.ADD_AND_INDEX_TEXTS, payload)
         return IndexingResult.from_api(body)
 
+    # --- deleting content ----------------------------------------------------
+    def delete_texts(
+        self,
+        collection: CollectionLike,
+        chunk_ids: Union[int, Sequence[int]],
+    ) -> Dict[str, Any]:
+        """Delete text chunks (``POST delete_texts``).
+
+        Removes the chunks from the relational database and their embeddings
+        from Milvus.  The answer reports the removed rows (``deleted``), the
+        removed embeddings (``deleted_vectors``) and the ``chunk_ids`` the
+        backend could not find (``not_found``).
+        """
+        ids = [_as_identifier(chunk_id) for chunk_id in _as_sequence(chunk_ids)]
+        if not ids:
+            raise SSEValueError("chunk_ids cannot be empty")
+        body = self.post(
+            endpoints.DELETE_TEXTS,
+            {"collection_name": _name(collection), "chunk_ids[]": ids},
+        )
+        return dict(body or {})
+
+    def delete_documents(
+        self,
+        collection: CollectionLike,
+        documents: Optional[Union[str, Sequence[str]]] = None,
+        document_ids: Optional[Union[int, Sequence[int]]] = None,
+    ) -> Dict[str, Any]:
+        """Delete whole documents with their pages and chunks
+        (``POST delete_documents``).
+
+        Documents are addressed by their names (as served by
+        :meth:`list_documents`) and/or by their ids; at least one of them has
+        to be given.  The embeddings of the removed texts are removed from
+        Milvus as well.
+        """
+        names = [
+            _require_text(name, "document name") for name in _as_sequence(documents)
+        ]
+        ids = [
+            _as_identifier(document_id) for document_id in _as_sequence(document_ids)
+        ]
+        if not names and not ids:
+            raise SSEValueError(
+                "documents (names) or document_ids have to be given to delete them"
+            )
+        payload: Dict[str, Any] = {"collection_name": _name(collection)}
+        if names:
+            payload["documents[]"] = names
+        if ids:
+            payload["document_ids[]"] = ids
+        body = self.post(endpoints.DELETE_DOCUMENTS, payload)
+        return dict(body or {})
+
+    def delete_collection(self, collection: CollectionLike) -> Dict[str, Any]:
+        """Delete the collection, all of its documents, pages, chunks and
+        embeddings (``POST delete_collection``).
+
+        Only the owner of the collection may delete it; a collection which is
+        merely shared with the groups of the user is reported as not found.
+        """
+        body = self.post(
+            endpoints.DELETE_COLLECTION, {"collection_name": _name(collection)}
+        )
+        return dict(body or {})
+
     # --- search & generation -------------------------------------------------
     def search(
         self,
@@ -791,6 +857,16 @@ def _name(collection: CollectionLike) -> str:
     if isinstance(collection, Mapping):
         return _require_text(collection.get("name"), "collection name")
     return _require_text(collection, "collection")
+
+
+def _as_identifier(value: Any) -> int:
+    try:
+        identifier = int(value)
+    except (TypeError, ValueError) as exc:
+        raise SSEValueError(f"identifier has to be a number, got {value!r}") from exc
+    if identifier <= 0:
+        raise SSEValueError(f"identifier has to be a positive number, got {value!r}")
+    return identifier
 
 
 def _as_sequence(value: Any) -> Iterable[Any]:

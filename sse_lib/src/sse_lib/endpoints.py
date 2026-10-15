@@ -41,6 +41,12 @@ QUESTION_TEMPLATES = "question_templates"
 FILTER_OPTIONS = "filter_options"
 
 
+# --- deleting content (sse_api/data) ------------------------------------
+DELETE_TEXTS = "delete_texts"
+DELETE_DOCUMENTS = "delete_documents"
+DELETE_COLLECTION = "delete_collection"
+
+
 # --- search & generation (sse_api/engine) --------------------------------
 SEARCH_WITH_OPTIONS = "search_with_options"
 SEARCH_HISTORY = "search_history"
@@ -81,6 +87,9 @@ ALL_ENDPOINTS = frozenset(
         ADD_AND_INDEX_TEXTS,
         QUESTION_TEMPLATES,
         FILTER_OPTIONS,
+        DELETE_TEXTS,
+        DELETE_DOCUMENTS,
+        DELETE_COLLECTION,
         SEARCH_WITH_OPTIONS,
         SEARCH_HISTORY,
         GET_SEARCH_HISTORY,
