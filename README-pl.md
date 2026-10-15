@@ -57,6 +57,15 @@ przeszukiwaniem wyszukiwarki semantycznej. Słownik ten posiada pola:
   Wyniki z podobieństwem poniżej tego progu są odrzucane, dlatego zapytanie
   może zwrócić pusty zbiór wyników.
 
+W polu `stats` (statystyki na poziomie dokumentu) każdy wynik z chunka jest
+najpierw normalizowany do przedziału `[0, 1]` -- w zależności od etapu
+wyszukiwania jest to podobieństwo cosine, wartość RRF lub logit
+cross-encodera -- a dopiero potem liczone są wagi dokumentów. Oprócz surowej
+średniej (`score`) dokumentacja endpointu opisuje pola
+`score_normalized`, `score_weighted`, `score_weighted_scaled` (udział w
+całkowitej masie, suma = `1.0`) oraz `weight_normalized` (waga względem
+najlepszego dokumentu).
+
 **Flow** filtrowania meta-informacjami jest nastepujący:
 
 1. Jeżeli przekazane były kategorie, to z bazy wybierane są te dokumenty,
