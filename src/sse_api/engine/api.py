@@ -189,24 +189,46 @@ class ListGenerativeModels(APIView):
 
 
 class ListEmbeddersModels(APIView):
+    """
+    Configured embedders.
+
+    ``models`` lists the names, ``models_info`` describes each of them:
+    ``vector_size`` (fixed for the whole collection) and
+    ``max_model_length`` (the largest single input text, in tokens, which
+    limits ``max_tokens_in_chunk`` of a collection).
+    """
+
     @get_default_language
     def get(self, language, request):
         return response_with_status(
             status=True,
             language=language,
             error_name=None,
-            response_body={"models": EmbeddingModelsConfig.embedders()},
+            response_body={
+                "models": EmbeddingModelsConfig.embedders(),
+                "models_info": EmbeddingModelsConfig.embedders_info(),
+            },
         )
 
 
 class ListRerankersModels(APIView):
+    """
+    Configured rerankers.
+
+    ``max_model_length`` of a reranker is the limit of a ``query + text``
+    pair, so a chunk which fits the embedder may still be cut here.
+    """
+
     @get_default_language
     def get(self, language, request):
         return response_with_status(
             status=True,
             language=language,
             error_name=None,
-            response_body={"models": EmbeddingModelsConfig.rerankers()},
+            response_body={
+                "models": EmbeddingModelsConfig.rerankers(),
+                "models_info": EmbeddingModelsConfig.rerankers_info(),
+            },
         )
 
 
@@ -277,9 +299,7 @@ class ListOfSearchHistory(APIView):
         "query_response_id": identifier,
     }
 
-    @required_params_exists(
-        required_params=[], optional_params=optional_params
-    )
+    @required_params_exists(required_params=[], optional_params=optional_params)
     @get_organisation_user
     @get_default_language
     def get(self, language, organisation_user, request):

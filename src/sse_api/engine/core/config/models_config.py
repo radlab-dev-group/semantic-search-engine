@@ -267,6 +267,51 @@ class EmbeddingModelsConfig:
         _ensure_config_loaded()
         return list(ALL_AVAILABLE_RERANKERS_MODELS.keys())
 
+    @staticmethod
+    def embedders_info() -> list:
+        """
+        Describe the configured embedders, one dictionary per model.
+
+        Returns
+        -------
+        list
+            ``[{"name", "vector_size", "max_model_length", "device"}, ...]``
+            for every active embedder. A model which declares no length
+            appears with ``max_model_length: None``.
+        """
+        _ensure_config_loaded()
+        return [
+            {
+                "name": name,
+                "vector_size": config.get("vector_size"),
+                "max_model_length": _max_model_length(config),
+                "device": config.get("device"),
+            }
+            for name, config in ALL_AVAILABLE_EMBEDDERS_MODELS.items()
+        ]
+
+    @staticmethod
+    def rerankers_info() -> list:
+        """
+        Describe the configured rerankers, one dictionary per model.
+
+        Returns
+        -------
+        list
+            ``[{"name", "max_model_length", "device"}, ...]`` for every active
+            reranker; here ``max_model_length`` is the limit of a
+            ``query + text`` pair.
+        """
+        _ensure_config_loaded()
+        return [
+            {
+                "name": name,
+                "max_model_length": _max_model_length(config),
+                "device": config.get("device"),
+            }
+            for name, config in ALL_AVAILABLE_RERANKERS_MODELS.items()
+        ]
+
     def _load_embedders_cfg(self) -> None:
         """
         Load embedder configuration from ``self._embedders_config``.
