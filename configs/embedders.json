@@ -4,6 +4,7 @@
       "name": "google/embeddinggemma-300m",
       "path": "/mnt/data2/llms/models/community/google/embeddinggemma-300m",
       "vector_size": 768,
+      "max_model_length": 2048,
       "device": "cpu"
     }
   ],

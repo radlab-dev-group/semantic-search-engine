@@ -3,6 +3,7 @@
     {
       "name": "radlab/polish-cross-encoder",
       "path": "/mnt/data2/llms/models/radlab-open/rerankers/radlab_polish-cross-encoder",
+      "max_model_length": 512,
       "device": "cpu"
     }
   ],
