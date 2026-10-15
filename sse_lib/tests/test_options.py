@@ -15,18 +15,19 @@ from sse_lib.options import (
     GenerativeOptions,
     IndexingOptions,
     SearchOptions,
+    chunking_payload,
     text_document,
 )
 
+#: The options the server reads with ``indexing_options["..."]``.
 INDEXING_KEYS = {
     "prepare_proper_pages",
     "merge_document_pages",
     "clear_text",
     "use_text_denoiser",
-    "max_tokens_in_chunk",
-    "number_of_overlap_tokens",
     "check_text_lang",
 }
+CHUNK_KEYS = {"max_tokens_in_chunk", "number_of_overlap_tokens"}
 
 
 class SearchOptionsTest(unittest.TestCase):
@@ -52,6 +53,17 @@ class IndexingOptionsTest(unittest.TestCase):
     def test_all_keys_required_by_the_server_are_present(self):
         self.assertEqual(set(IndexingOptions().to_dict()), INDEXING_KEYS)
 
+    def test_chunk_keys_are_sent_only_when_set(self):
+        # Chunking belongs to the collection: what is not set there is not
+        # sent, so that the settings of the collection apply.
+        self.assertEqual(
+            set(IndexingOptions().to_dict()) & CHUNK_KEYS,
+            set(),
+        )
+        payload = IndexingOptions(max_tokens_in_chunk=200).to_dict()
+        self.assertEqual(payload["max_tokens_in_chunk"], 200)
+        self.assertNotIn("number_of_overlap_tokens", payload)
+
     def test_values_are_kept(self):
         options = IndexingOptions(max_tokens_in_chunk=200, use_text_denoiser=True)
         payload = options.to_dict()
@@ -62,6 +74,44 @@ class IndexingOptionsTest(unittest.TestCase):
     def test_json_string_for_multipart_forms(self):
         payload = IndexingOptions().to_json()
         self.assertEqual(set(json.loads(payload)), INDEXING_KEYS)
+
+
+class ChunkingPayloadTest(unittest.TestCase):
+    def test_complete_chunking_is_normalized(self):
+        self.assertEqual(
+            chunking_payload(
+                {"max_tokens_in_chunk": 500, "number_of_overlap_tokens": 64}
+            ),
+            {"max_tokens_in_chunk": 500, "number_of_overlap_tokens": 64},
+        )
+
+    def test_overlap_defaults_to_none(self):
+        self.assertEqual(
+            chunking_payload({"max_tokens_in_chunk": 300}),
+            {"max_tokens_in_chunk": 300, "number_of_overlap_tokens": 0},
+        )
+
+    def test_indexing_options_are_accepted(self):
+        self.assertEqual(
+            chunking_payload(IndexingOptions(max_tokens_in_chunk=128)),
+            {"max_tokens_in_chunk": 128, "number_of_overlap_tokens": 0},
+        )
+
+    def test_chunk_size_is_required(self):
+        with self.assertRaises(SSEValueError) as caught:
+            chunking_payload({"number_of_overlap_tokens": 10})
+        self.assertIn("max_tokens_in_chunk", str(caught.exception))
+
+    def test_overlapping_must_stay_below_the_chunk(self):
+        for chunking in (
+            {"max_tokens_in_chunk": 128, "number_of_overlap_tokens": 128},
+            {"max_tokens_in_chunk": 0},
+            {"max_tokens_in_chunk": -5},
+            {"max_tokens_in_chunk": "many"},
+        ):
+            with self.subTest(chunking=chunking):
+                with self.assertRaises(SSEValueError):
+                    chunking_payload(chunking)
 
 
 class GenerativeOptionsTest(unittest.TestCase):

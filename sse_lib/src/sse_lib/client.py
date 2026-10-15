@@ -49,6 +49,7 @@ from sse_lib.options import (
     OptionsLike,
     SearchOptions,
     build_options,
+    chunking_payload,
     text_document,
     validate_generative,
     validate_indexing,
@@ -322,6 +323,8 @@ class SSEClient:
         reranker: str,
         index_type: str = DEFAULT_INDEX_TYPE,
         group_name: Optional[str] = None,
+        chunking: Optional[Any] = None,
+        strict_chunking: Optional[bool] = None,
     ) -> Collection:
         """Create a collection (``POST new_collection``).
 
@@ -330,6 +333,13 @@ class SSEClient:
         of :data:`sse_lib.options.INDEX_TYPES`.  Spaces in ``name`` are
         replaced by underscores by the server, so the returned collection may
         carry a slightly different name.
+
+        ``chunking`` declares once how the texts of the collection are split,
+        ``{"max_tokens_in_chunk": 500, "number_of_overlap_tokens": 64}`` (a
+        bare ``IndexingOptions`` works as well).  Indexing calls may then omit
+        both keys; see :meth:`sse_lib.options.chunking_payload`.  With
+        ``strict_chunking=True`` the collection refuses indexing options which
+        differ from its own settings.
         """
         name = _require_text(name, "name")
         if not description or not description.strip():
@@ -350,15 +360,27 @@ class SSEClient:
         }
         if group_name:
             payload["group_name"] = group_name
+        if chunking is not None:
+            payload["chunking"] = chunking_payload(
+                chunking, endpoint=endpoints.NEW_COLLECTION
+            )
+        if strict_chunking is not None:
+            payload["strict_chunking"] = bool(strict_chunking)
 
         body = self.post(endpoints.NEW_COLLECTION, payload)
         created = body if isinstance(body, dict) else {}
+        metadata: Dict[str, Any] = {}
+        if isinstance(created.get("chunking"), dict):
+            metadata["chunking"] = created["chunking"]
+        if created.get("strict_chunking") is not None:
+            metadata["strict_chunking"] = bool(created["strict_chunking"])
         return Collection.from_api(
             None,
             id=created.get("collection_id"),
             name=name.replace(" ", "_"),
             display_name=payload["collection_display_name"],
             description=payload["collection_description"],
+            metadata_json=metadata,
         )
 
     def list_collections(self) -> List[Collection]:
@@ -419,7 +441,8 @@ class SSEClient:
         ``files`` accepts paths, file objects or ``(name, content)`` /
         ``(name, content, content_type)`` tuples; ZIP archives are extracted by
         the server.  Chunking/cleaning is configured with
-        :class:`sse_lib.options.IndexingOptions` (or plain keyword arguments).
+        :class:`sse_lib.options.IndexingOptions` (or plain keyword arguments);
+        chunk size and overlap left out are taken from the collection.
         """
         options = self._build_options(
             IndexingOptions,
@@ -760,6 +783,26 @@ class SSEClient:
         body = self.get(endpoints.RERANKERS)
         models = body.get("models") if isinstance(body, dict) else []
         return list(models or [])
+
+    def embedders_info(self) -> List[Dict[str, Any]]:
+        """Embedders with their ``vector_size`` and ``max_model_length``.
+
+        ``max_model_length`` is the largest single input text of the embedder,
+        in tokens - the ceiling for ``max_tokens_in_chunk`` of a collection.
+        """
+        body = self.get(endpoints.EMBEDDERS)
+        models = body.get("models_info") if isinstance(body, dict) else []
+        return [dict(model) for model in models or [] if isinstance(model, dict)]
+
+    def rerankers_info(self) -> List[Dict[str, Any]]:
+        """Rerankers with their ``max_model_length``.
+
+        For a reranker the limit is shared by the ``query + text`` pair, so a
+        chunk which fits the embedder may still be truncated while reranking.
+        """
+        body = self.get(endpoints.RERANKERS)
+        models = body.get("models_info") if isinstance(body, dict) else []
+        return [dict(model) for model in models or [] if isinstance(model, dict)]
 
     # --- chat ----------------------------------------------------------------
     def new_chat(

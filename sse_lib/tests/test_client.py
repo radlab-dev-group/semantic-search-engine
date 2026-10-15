@@ -191,6 +191,140 @@ class CollectionsTest(unittest.TestCase):
                 index_type="DISKANN",
             )
 
+    def test_create_collection_declares_chunking(self):
+        client = build_client(
+            [
+                ok(
+                    {
+                        "collection_id": 1,
+                        "chunking": {
+                            "max_tokens_in_chunk": 400,
+                            "number_of_overlap_tokens": 40,
+                        },
+                        "strict_chunking": True,
+                    }
+                )
+            ]
+        )
+        collection = client.create_collection(
+            "docs",
+            description="d",
+            embedder="e",
+            reranker="r",
+            chunking={"max_tokens_in_chunk": 400, "number_of_overlap_tokens": 40},
+            strict_chunking=True,
+        )
+        sent = client.fake_session.calls[0].json
+        self.assertEqual(
+            sent["chunking"],
+            {"max_tokens_in_chunk": 400, "number_of_overlap_tokens": 40},
+        )
+        self.assertTrue(sent["strict_chunking"])
+        self.assertEqual(collection.chunking["max_tokens_in_chunk"], 400)
+        self.assertTrue(collection.strict_chunking)
+
+    def test_create_collection_without_chunking_sends_none(self):
+        client = build_client([ok({"collection_id": 1})])
+        collection = client.create_collection(
+            "docs", description="d", embedder="e", reranker="r"
+        )
+        sent = client.fake_session.calls[0].json
+        self.assertNotIn("chunking", sent)
+        self.assertNotIn("strict_chunking", sent)
+        self.assertEqual(collection.chunking, {})
+        self.assertFalse(collection.strict_chunking)
+
+    def test_broken_chunking_is_rejected_before_the_call(self):
+        client = build_client([])
+        for chunking in (
+            {"number_of_overlap_tokens": 4},
+            {"max_tokens_in_chunk": 10, "number_of_overlap_tokens": 10},
+        ):
+            with self.subTest(chunking=chunking):
+                with self.assertRaises(SSEValueError):
+                    client.create_collection(
+                        "docs",
+                        description="d",
+                        embedder="e",
+                        reranker="r",
+                        chunking=chunking,
+                    )
+        self.assertEqual(client.fake_session.calls, [])
+
+    def test_list_collections_exposes_collection_settings(self):
+        client = build_client(
+            [
+                ok(
+                    {
+                        "collections": [
+                            {
+                                "id": 1,
+                                "name": "a",
+                                "metadata_json": {
+                                    "chunking": {
+                                        "max_tokens_in_chunk": 512,
+                                        "number_of_overlap_tokens": 32,
+                                    },
+                                    "strict_chunking": True,
+                                },
+                            }
+                        ]
+                    }
+                )
+            ]
+        )
+        collection = client.list_collections()[0]
+        self.assertEqual(collection.chunking["max_tokens_in_chunk"], 512)
+        self.assertEqual(collection.chunking["number_of_overlap_tokens"], 32)
+        self.assertTrue(collection.strict_chunking)
+
+    def test_list_collections_without_metadata_json(self):
+        client = build_client([ok({"collections": [{"id": 1, "name": "a"}]})])
+        collection = client.list_collections()[0]
+        self.assertEqual(collection.chunking, {})
+        self.assertFalse(collection.strict_chunking)
+
+    def test_embedders_info_and_rerankers_info(self):
+        client = build_client(
+            [
+                ok(
+                    {
+                        "models": ["google/embeddinggemma-300m"],
+                        "models_info": [
+                            {
+                                "name": "google/embeddinggemma-300m",
+                                "vector_size": 768,
+                                "max_model_length": 2048,
+                                "device": "cpu",
+                            }
+                        ],
+                    }
+                ),
+                ok(
+                    {
+                        "models": ["radlab/polish-cross-encoder"],
+                        "models_info": [
+                            {
+                                "name": "radlab/polish-cross-encoder",
+                                "max_model_length": 512,
+                                "device": "cpu",
+                            }
+                        ],
+                    }
+                ),
+            ]
+        )
+        embedders = client.embedders_info()
+        self.assertEqual(embedders[0]["max_model_length"], 2048)
+        self.assertEqual(embedders[0]["vector_size"], 768)
+        rerankers = client.rerankers_info()
+        self.assertEqual(rerankers[0]["max_model_length"], 512)
+
+    def test_models_info_of_an_older_server_is_empty(self):
+        client = build_client([ok({"models": ["a"]}), ok({"models": ["b"]})])
+        self.assertEqual(client.embedders_info(), [])
+        self.assertEqual(client.rerankers_info(), [])
+
     def test_list_collections(self):
         client = build_client(
             [ok({"collections": [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]})]
@@ -572,7 +706,9 @@ class SearchHistoryTest(unittest.TestCase):
         self.assertEqual(entry.hits[0].document_name, "a.pdf")
         self.assertEqual(entry.hits[0].text, "Retention policy ...")
         self.assertEqual(len(entry.answers), 1)
-        self.assertEqual(entry.answers[0].generated_answer, "Data is retained for 30 days.")
+        self.assertEqual(
+            entry.answers[0].generated_answer, "Data is retained for 30 days."
+        )
         self.assertEqual(entry.answers[0].rate_value, 5)
 
         # Filtered by collection
