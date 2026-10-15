@@ -104,12 +104,22 @@ class RelationalDataAdapter:
         self,
         text_ids: list[int],
         surrounding_chunks: int = 0,
+        text_scores: Optional[list[float]] = None,
     ) -> list[dict]:
-        """Get text chunks by ID with surrounding context."""
+        """
+        Get text chunks by ID with surrounding context.
+
+        ``text_scores`` are the retrieval scores of ``text_ids``; they are
+        attached to the returned chunks and drive the document statistics.
+        When omitted (or shorter than ``text_ids``) the missing tail is
+        filled with a neutral ``1.0`` score.
+        """
+        scores = list(text_scores) if text_scores else []
+        if len(scores) < len(text_ids):
+            scores += [1.0] * (len(text_ids) - len(scores))
         return DBTextSearchController.get_texts(
             texts_ids=text_ids,
-            texts_scores=[1.0]
-            * len(text_ids),  # scores ignored for ordering since we pass ids
+            texts_scores=scores[: len(text_ids)],
             surrounding_chunks=surrounding_chunks,
         )
 
