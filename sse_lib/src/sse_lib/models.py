@@ -65,6 +65,34 @@ class Collection:
 
 
 @dataclass
+class DocumentRef:
+    """A document of a collection, as listed by ``documents?with_disabled``.
+
+    ``id`` and ``use_in_search`` are served only by the ``with_disabled`` view
+    of the endpoint (``DocumentVisibilitySerializer``); they are what
+    ``delete_documents`` and ``set_documents_use_in_search`` accept in
+    ``document_ids[]``.
+    """
+
+    id: Optional[int] = None
+    name: str = ""
+    use_in_search: Optional[bool] = None
+    raw: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_api(cls, data: Any) -> "DocumentRef":
+        """Build a document reference from one entry of a serialized list."""
+        payload = _as_dict(data)
+        use_in_search = payload.get("use_in_search")
+        return cls(
+            id=payload.get("id"),
+            name=payload.get("name", "") or "",
+            use_in_search=None if use_in_search is None else bool(use_in_search),
+            raw=payload,
+        )
+
+
+@dataclass
 class SearchHit:
     """A single chunk returned inside ``results.detailed_results``."""
 

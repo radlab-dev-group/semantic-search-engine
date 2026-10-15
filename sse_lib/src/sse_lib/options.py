@@ -38,6 +38,12 @@ class SearchOptions:
 
     Only the keys that are set are sent; the server defaults apply to the rest
     (``max_results``, ``hybrid_search=True``, ``rerank_results=False``, ...).
+
+    Every key here is one the backend actually reads in
+    ``engine.controllers.search.semantic``.  ``documents_names`` is the
+    exception in the other direction: ``core.validation.search_options`` accepts
+    it, but no controller ever looks at it, so it stays out of this class on
+    purpose - sending it would only suggest that it filters something.
     """
 
     categories: Optional[List[str]] = None
@@ -123,6 +129,9 @@ class GenerativeOptions:
     percentage_rank_mass: Optional[float] = None
     answer_language: Optional[str] = None
     translate_answer: Optional[bool] = None
+    #: Ask the model with the names of the source documents in the prompt;
+    #: ``core.validation.generation_options`` defaults it to ``False``.
+    use_doc_names_in_response: Optional[bool] = None
     extra: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -142,8 +151,47 @@ class GenerativeOptions:
         return json.dumps(self.to_dict())
 
 
+@dataclass
+class ChatOptions:
+    """Switches of the chat endpoints, sent in the same ``options`` object.
+
+    ``add_user_message`` and ``new_chat`` read one ``options`` dictionary for
+    both the generation settings and the four switches below, which is why
+    :meth:`sse_lib.SSEClient.send_chat_message` merges this class into the
+    generation options instead of sending a second field.
+    """
+
+    query_instruction: Optional[str] = None
+    use_intelligent_query_rewrite: Optional[bool] = None
+    use_rag_supervisor: Optional[bool] = None
+    use_content_supervisor: Optional[bool] = None
+    #: Keys of this dict are merged into the payload; escape hatch for switches
+    #: that this release of the library does not know about yet.
+    extra: Optional[Dict[str, Any]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialise to the payload understood by the API (``None`` dropped)."""
+        payload: Dict[str, Any] = {}
+        for meta in fields(self):
+            if meta.name == "extra":
+                continue
+            value = getattr(self, meta.name)
+            if value is not None:
+                payload[meta.name] = value
+        payload.update(self.extra or {})
+        return payload
+
+    def to_json(self) -> str:
+        """JSON string, for callers which prefer to serialise themselves."""
+        return json.dumps(self.to_dict())
+
+
 OptionsLike = Union[
-    SearchOptions, IndexingOptions, GenerativeOptions, Dict[str, Any]
+    SearchOptions,
+    IndexingOptions,
+    GenerativeOptions,
+    ChatOptions,
+    Dict[str, Any],
 ]
 
 
@@ -360,6 +408,7 @@ def validate_generative(options: "GenerativeOptions", *, endpoint: str) -> None:
 __all__ = [
     "DEFAULT_INDEX_TYPE",
     "INDEX_TYPES",
+    "ChatOptions",
     "GenerativeOptions",
     "IndexingOptions",
     "SearchOptions",

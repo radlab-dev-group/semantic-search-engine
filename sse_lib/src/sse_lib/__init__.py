@@ -23,7 +23,10 @@ the server side stays untouched::
         found = client.search(collection.name, "text", max_results=10)
         answer = client.generate_answer(
             found.query_response_id,
-            GenerativeOptions(generative_model="radlab/pLLama-3-8B-DPO-L"),
+            GenerativeOptions(
+                generative_model="radlab/pLLama-3-8B-DPO-L",
+                percentage_rank_mass=40,
+            ),
         )
         print(answer.answer)
 """
@@ -48,6 +51,7 @@ from sse_lib.models import (
     ChatMessage,
     ChatReply,
     Collection,
+    DocumentRef,
     IndexingResult,
     SearchHistory,
     SearchHistoryAnswer,
@@ -58,6 +62,7 @@ from sse_lib.models import (
 from sse_lib.options import (
     DEFAULT_INDEX_TYPE,
     INDEX_TYPES,
+    ChatOptions,
     GenerativeOptions,
     IndexingOptions,
     SearchOptions,
@@ -77,8 +82,10 @@ __all__ = [
     "Chat",
     "ChatHistory",
     "ChatMessage",
+    "ChatOptions",
     "ChatReply",
     "Collection",
+    "DocumentRef",
     "GenerativeOptions",
     "IndexingOptions",
     "IndexingResult",
