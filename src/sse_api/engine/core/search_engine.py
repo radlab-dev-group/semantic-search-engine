@@ -103,12 +103,148 @@ def rerank_results_with_vector_store(
         return results[:max_results]
 
 
+# ---------------------------------------------------------------------------
+# Relevance score scales
+# ---------------------------------------------------------------------------
+
+#: Milvus vector search (``COSINE`` metric) -- scores in ``[-1, 1]``.
+SCORE_SCALE_COSINE = "cosine"
+#: Cross‑encoder reranker -- unbounded logits.
+SCORE_SCALE_RERANKER = "reranker"
+#: Reciprocal Rank Fusion -- small positive values, at most ``2 / (k + 1)``.
+SCORE_SCALE_RRF = "rrf"
+#: Already normalized scores -- only clamped to ``[0, 1]``.
+SCORE_SCALE_RAW = "raw"
+SCORE_SCALES = (
+    SCORE_SCALE_COSINE,
+    SCORE_SCALE_RERANKER,
+    SCORE_SCALE_RRF,
+    SCORE_SCALE_RAW,
+)
+DEFAULT_RRF_K = 60
+
+
+def _sigmoid(value: float) -> float:
+    """Logistic squash guarded against ``math.exp`` overflow."""
+    if value <= -60.0:
+        return 0.0
+    if value >= 60.0:
+        return 1.0
+    return 1.0 / (1.0 + math.exp(-value))
+
+
+def normalize_relevance(
+    score: Any,
+    score_scale: str = SCORE_SCALE_COSINE,
+    rrf_k: int = DEFAULT_RRF_K,
+) -> float:
+    """
+    Map a raw retrieval score onto the closed interval ``[0, 1]``.
+
+    Every retrieval stage reports relevance on its own scale, so the
+    document level weights have to be built from a common basis:
+
+    * ``"cosine"`` -- cosine similarity in ``[-1, 1]`` is mapped linearly
+      with ``(1 + score) / 2``;
+    * ``"reranker"`` -- cross‑encoder logits are squashed with the logistic
+      function, which keeps the ordering of negative logits intact;
+    * ``"rrf"`` -- Reciprocal Rank Fusion values are rescaled by
+      ``(k + 1) / 2`` (two fused lists), so a hit ranked first in both
+      lists maps to ``1.0`` and first in a single list to ``0.5``;
+    * ``"raw"`` -- the score is assumed to be a fraction already and is
+      only clamped.
+
+    Parameters
+    ----------
+    score : Any
+        Raw score of a single hit. Values that are not real numbers become
+        ``0.0``.
+    score_scale : str, default "cosine"
+        One of :data:`SCORE_SCALES`.
+    rrf_k : int, default 60
+        Reciprocal Rank Fusion constant, used by the ``"rrf"`` scale.
+
+    Returns
+    -------
+    float
+        Normalized relevance in ``[0, 1]``.
+
+    Raises
+    ------
+    ValueError
+        If ``score_scale`` is not a known scale.
+    """
+    if score_scale not in SCORE_SCALES:
+        raise ValueError(
+            "Unknown score scale %r; expected one of %s"
+            % (score_scale, ", ".join(SCORE_SCALES))
+        )
+    try:
+        value = float(score)
+    except (TypeError, ValueError):
+        return 0.0
+    if math.isnan(value):
+        return 0.0
+    if math.isinf(value):
+        return 1.0 if value > 0 else 0.0
+
+    if score_scale == SCORE_SCALE_RERANKER:
+        normalized = _sigmoid(value)
+    elif score_scale == SCORE_SCALE_RRF:
+        # Reciprocal Rank Fusion sums one 1/(k + rank) term per fused list,
+        # so two lists put a perfect hit at 2 / (k + 1).
+        normalized = value * (max(1.0, float(rrf_k)) + 1.0) / 2.0
+    elif score_scale == SCORE_SCALE_RAW:
+        normalized = value
+    else:
+        normalized = (1.0 + value) / 2.0
+
+    return min(1.0, max(0.0, normalized))
+
+
+def retrieval_score_scale(rerank: bool = False, hybrid_search: bool = False) -> str:
+    """
+    Return the score scale produced by a given search configuration.
+
+    Reranking overwrites the retrieval scores of every kept hit, so it wins
+    over the hybrid (RRF) scale; a hybrid search without reranking scores
+    with Reciprocal Rank Fusion values, and a plain vector search reports
+    cosine similarity.
+
+    Parameters
+    ----------
+    rerank : bool, default False
+        Whether a cross‑encoder reranker was applied to the results.
+    hybrid_search : bool, default False
+        Whether Reciprocal Rank Fusion merged vector and full‑text results.
+
+    Returns
+    -------
+    str
+        One of :data:`SCORE_SCALES`.
+    """
+    if rerank:
+        return SCORE_SCALE_RERANKER
+    if hybrid_search:
+        return SCORE_SCALE_RRF
+    return SCORE_SCALE_COSINE
+
+
 def prepare_documents_stats(
-    postgres_docs: list[dict], smooth_factor: float = 0.0001
+    postgres_docs: list[dict],
+    smooth_factor: float = 0.0001,
+    score_scale: str = SCORE_SCALE_COSINE,
+    rrf_k: int = DEFAULT_RRF_K,
 ) -> dict:
     """
     Compute per‑document statistics (hits, average score, weighted
-    score, etc.) from a list of PostgreSQL document fragments.
+    score, etc.) from a list of document fragments.
+
+    Chunk scores are reported on whatever scale the retrieval stage used
+    (cosine similarity, RRF values or cross‑encoder logits), so every score
+    is first mapped onto ``[0, 1]`` by :func:`normalize_relevance`.  The
+    document weights are therefore always defined, non‑negative and
+    comparable between queries.
 
     Parameters
     ----------
@@ -116,12 +252,27 @@ def prepare_documents_stats(
         List of document fragment dictionaries returned by
         ``_prepare_document_page``.
     smooth_factor : float, default 0.0001
-        Minimum value used when scaling weighted scores.
+        Floor applied to ``weight_normalized`` of documents that carry
+        some but no measurable relevance.
+    score_scale : str, default "cosine"
+        Scale of the incoming chunk scores; see :func:`normalize_relevance`.
+    rrf_k : int, default 60
+        Reciprocal Rank Fusion constant used by the ``"rrf"`` scale.
 
     Returns
     -------
     dict
-        Mapping ``{document_name: stats_dict}``.
+        Mapping ``{document_name: stats_dict}`` with, among the hit/page
+        counters:
+
+        * ``score`` -- mean of the raw chunk scores,
+        * ``score_normalized`` -- the same mean in ``[0, 1]``,
+        * ``score_weighted`` -- document mass, i.e.
+          ``score_normalized * hits * pages_count``,
+        * ``score_weighted_scaled`` -- share of the total mass; all shares
+          sum up to ``1.0``,
+        * ``weight_normalized`` -- mass relative to the best document, so
+          the best document is ``1.0`` and the rest is proportionally below.
     """
     if not postgres_docs:
         return {}
@@ -137,7 +288,10 @@ def prepare_documents_stats(
         if doc_name not in doc_stats:
             doc_stats[doc_name] = {
                 "score": 0.0,
+                "score_normalized": 0.0,
                 "score_weighted": 0.0,
+                "score_weighted_scaled": 0.0,
+                "weight_normalized": 0.0,
                 "hits": 0,
                 "pages": [],
                 "pages_count": 0,
@@ -146,32 +300,40 @@ def prepare_documents_stats(
 
         doc_stats[doc_name]["hits"] += 1
         doc_stats[doc_name]["score"] += doc_score
+        doc_stats[doc_name]["score_normalized"] += normalize_relevance(
+            doc_score, score_scale, rrf_k
+        )
         doc_stats[doc_name]["pages"].append(doc_page_number)
 
-    w_scores: list[float] = []
-    for doc, res in doc_stats.items():
-        res["score"] /= res["hits"]
+    for res in doc_stats.values():
+        hits = res["hits"]
+        res["score"] /= hits
+        res["score_normalized"] /= hits
         res["pages"] = sorted(set(res["pages"]))
         res["pages_count"] = len(res["pages"])
-        # Clamp the mean score so that non-positive cosine similarity
-        # values (possible for unrelated texts) do not break math.log.
-        score_base = max(float(res["score"]), smooth_factor)
-        res["score_weighted"] = math.log(
-            float(score_base * res["hits"] * res["pages_count"])
-        )
-        w_scores.append(res["score_weighted"])
+        # Document mass keeps the original intuition -- mean relevance times
+        # the amount of evidence -- but is built from normalized scores, so
+        # it is defined for every metric and can never be negative.
+        res["score_weighted"] = res["score_normalized"] * hits * res["pages_count"]
 
-    min_w_scores = abs(min(w_scores))
-    sum_w_scores = sum(s + min_w_scores for s in w_scores)
+    total_mass = sum(res["score_weighted"] for res in doc_stats.values())
+    top_mass = max(
+        (res["score_weighted"] for res in doc_stats.values()), default=0.0
+    )
+    # Nothing carries any measurable relevance: fall back to a uniform
+    # distribution so that cumulative document selection stays usable.
+    uniform_share = 1.0 / len(doc_stats)
 
-    for doc, res in doc_stats.items():
-        v = res["score_weighted"]
-        if sum_w_scores > 0.0:
-            doc_stats[doc]["score_weighted_scaled"] = max(
-                smooth_factor, (v + min_w_scores) / sum_w_scores
-            )
+    for res in doc_stats.values():
+        mass = res["score_weighted"]
+        if total_mass > 0.0:
+            res["score_weighted_scaled"] = mass / total_mass
         else:
-            doc_stats[doc]["score_weighted_scaled"] = 1.0
+            res["score_weighted_scaled"] = uniform_share
+        if top_mass > 0.0:
+            res["weight_normalized"] = max(smooth_factor, mass / top_mass)
+        else:
+            res["weight_normalized"] = 0.0
 
     return doc_stats
 
@@ -430,7 +592,9 @@ class SearchEngineCore:
             )
 
         # Step 3: RRF merge
-        if hybrid_search and postgres_fts_results:
+        texts_scores: list[float] = []
+        fused_with_fts = hybrid_search and bool(postgres_fts_results)
+        if fused_with_fts:
             texts_ids, texts_scores = rrf_merge(
                 milvus_results,
                 postgres_fts_results,
@@ -441,11 +605,14 @@ class SearchEngineCore:
             texts_ids = [
                 int(hit["metadata"]["external_text_id"]) for hit in milvus_results
             ]
+            texts_scores = [float(hit.get("score", 0.0)) for hit in milvus_results]
 
         # Step 4: Get text details via data source protocol
         if texts_ids:
             texts_with_context = self._data_source.get_text_for_id(
-                texts_ids, surrounding_chunks=2
+                texts_ids,
+                surrounding_chunks=2,
+                text_scores=texts_scores,
             )
         else:
             texts_with_context = []
@@ -457,7 +624,13 @@ class SearchEngineCore:
             )
 
         # Step 6: Compute stats
-        docs_stats = prepare_documents_stats(texts_with_context)
+        docs_stats = prepare_documents_stats(
+            texts_with_context,
+            score_scale=retrieval_score_scale(
+                rerank=rerank, hybrid_search=fused_with_fts
+            ),
+            rrf_k=rrf_k,
+        )
         filtered_stats = filter_stats_to_display_results(docs_stats)
 
         return {
