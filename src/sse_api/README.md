@@ -92,9 +92,15 @@ curl -X POST http://localhost:8271/api/collections/ \
         "collection_description": "Test collection",
         "model_embedder": "radlab/polish-bi-encoder-mean",
         "model_reranker": "radlab/polish-cross-encoder",
-        "embedder_index_type": "HNSW"
+        "embedder_index_type": "HNSW",
+        "chunking": {"max_tokens_in_chunk": 500, "number_of_overlap_tokens": 0}
       }'
 ```
+
+`chunking` (with the optional `strict_chunking` flag) belongs to the collection: every later
+indexing call may leave `max_tokens_in_chunk` / `number_of_overlap_tokens` out and is chunked the
+same way. `GET filter_options` returns the defaults to prefill a form with, and `GET embedders`
+returns `max_model_length` of every embedder — the largest chunk its model can take in.
 
 Upload files (supports ZIP extraction, optional denoising, chunking):
 
@@ -103,7 +109,8 @@ curl -X POST http://localhost:8271/api/upload_and_index_files/ \
   -H "Authorization: Token <your_token>" \
   -F "files[]=@/path/to/file.pdf" \
   -F "collection_name=my_docs" \
-  -F "indexing_options={\"prepare_proper_pages\":true,\"clear_text\":true}"
+  -F "indexing_options={\"prepare_proper_pages\":true,\"merge_document_pages\":false,\
+        \"clear_text\":true,\"use_text_denoiser\":false,\"check_text_lang\":true}"
 ```
 
 ### 2. Search with Options (Hybrid Search)

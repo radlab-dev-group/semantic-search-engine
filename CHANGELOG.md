@@ -4,7 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
-| [0.1.1](#0.1.1) | Deletion API (PostgreSQL + Milvus), document deactivation (`use_in_search`) and normalized `[0, 1]` document ranking weights |
+| [0.1.1](#0.1.1) | Deletion API (PostgreSQL + Milvus), document deactivation (`use_in_search`), normalized `[0, 1]` document ranking weights, collection-level chunking and `max_model_length` |
 | [0.1.0](#010) | Python client library, hybrid search, production deployment tooling, `src/` layout and CI |
 | [0.0.1](#001) | Initial version |
 
@@ -60,6 +60,51 @@ All notable changes to the Semantic Search Engine are documented in this file.
   update itself lives in
   `RelationalDBController.set_documents_use_in_search`.
 
+#### API — chunking of a collection
+
+How the texts of a collection are split is now declared once, on the collection
+(`CollectionOfDocuments.metadata_json`), instead of being repeated (or
+forgotten) on every indexing call.
+
+- **`POST new_collection`** accepts `chunking`
+  (`{"max_tokens_in_chunk": 500, "number_of_overlap_tokens": 64}`) and the
+  `strict_chunking` flag, and reports both in the answer.
+- **`max_tokens_in_chunk`** and **`number_of_overlap_tokens`** of
+  `indexing_options` are **optional**: `resolve_chunking()`
+  (`data/controllers/chunking.py`) takes the values of the request, then the
+  ones of the collection, then the global defaults
+  (`DEFAULT_MAX_TOKENS_IN_CHUNK` = 500, no overlap), which are remembered on a
+  collection that has no settings yet, so the next call may pass nothing.
+  Mixed chunk lengths inside one collection remain possible — the invariant of
+  a collection is its embedder, vector size and metric, not one chunk size.
+- A strict collection refuses indexing options other than its own
+  (`CHUNKING_MISMATCH`, `000006_DATA`), and a chunk longer than the input of
+  the embedder of the collection is refused instead of being truncated
+  silently by the model (`CHUNKING_TOO_LONG`, `000005_DATA`).
+- **`GET collections`** exposes `metadata_json`, so a UI can read the settings
+  of a collection; **`GET filter_options`** reports `chunking_defaults` to
+  prefill a form with (`data/core/constants.py` holds the defaults and keys).
+- Management command **`check_collection_chunking`** reports what every
+  collection declares and, with `--verify`, measures the stored chunks with the
+  tokenizer of the embedder and points at the chunks longer than declared
+  (`--collection NAME`, `--limit`, `--json`).
+
+#### Model input length (`max_model_length`)
+
+- `configs/embedders.json` and `configs/rerankers.json` may declare
+  `max_model_length`, the largest number of tokens a model takes in: one text
+  of an embedder, the whole `query + text` pair of a reranker. An entry
+  without the key declares no limit, so existing configurations keep working.
+- New accessors `EmbeddingModelsConfig.get_embedder_max_model_length()` /
+  `get_reranker_max_model_length()` and the descriptions
+  `embedders_info()` / `rerankers_info()`; `GET embedders` and `GET rerankers`
+  return them as `models_info`. A chunk which does not fit the pair budget of
+  the reranker is only reported in the server log, because the query already
+  occupies part of it.
+- `engine.controllers.models_logic.embedders_rerankers` is now a shim of
+  `engine.core.config.models_config` — one registry, `path`, `vector_size`,
+  `device` and `max_model_length` read from a single place.
+
 #### Client library
 - **`SSEClient.delete_texts`, `SSEClient.delete_documents` and
   `SSEClient.delete_collection`** with client side validation of the given
@@ -68,6 +113,15 @@ All notable changes to the Semantic Search Engine are documented in this file.
 - **`SSEClient.set_documents_use_in_search`** with the
   **`SSEClient.deactivate_documents`** / **`SSEClient.activate_documents`**
   shortcuts and the `SET_DOCUMENTS_USE_IN_SEARCH` endpoint constant.
+- **`SSEClient.create_collection(..., chunking=..., strict_chunking=...)`**
+  declares the chunking of the new collection
+  (`sse_lib.options.chunking_payload` normalises and checks it), and
+  `IndexingOptions` no longer sends `max_tokens_in_chunk` /
+  `number_of_overlap_tokens` when they are unset, so the settings of the
+  collection apply. `Collection.chunking` / `.strict_chunking` /
+  `.metadata_json` read them back.
+- **`SSEClient.embedders_info()`** and **`SSEClient.rerankers_info()`** return
+  `models_info`: `vector_size`, `device` and `max_model_length` per model.
 
 #### Document ranking — normalized weights
 - Chunk scores are now normalized onto `[0, 1]` before document statistics
