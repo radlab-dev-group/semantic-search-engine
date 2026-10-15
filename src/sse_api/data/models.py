@@ -3,6 +3,15 @@ from django.db import models
 
 from sse_api.system.models import OrganisationUser, OrganisationGroup, Organisation
 
+from sse_api.data.core.constants import (
+    CHUNKING_METADATA_KEY,
+    DEFAULT_MAX_TOKENS_IN_CHUNK,
+    DEFAULT_NUMBER_OF_OVERLAP_TOKENS,
+    MAX_TOKENS_IN_CHUNK_KEY,
+    NUMBER_OF_OVERLAP_TOKENS_KEY,
+    STRICT_CHUNKING_METADATA_KEY,
+)
+
 
 class CollectionOfDocuments(models.Model):
     """
@@ -22,6 +31,11 @@ class CollectionOfDocuments(models.Model):
     embedder_index_params = models.TextField(null=True)
     embedder_search_params = models.TextField(null=True)
 
+    # Settings which belong to the collection as a whole and must not drift
+    # from one upload to another. Currently: how its documents are split into
+    # chunks, and whether that chunking is enforced on every indexing call.
+    metadata_json = models.JSONField(null=True)
+
     created_on = models.DateTimeField(default=django.utils.timezone.now, null=False)
 
     created_by = models.ForeignKey(
@@ -31,6 +45,81 @@ class CollectionOfDocuments(models.Model):
 
     class Meta:
         unique_together = ("name", "created_by")
+
+    def chunking(self) -> dict:
+        """
+        Chunking declared for this collection.
+
+        Returns
+        -------
+        dict
+            ``{"max_tokens_in_chunk": int, "number_of_overlap_tokens": int}``
+            or an empty dictionary when the collection was created before this
+            setting existed. Callers which need usable numbers instead should
+            use :meth:`chunking_with_defaults`.
+        """
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return {}
+        chunking = metadata.get(CHUNKING_METADATA_KEY)
+        return chunking if isinstance(chunking, dict) else {}
+
+    def chunking_with_defaults(self) -> dict:
+        """
+        Chunking of the collection, filled with the global defaults.
+
+        Returns
+        -------
+        dict
+            Always the complete pair of ``max_tokens_in_chunk`` and
+            ``number_of_overlap_tokens``.
+        """
+        chunking = self.chunking()
+        return {
+            MAX_TOKENS_IN_CHUNK_KEY: chunking.get(
+                MAX_TOKENS_IN_CHUNK_KEY, DEFAULT_MAX_TOKENS_IN_CHUNK
+            ),
+            NUMBER_OF_OVERLAP_TOKENS_KEY: chunking.get(
+                NUMBER_OF_OVERLAP_TOKENS_KEY, DEFAULT_NUMBER_OF_OVERLAP_TOKENS
+            ),
+        }
+
+    def set_chunking(self, max_tokens_in_chunk: int, number_of_overlap_tokens: int):
+        """
+        Remember how the texts of this collection are split into chunks.
+
+        The values are not validated here; ``sse_api.data.controllers.chunking``
+        does it together with the limit of the embedder of the collection.
+
+        Parameters
+        ----------
+        max_tokens_in_chunk : int
+            Size of a chunk in tokens.
+        number_of_overlap_tokens : int
+            Number of tokens repeated between neighbouring chunks.
+        """
+        metadata = dict(self.metadata_json) if isinstance(self.metadata_json, dict) else {}
+        metadata[CHUNKING_METADATA_KEY] = {
+            MAX_TOKENS_IN_CHUNK_KEY: int(max_tokens_in_chunk),
+            NUMBER_OF_OVERLAP_TOKENS_KEY: int(number_of_overlap_tokens),
+        }
+        self.metadata_json = metadata
+
+    @property
+    def strict_chunking(self) -> bool:
+        """
+        Whether indexing has to refuse texts split differently than declared.
+        """
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return False
+        return bool(metadata.get(STRICT_CHUNKING_METADATA_KEY))
+
+    @strict_chunking.setter
+    def strict_chunking(self, value: bool):
+        metadata = dict(self.metadata_json) if isinstance(self.metadata_json, dict) else {}
+        metadata[STRICT_CHUNKING_METADATA_KEY] = bool(value)
+        self.metadata_json = metadata
 
 
 class UploadedDocuments(models.Model):
