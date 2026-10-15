@@ -92,7 +92,7 @@ Python 3.9+, `requests` as the only runtime dependency.
 | `create_collection(...)` | `POST new_collection` |
 | `list_collections()`, `get_collection(name)`, `collection_exists(name)` | `GET collections` |
 | `list_categories(collection)` | `GET categories` |
-| `list_documents(collection)` | `GET documents` |
+| `list_documents(collection, with_disabled=False)`, `list_document_details(collection)` | `GET documents` |
 | `upload_files(collection, files, ...)` | `POST upload_and_index_files` |
 | `index_documents(collection, documents, ...)` | `POST add_and_index_texts` |
 | `delete_texts(collection, chunk_ids)` | `POST delete_texts` |
@@ -104,6 +104,7 @@ Python 3.9+, `requests` as the only runtime dependency.
 | `search(collection, query, options, ...)` | `POST search_with_options` |
 | `generate_answer(query_response_id, options, ...)` | `POST generative_answer` |
 | `rate_answer(answer_response_id, value, value_max, comment=None)` | `POST rate_generative_answer` |
+| `list_search_history(collection=None, query_response_id=None)`, `get_search_history(query_response_id)` | `GET search_history`, `GET get_search_history` |
 | `list_generative_models()`, `list_embedders()`, `list_rerankers()` | `GET generative_models`, `GET embedders`, `GET rerankers` |
 | `embedders_info()`, `rerankers_info()` | `GET embedders`, `GET rerankers` — `models_info` with `vector_size`, `device` and `max_model_length` |
 | `new_chat(...)`, `send_chat_message(...)`, `save_chat(...)`, `get_chat_by_hash(...)`, `list_chats()` | `POST new_chat`, `POST add_user_message`, `POST save_chat`, `GET get_chat_by_hash`, `GET chats` |
@@ -115,6 +116,13 @@ Collections may be passed as a name, a `Collection` returned by
 `create_collection()` / `list_collections()`, or any mapping with a `name` key.
 A `Collection` also carries the settings of the collection: `metadata_json`,
 `chunking` (`{}` when none was declared) and `strict_chunking`.
+
+`GET documents` has two views.  The default one lists the names of the
+documents which take part in the search (`list_documents()`); with
+`with_disabled=True` — and always in `list_document_details()` — the server
+adds the deactivated documents together with their `id` and `use_in_search`
+flag.  Those identifiers are what `document_ids[]` of `delete_documents` and
+`set_documents_use_in_search` expects.
 
 `send_chat_message(..., collection="my_docs")` requires an explicit collection,
 even if the chat was created with one: the current server resolves the collection
@@ -129,7 +137,8 @@ provided empty prefix overrides `SSE_API_PREFIX`.
 |-------|---------|-------|
 | `SearchOptions` | `search()` | Only the fields that are set are sent; `extra` merges unknown keys |
 | `IndexingOptions` | `upload_files()`, `index_documents()` | Serialises the five cleaning keys the server reads with `options["..."]`; the two chunk keys appear only when set, so the collection decides |
-| `GenerativeOptions` | `generate_answer()`, `send_chat_message()` | `None` fields are dropped |
+| `GenerativeOptions` | `generate_answer()`, `send_chat_message()` | `None` fields are dropped; carries `use_doc_names_in_response`, the flag the generator reads from the same `query_options` |
+| `ChatOptions` | `new_chat()`, `send_chat_message()` (`chat_options=`) | The four pipeline switches (`use_rag_supervisor`, `use_content_supervisor`, `use_intelligent_query_rewrite`, `query_instruction`) merged into the single `options` object the chat endpoints read |
 
 Single options may also be passed as keyword arguments — the two calls below are
 equivalent:
@@ -162,7 +171,7 @@ The backend is not uniform, and these traps are the reason the wrapper exists:
 
 Methods return dataclasses (`sse_lib.models`): `Collection`, `SearchResponse`
 (with `.hits` of `SearchHit`), `Answer`, `UploadResult`, `IndexingResult`,
-`Chat`, `ChatReply`, `ChatMessage`, `ChatHistory`. Every one of them keeps the
+`DocumentRef`, `Chat`, `ChatReply`, `ChatMessage`, `ChatHistory`. Every one of them keeps the
 untouched server payload in `.raw`, and
 `client.request("GET", "some_endpoint")` returns the unwrapped `body` of any
 endpoint for fields that are not modelled yet.

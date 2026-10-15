@@ -513,8 +513,9 @@ All endpoints require an **Authorization** header (`Token <jwt>`), unless `ENV_P
 
 ### Deleting content
 
-The three deletion endpoints accept `POST` (and, equivalently, `DELETE`) and always touch **both**
-databases: the relational rows are removed first, the embeddings of the removed texts afterwards.
+The three deletion endpoints accept `POST` and always touch **both** databases:
+the relational rows are removed first, the embeddings of the removed texts
+afterwards.
 
 | Endpoint | Parameters | Removed |
 |----------|------------|---------|
