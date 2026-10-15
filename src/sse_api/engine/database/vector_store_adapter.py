@@ -110,6 +110,9 @@ class MilvusVectorStoreAdapter(VectorStoreProtocol):
             final_results: list[dict[str, Any]] = []
             for hit in reranked_hits:
                 original_data = hit["original_data"]
+                # Keep the cosine similarity of the hit — the reranker
+                # score replaces it in "score" and is not comparable to it.
+                original_data.setdefault("similarity", original_data.get("score"))
                 original_data["score"] = float(hit["score"])
                 final_results.append(original_data)
 

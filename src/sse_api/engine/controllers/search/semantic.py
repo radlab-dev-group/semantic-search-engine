@@ -18,7 +18,6 @@ The module is used by the web application to answer user questions
 against a collection of documents.
 """
 
-import math
 import tqdm
 import json
 import pandas as pd
@@ -48,6 +47,13 @@ from sse_api.engine.controllers.search.relational import DBTextSearchController
 from sse_api.engine.controllers.database.relational_db import RelationalDBController
 from sse_api.engine.core.config.models_config import EmbeddingModelsConfig
 from sse_api.engine.core.protocols import VectorStoreProtocol
+from sse_api.engine.core.search_engine import (
+    annotate_chunk_scores,
+    cosine_scores_by_text_id,
+    prepare_documents_stats as compute_documents_stats,
+    reformat_search_results_to_display as reformat_results,
+    retrieval_score_scale,
+)
 
 
 class DBSemanticSearchController:
@@ -799,6 +805,15 @@ class DBSemanticSearchController:
         # Prepare results to presents for user
         texts_ids = []
         texts_scores = []
+        # The cosine similarity of a chunk is reported only when the vector
+        # search is the single ranking criterion. In a hybrid search the
+        # ranking is decided by Reciprocal Rank Fusion, and chunks coming
+        # from the full-text side have no similarity at all — a cosine next
+        # to such a score would only be misleading.
+        vector_similarity = (
+            {} if hybrid_search else cosine_scores_by_text_id(milvus_results)
+        )
+        texts_similarity = None
 
         if hybrid_search:
             postgres_results = textual_controller.search_texts(
@@ -826,6 +841,9 @@ class DBSemanticSearchController:
             for text_res in milvus_results:
                 texts_ids.append(int(text_res["metadata"]["external_text_id"]))
                 texts_scores.append(text_res["score"])
+            texts_similarity = [
+                vector_similarity.get(text_id) for text_id in texts_ids
+            ]
 
         if not len(texts_ids):
             self._logger.warning(
@@ -834,7 +852,10 @@ class DBSemanticSearchController:
             return {}, {}, []
 
         postgres_docs = textual_controller.get_texts(
-            texts_ids=texts_ids, texts_scores=texts_scores, surrounding_chunks=2
+            texts_ids=texts_ids,
+            texts_scores=texts_scores,
+            surrounding_chunks=2,
+            texts_similarity=texts_similarity,
         )
 
         if hybrid_search and do_rerank:
@@ -844,10 +865,20 @@ class DBSemanticSearchController:
                 max_results=max_results,
             )
 
+        score_scale = retrieval_score_scale(
+            rerank=do_rerank, hybrid_search=hybrid_search
+        )
+        annotate_chunk_scores(postgres_docs, score_scale, rrf_k)
+
         results = {
             "query": question_str,
+            "score_scale": score_scale,
             "stats": self.filter_stats_to_display_results(
-                doc_stats=self.prepare_documents_stats(postgres_docs),
+                doc_stats=self.prepare_documents_stats(
+                    postgres_docs,
+                    score_scale=score_scale,
+                    rrf_k=rrf_k,
+                ),
                 remove_under_hits=1,
                 remove_under_pages=1,
             ),
@@ -1314,11 +1345,18 @@ class DBSemanticSearchController:
 
     @staticmethod
     def prepare_documents_stats(
-        postgres_docs, smooth_factor: float = 0.0001
+        postgres_docs,
+        smooth_factor: float = 0.0001,
+        score_scale: str = "cosine",
+        rrf_k: int = 60,
     ) -> dict:
         """
-        Compute per‑document statistics (hits, average score, weighted
-        score, etc.) from a list of PostgreSQL document fragments.
+        Compute per-document statistics from a list of PostgreSQL document
+        fragments.
+
+        Thin delegation to
+        :func:`sse_api.engine.core.search_engine.prepare_documents_stats`,
+        kept for backwards compatibility of this controller's API.
 
         Parameters
         ----------
@@ -1326,59 +1364,24 @@ class DBSemanticSearchController:
             List of document fragment dictionaries returned by
             ``_prepare_document_page``.
         smooth_factor : float, default 0.0001
-            Minimum value used when scaling weighted scores.
+            Floor used when scaling weighted scores.
+        score_scale : str, default "cosine"
+            Scale of the chunk scores inside ``postgres_docs``: ``"cosine"``,
+            ``"reranker"``, ``"rrf"`` or ``"raw"``.
+        rrf_k : int, default 60
+            Reciprocal Rank Fusion constant used by the ``"rrf"`` scale.
 
         Returns
         -------
         dict
             Mapping ``{document_name: stats_dict}``.
         """
-        if not postgres_docs:
-            return dict()
-
-        doc_stats = dict()
-        for result in postgres_docs:
-            result = result["result"]
-            doc_name = result["text"]["document_name"]
-            doc_score = result["text"]["score"]
-            doc_page_number = result["text"]["page_number"]
-            if doc_name not in doc_stats:
-                doc_stats[doc_name] = {
-                    "score": 0.0,
-                    "score_weighted": 0.0,
-                    "hits": 0,
-                    "pages": [],
-                    "pages_count": 0,
-                    "relative_path": result["text"]["relative_path"],
-                }
-            doc_stats[doc_name]["hits"] += 1
-            doc_stats[doc_name]["score"] += doc_score
-            doc_stats[doc_name]["pages"].append(doc_page_number)
-
-        w_scores = []
-        for doc, res in doc_stats.items():
-            res["score"] = res["score"] / res["hits"]
-            res["pages"] = sorted(set(res["pages"]))
-            res["pages_count"] = len(res["pages"])
-            # Clamp the mean score so that non-positive cosine similarity
-            # values (possible for unrelated texts) do not break math.log.
-            score_base = max(float(res["score"]), smooth_factor)
-            res["score_weighted"] = math.log(
-                float(score_base * res["hits"] * res["pages_count"])
-            )
-            w_scores.append(res["score_weighted"])
-        # percentage-like scaling with a smooth factor
-        min_w_scores = abs(min(w_scores))
-        sum_w_scores = sum([s + min_w_scores for s in w_scores])
-        for doc, res in doc_stats.items():
-            v = res["score_weighted"]
-            if sum_w_scores > 0.0:
-                doc_stats[doc]["score_weighted_scaled"] = max(
-                    smooth_factor, (v + min_w_scores) / sum_w_scores
-                )
-            else:
-                doc_stats[doc]["score_weighted_scaled"] = 1.0
-        return doc_stats
+        return compute_documents_stats(
+            postgres_docs,
+            smooth_factor=smooth_factor,
+            score_scale=score_scale,
+            rrf_k=rrf_k,
+        )
 
     @staticmethod
     def filter_stats_to_display_results(
@@ -1416,8 +1419,12 @@ class DBSemanticSearchController:
         search_results: list | dict,
     ) -> dict | list:
         """
-        Transform raw search results into a UI‑friendly structure that
+        Transform raw search results into a UI-friendly structure that
         contains scores, context snippets and document identifiers.
+
+        Thin delegation to
+        :func:`sse_api.engine.core.search_engine.reformat_search_results_to_display`,
+        kept for backwards compatibility of this controller's API.
 
         Parameters
         ----------
@@ -1429,26 +1436,7 @@ class DBSemanticSearchController:
         dict | list
             Reformatted results ready for presentation.
         """
-        ans_dict = {}
-        for idx, answer in enumerate(search_results):
-            a = answer["result"]
-            left_ctx_str, right_ctx_str = "", ""
-            if len(a["left_context"]):
-                left_ctx_str = a["left_context"][-1]["text_str"]
-            if len(a["right_context"]):
-                right_ctx_str = a["right_context"][0]["text_str"]
-            ans_dict[idx] = {
-                "score": a["text"]["score"],
-                "document_name": a["text"]["document_name"],
-                "relative_filepath": a["text"]["relative_path"],
-                "page_number": a["text"]["page_number"],
-                "text_number": a["text"]["text_number"],
-                "language": a["text"]["language"],
-                "text_str": a["text"]["text_str"],
-                "left_context": left_ctx_str,
-                "right_context": right_ctx_str,
-            }
-        return ans_dict
+        return reformat_results(search_results)
 
     def __get_documents_based_on_templates(
         self,

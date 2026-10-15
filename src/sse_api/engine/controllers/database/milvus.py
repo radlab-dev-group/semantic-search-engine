@@ -534,6 +534,9 @@ class MilvusHandler:
             q_res = []
             for text_idx, score in sorted_ce_query_result:
                 text_res = query_results[text_idx]
+                # The reranker replaces the retrieval score, so the cosine
+                # similarity of the hit is kept under its own field.
+                text_res.setdefault("similarity", text_res.get("score"))
                 text_res["score"] = score
                 q_res.append(text_res)
             re_results.append(q_res)

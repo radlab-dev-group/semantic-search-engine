@@ -4,12 +4,12 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
-| [Unreleased](#unreleased) | Deletion API for texts, documents and whole collections (PostgreSQL + Milvus) |
+| [0.1.1](#0.1.1) | Deletion API (PostgreSQL + Milvus) and normalized `[0, 1]` document ranking weights |
 | [0.1.0](#010) | Python client library, hybrid search, production deployment tooling, `src/` layout and CI |
 | [0.0.1](#001) | Initial version |
 
 
-## [Unreleased]
+## [011]
 
 ### Added
 
@@ -41,6 +41,42 @@ All notable changes to the Semantic Search Engine are documented in this file.
   `SSEClient.delete_collection`** with client side validation of the given
   ids/names, plus `DELETE_TEXTS`, `DELETE_DOCUMENTS`, `DELETE_COLLECTION`
   endpoint constants.
+
+#### Document ranking — normalized weights
+- Chunk scores are now normalized onto `[0, 1]` before document statistics
+  are computed (`normalize_relevance`), matching the scale each pipeline
+  stage actually reports: cosine similarity (`(1 + s) / 2`), RRF values
+  (`s * (k + 1) / 2`) or cross-encoder logits (logistic squash). The scale
+  is derived from the search options by `retrieval_score_scale`.
+- `prepare_documents_stats` gains `score_scale` / `rrf_k` parameters and
+  returns, in addition to `score` and the hit/page counters:
+  `score_normalized` (mean relevance in `[0, 1]`), `score_weighted`
+  (non-negative document mass), `score_weighted_scaled` (share of the total
+  mass; always sums up to `1.0`) and `weight_normalized` (mass relative to
+  the best document).
+- Fixes the old scaling, which clamped negative reranker logits to the same
+  value, shifted the weights with `abs(min())` even when every weight was
+  positive, and did not sum up to `1.0` for result sets of unrelated
+  documents — all of which distorted `percentage_rank_mass`.
+- The protocol-based engine no longer scores every chunk with a constant
+  `1.0`: retrieval scores (cosine or fused RRF) are propagated through
+  `RelationalDataAdapter.get_text_for_id(text_scores=...)`.
+- `DBSemanticSearchController.prepare_documents_stats` now delegates to the
+  pure `engine.core.search_engine` implementation (the duplicated copy was
+  removed).
+- Search responses now make the score scale explicit:
+  - `results.score_scale` says which metric ordered the results: `"cosine"`
+    (plain vector search), `"rrf"` (hybrid search) or `"reranker"` (cross
+    encoder was applied).
+  - every chunk carries `score_normalized`, the same relevance mapped onto
+    `[0, 1]`, so numbers from different pipelines are comparable.
+  - every chunk carries `similarity`, the cosine similarity of the vector
+    search — reported **only** when the vector search is the single ranking
+    criterion (`hybrid_search` off). In hybrid search the ranking is decided
+    by the fused ranks and full-text-only chunks have no similarity, so a
+    cosine next to such a score would be misleading. The same rule applies
+    to the new `stats[document].similarity` (mean of the hits, `null` in
+    hybrid mode).
 
 ## [0.1.0]
 

@@ -55,6 +55,8 @@ class SearchHit:
     """A single chunk returned inside ``results.detailed_results``."""
 
     score: Optional[float] = None
+    score_normalized: Optional[float] = None
+    similarity: Optional[float] = None
     document_name: Optional[str] = None
     relative_filepath: Optional[str] = None
     page_number: Optional[int] = None
@@ -71,6 +73,8 @@ class SearchHit:
         payload = _as_dict(data)
         return cls(
             score=payload.get("score"),
+            score_normalized=payload.get("score_normalized"),
+            similarity=payload.get("similarity"),
             document_name=payload.get("document_name"),
             relative_filepath=payload.get("relative_filepath"),
             page_number=payload.get("page_number"),
