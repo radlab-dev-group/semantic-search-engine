@@ -263,3 +263,109 @@ a do niego wpisywane są trzy wartości:
 Jeżeli podano więcej niż jeden z ww wartości, to w odróżnieniu od bazy relacyjnej,
 w Milvusie wybierane są do przeszukiwania te embeddingi,
 które spełniają warunek połączony `AND`, nie `OR`.
+
+## Fragmentowanie (chunking) kolekcji
+
+Sposób dzielenia tekstów na chunki jest **ustawieniem kolekcji**, deklarowanym
+raz -- przy jej tworzeniu -- a nie przy każdym wywołaniu indeksowania.
+Wartości trzymane są w `CollectionOfDocuments.metadata_json`:
+
+```json
+{
+  "chunking": {"max_tokens_in_chunk": 500, "number_of_overlap_tokens": 64},
+  "strict_chunking": false
+}
+```
+
+Jak działa `resolve_chunking` (`data/controllers/chunking.py`) dla jednego
+wywołania indeksowania:
+
+1. Wartości z zapytania wygrywają (kolekcja nie jest nadpisywana).
+2. Brak wartości w zapytaniu -- używane są ustawienia kolekcji.
+3. Gdy ani zapytanie, ani kolekcja nic nie deklarują -- używane są wartości
+   domyślne (500 tokenów, brak nakładki) **i są zapamiętywane na kolekcji**,
+   więc kolejne wywołanie nie musi nic podawać.
+4. Kolekcja ze `strict_chunking: true` odrzuca wartości inne niż własne --
+   `CHUNKING_MISMATCH` (`000006_DATA`).
+5. Chunk dłuższy niż wejście embedera kolekcji jest odrzucany zamiast być po
+   cichu ucinanym przez model -- `CHUNKING_TOO_LONG` (`000005_DATA`).
+   `number_of_overlap_tokens` zawsze musi mieścić się w `[0, max_tokens_in_chunk)`.
+
+Różne długości chunków w jednej kolekcji są **dozwolone** (wektory pozostają
+porównywalne, rozmywają się jedynie progi i okna kontekstu) -- dlatego
+nadpisanie ustawień kolekcji w ogóle istnieje. Twardym inwariantem kolekcji
+jest jej embedder, wymiar wektora i metryka odległości, a nie jedna długość
+chunka.
+
+### Endpointy
+
+| Endpoint | Zmiana |
+|----------|--------|
+| `POST new_collection` | opcjonalne `chunking` (`max_tokens_in_chunk`, `number_of_overlap_tokens`) oraz `strict_chunking`; odpowiedź zwraca oba pola (`collection_id`, `chunking`, `strict_chunking`) |
+| `POST upload_and_index_files`, `POST add_and_index_texts` | `max_tokens_in_chunk` i `number_of_overlap_tokens` w `indexing_options` są opcjonalne -- bez nich obowiązują ustawienia kolekcji (pozostałych pięć flag nadal jest wymaganych) |
+| `GET collections` | każdy obiekt zawiera `metadata_json`, czyli `chunking` i `strict_chunking` |
+| `GET filter_options` | `chunking_defaults` -- wartości do wstępnie wypełnionego formularza |
+
+### `max_model_length` modeli
+
+`configs/embedders.json` i `configs/rerankers.json` mogą deklarować
+`max_model_length`, czyli maksymalną liczbę tokenów przyjmowaną przez model:
+w przypadku embedera jest to **jeden tekst**, w przypadku rerankera **cała para
+`query + text`**.
+
+* chunk dłuższy niż wejście embedera byłby ucinany bez ostrzeżenia, więc takie
+  fragmentowanie jest odrzucane (`CHUNKING_TOO_LONG`);
+* chunk, który nie mieści się w budżecie pary rerankera, jest tylko logowany
+  jako ostrzeżenie -- zapytanie też zajmuje część tego budżetu;
+* wpis bez `max_model_length` nie ma limitu, więc konfiguracje sprzed dodania
+  tego klucza działają bez zmian.
+
+Wartości są dostępne w `GET embedders` i `GET rerankers` jako `models_info`:
+
+```json
+{
+  "models": ["google/embeddinggemma-300m"],
+  "models_info": [
+    {
+      "name": "google/embeddinggemma-300m",
+      "vector_size": 768,
+      "max_model_length": 2048,
+      "device": "cpu"
+    }
+  ]
+}
+```
+
+### Audyt i naprawa ustawień
+
+```shell script
+python -m sse_api.manage check_collection_chunking
+python -m sse_api.manage check_collection_chunking --collection my_docs --verify
+python -m sse_api.manage check_collection_chunking --fix --dry-run
+```
+
+`--verify` mierzy realne chunki tokenizerem embedera kolekcji i wskazuje te,
+które są dłuższe niż deklaracja. `--fix` poprawia **deklaracje** (brak
+chunkingu -> wartości domyślne, chunk ponad wejściem embedera -> przycięcie do
+limitu, niemożliwa nakładka -> wartość domyślna), a `--dry-run` pokazuje ten
+plan bez zapisu. Żaden tekst nie jest dzielony ponownie -- istniejące chunki
+można poprawić wyłącznie przez ponowne zaindeksowanie.
+
+### Klient `sse_lib`
+
+```python
+client.create_collection(
+    "my_docs", "My Documents", "Opis",
+    embedder="google/embeddinggemma-300m",
+    reranker="radlab/polish-cross-encoder",
+    chunking={"max_tokens_in_chunk": 500, "number_of_overlap_tokens": 0},
+    strict_chunking=False,
+)
+# chunkingu nie trzeba już podawać przy indeksowaniu
+client.index_documents("my_docs", ["Tekst do zaindeksowania."])
+client.embedders_info()   # vector_size, device, max_model_length
+```
+
+`IndexingOptions` wysyła klucze fragmentowania tylko wtedy, gdy zostały ustawione,
+a `Collection.chunking` / `Collection.strict_chunking` odczytują ustawienia
+kolekcji z `metadata_json`.

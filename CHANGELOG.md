@@ -88,6 +88,12 @@ forgotten) on every indexing call.
   collection declares and, with `--verify`, measures the stored chunks with the
   tokenizer of the embedder and points at the chunks longer than declared
   (`--collection NAME`, `--limit`, `--json`).
+- **`--fix`** repairs the chunking *declared* on the collections
+  (`plan_chunking_fix()`): a collection without settings gets the defaults, a
+  chunk above `max_model_length` of its embedder is clamped to it and an
+  overlap outside the chunk is corrected; `--dry-run` shows the plan without
+  writing it. Metadata only — no text is re-split, chunks already in the
+  database require re-indexing.
 
 #### Model input length (`max_model_length`)
 

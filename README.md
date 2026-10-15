@@ -603,10 +603,15 @@ and the distance metric. What is already in the database can be audited with
 
 ```shell script
 python -m sse_api.manage check_collection_chunking --verify
+python -m sse_api.manage check_collection_chunking --fix --dry-run
 ```
 
-which reports the settings of every collection and, with `--verify`, measures the stored chunks
-with the tokenizer of the embedder and points at the chunks longer than declared.
+`--verify` reports the settings of every collection and measures the stored chunks with the
+tokenizer of the embedder, pointing at the chunks longer than declared. `--fix` repairs the
+**declarations** (defaults bound onto a collection which has none, a chunk clamped to the input
+of the embedder, an impossible overlap corrected) and `--dry-run` only shows that plan. No text
+is ever re-split: chunks which are already in the database can be corrected by indexing them
+again, and `--collection NAME` / `--limit` / `--json` select and format the report.
 
 ### Search Options & Filters
 
@@ -855,7 +860,7 @@ Additional project‑specific commands are provided by the `sse_tools` scripts:
 | `python -m sse_api.manage runserver 0.0.0.0:8271` | Starts the development server (default port 8271 in `run-api.sh`).                             |
 | `python -m sse_api.manage migrate`                | Applies database migrations (including the generated migration files under `chat/migrations`). |
 | `python -m sse_api.manage createsuperuser`        | Creates a Django superuser for the admin UI (if `ENV_SHOW_ADMIN_WINDOW` is true).              |
-| `python -m sse_api.manage check_collection_chunking` | Reports the chunking of every collection; `--verify` measures the stored chunks with the tokenizer of the embedder (`--collection NAME`, `--limit`, `--json`). |
+| `python -m sse_api.manage check_collection_chunking` | Reports the chunking of every collection; `--verify` measures the stored chunks with the tokenizer of the embedder, `--fix` repairs the declarations of the collections and `--dry-run` shows that plan (`--collection NAME`, `--limit`, `--json`). |
 
 ### Shell Scripts
 

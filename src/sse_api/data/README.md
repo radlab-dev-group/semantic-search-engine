@@ -97,6 +97,10 @@ embedder and vector size, not a single chunk size.
 `python -m sse_api.manage check_collection_chunking` reports what every collection declares;
 `--verify` measures the stored chunks with the tokenizer of the embedder and points at the chunks
 which are longer than declared (`--collection NAME`, `--limit`, `--json` shape the report).
+`--fix` repairs the declarations through `plan_chunking_fix()` — defaults bound onto a collection
+which has none, a chunk clamped to `max_model_length` of the embedder, an overlap brought back
+inside the chunk — and `--dry-run` prints the plan without writing it. Metadata only: no text is
+re-split, existing chunks require re-indexing.
 
 ### Typical Ingestion Flow
 
