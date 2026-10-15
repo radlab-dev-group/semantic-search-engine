@@ -17,6 +17,8 @@ from sse_api.engine.core.protocols import (
 from sse_api.engine.core.search_engine import (
     rrf_merge,
     rerank_results_with_vector_store,
+    annotate_chunk_scores,
+    cosine_scores_by_text_id,
     normalize_relevance,
     retrieval_score_scale,
     prepare_documents_stats,
@@ -50,6 +52,8 @@ __all__ = [
     # Pure computation functions
     "rrf_merge",
     "rerank_results_with_vector_store",
+    "annotate_chunk_scores",
+    "cosine_scores_by_text_id",
     "normalize_relevance",
     "retrieval_score_scale",
     "prepare_documents_stats",

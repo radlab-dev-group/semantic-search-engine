@@ -105,6 +105,7 @@ class RelationalDataAdapter:
         text_ids: list[int],
         surrounding_chunks: int = 0,
         text_scores: Optional[list[float]] = None,
+        text_similarity: Optional[list[Optional[float]]] = None,
     ) -> list[dict]:
         """
         Get text chunks by ID with surrounding context.
@@ -113,6 +114,10 @@ class RelationalDataAdapter:
         attached to the returned chunks and drive the document statistics.
         When omitted (or shorter than ``text_ids``) the missing tail is
         filled with a neutral ``1.0`` score.
+
+        ``text_similarity`` carries the cosine similarity of every id
+        (``None`` for chunks which the vector search did not return) and is
+        reported next to the score of each chunk.
         """
         scores = list(text_scores) if text_scores else []
         if len(scores) < len(text_ids):
@@ -121,6 +126,7 @@ class RelationalDataAdapter:
             texts_ids=text_ids,
             texts_scores=scores[: len(text_ids)],
             surrounding_chunks=surrounding_chunks,
+            texts_similarity=text_similarity,
         )
 
     def get_all_documents_from_collection(

@@ -64,6 +64,19 @@ All notable changes to the Semantic Search Engine are documented in this file.
 - `DBSemanticSearchController.prepare_documents_stats` now delegates to the
   pure `engine.core.search_engine` implementation (the duplicated copy was
   removed).
+- Search responses now make the score scale explicit:
+  - `results.score_scale` says which metric ordered the results: `"cosine"`
+    (plain vector search), `"rrf"` (hybrid search) or `"reranker"` (cross
+    encoder was applied).
+  - every chunk carries `score_normalized`, the same relevance mapped onto
+    `[0, 1]`, so numbers from different pipelines are comparable.
+  - every chunk carries `similarity`, the cosine similarity of the vector
+    search — reported **only** when the vector search is the single ranking
+    criterion (`hybrid_search` off). In hybrid search the ranking is decided
+    by the fused ranks and full-text-only chunks have no similarity, so a
+    cosine next to such a score would be misleading. The same rule applies
+    to the new `stats[document].similarity` (mean of the hits, `null` in
+    hybrid mode).
 
 ## [0.1.0]
 

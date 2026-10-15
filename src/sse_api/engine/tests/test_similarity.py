@@ -601,8 +601,11 @@ class _CapturingDataSource:
     def fts_search(self, query_str, collection_id, max_results, language=None):
         return list(self.fts_results)
 
-    def get_text_for_id(self, text_ids, surrounding_chunks=0, text_scores=None):
+    def get_text_for_id(
+        self, text_ids, surrounding_chunks=0, text_scores=None, text_similarity=None
+    ):
         self.scores = list(text_scores or [])
+        self.similarity = list(text_similarity or []) if text_similarity else None
         self.texts = [
             _make_postgres_doc(
                 "doc101" if text_id <= 105 else "doc102",
@@ -657,6 +660,12 @@ def test_search_engine_core_stats_use_the_rrf_scale_for_hybrid_results():
     )
     # the fused scores, not the cosine ones, are handed over
     assert math.isclose(ds.scores[0], 2.0 * top, rel_tol=1e-9)
+    # the ranking is decided by the fusion, so no cosine is reported
+    assert ds.similarity is None
+    assert outcome["score_scale"] == "rrf"
+    assert outcome["stats"]["doc101"]["similarity"] is None
+    chunk = outcome["detailed_results"][0]["result"]["text"]
+    assert chunk["similarity"] is None
     stats = outcome["stats"]
     # the fused scores are normalized onto [0, 1] before being weighted
     assert 0.0 < stats["doc101"]["score_normalized"] <= 1.0

@@ -66,6 +66,20 @@ cross-encodera -- a dopiero potem liczone są wagi dokumentów. Oprócz surowej
 całkowitej masie, suma = `1.0`) oraz `weight_normalized` (waga względem
 najlepszego dokumentu).
 
+Warto pamiętać, że `score` przy wynikach (chunkach) to **ocena, która
+ustaliła kolejność**, a jej sens zależy od trybu -- odpowiedź zawiera pole
+`score_scale`:
+* `cosine` -- zwykłe wyszukiwanie wektorowe (`hybrid_search` wyłączone):
+  `score` to cosine,
+* `rrf` -- wyszukiwanie hybrydowe (`hybrid_search` włączone, **domyślnie**):
+  `score` to wartość RRF, więc dobrze dobrany fragment może mieć np.
+  `0.03` -- to świetna pozycja w obu rankingach, a nie małe podobieństwo,
+* `reranker` -- zastosowany cross-encoder: `score` to logit.
+
+Do porównywania wyników z różnych trybów służy `score_normalized`
+(znormalizowane do `[0, 1]`), a `similarity` (cosine) pojawia się tylko
+wtedy, gdy ranking opiera się wyłącznie na wyszukiwaniu wektorowym.
+
 **Flow** filtrowania meta-informacjami jest nastepujący:
 
 1. Jeżeli przekazane były kategorie, to z bazy wybierane są te dokumenty,

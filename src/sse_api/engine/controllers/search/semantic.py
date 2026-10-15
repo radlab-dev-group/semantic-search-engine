@@ -48,7 +48,10 @@ from sse_api.engine.controllers.database.relational_db import RelationalDBContro
 from sse_api.engine.core.config.models_config import EmbeddingModelsConfig
 from sse_api.engine.core.protocols import VectorStoreProtocol
 from sse_api.engine.core.search_engine import (
+    annotate_chunk_scores,
+    cosine_scores_by_text_id,
     prepare_documents_stats as compute_documents_stats,
+    reformat_search_results_to_display as reformat_results,
     retrieval_score_scale,
 )
 
@@ -802,6 +805,15 @@ class DBSemanticSearchController:
         # Prepare results to presents for user
         texts_ids = []
         texts_scores = []
+        # The cosine similarity of a chunk is reported only when the vector
+        # search is the single ranking criterion. In a hybrid search the
+        # ranking is decided by Reciprocal Rank Fusion, and chunks coming
+        # from the full-text side have no similarity at all — a cosine next
+        # to such a score would only be misleading.
+        vector_similarity = (
+            {} if hybrid_search else cosine_scores_by_text_id(milvus_results)
+        )
+        texts_similarity = None
 
         if hybrid_search:
             postgres_results = textual_controller.search_texts(
@@ -829,6 +841,9 @@ class DBSemanticSearchController:
             for text_res in milvus_results:
                 texts_ids.append(int(text_res["metadata"]["external_text_id"]))
                 texts_scores.append(text_res["score"])
+            texts_similarity = [
+                vector_similarity.get(text_id) for text_id in texts_ids
+            ]
 
         if not len(texts_ids):
             self._logger.warning(
@@ -837,7 +852,10 @@ class DBSemanticSearchController:
             return {}, {}, []
 
         postgres_docs = textual_controller.get_texts(
-            texts_ids=texts_ids, texts_scores=texts_scores, surrounding_chunks=2
+            texts_ids=texts_ids,
+            texts_scores=texts_scores,
+            surrounding_chunks=2,
+            texts_similarity=texts_similarity,
         )
 
         if hybrid_search and do_rerank:
@@ -847,14 +865,18 @@ class DBSemanticSearchController:
                 max_results=max_results,
             )
 
+        score_scale = retrieval_score_scale(
+            rerank=do_rerank, hybrid_search=hybrid_search
+        )
+        annotate_chunk_scores(postgres_docs, score_scale, rrf_k)
+
         results = {
             "query": question_str,
+            "score_scale": score_scale,
             "stats": self.filter_stats_to_display_results(
                 doc_stats=self.prepare_documents_stats(
                     postgres_docs,
-                    score_scale=retrieval_score_scale(
-                        rerank=do_rerank, hybrid_search=hybrid_search
-                    ),
+                    score_scale=score_scale,
                     rrf_k=rrf_k,
                 ),
                 remove_under_hits=1,
@@ -1397,8 +1419,12 @@ class DBSemanticSearchController:
         search_results: list | dict,
     ) -> dict | list:
         """
-        Transform raw search results into a UI‑friendly structure that
+        Transform raw search results into a UI-friendly structure that
         contains scores, context snippets and document identifiers.
+
+        Thin delegation to
+        :func:`sse_api.engine.core.search_engine.reformat_search_results_to_display`,
+        kept for backwards compatibility of this controller's API.
 
         Parameters
         ----------
@@ -1410,26 +1436,7 @@ class DBSemanticSearchController:
         dict | list
             Reformatted results ready for presentation.
         """
-        ans_dict = {}
-        for idx, answer in enumerate(search_results):
-            a = answer["result"]
-            left_ctx_str, right_ctx_str = "", ""
-            if len(a["left_context"]):
-                left_ctx_str = a["left_context"][-1]["text_str"]
-            if len(a["right_context"]):
-                right_ctx_str = a["right_context"][0]["text_str"]
-            ans_dict[idx] = {
-                "score": a["text"]["score"],
-                "document_name": a["text"]["document_name"],
-                "relative_filepath": a["text"]["relative_path"],
-                "page_number": a["text"]["page_number"],
-                "text_number": a["text"]["text_number"],
-                "language": a["text"]["language"],
-                "text_str": a["text"]["text_str"],
-                "left_context": left_ctx_str,
-                "right_context": right_ctx_str,
-            }
-        return ans_dict
+        return reformat_results(search_results)
 
     def __get_documents_based_on_templates(
         self,

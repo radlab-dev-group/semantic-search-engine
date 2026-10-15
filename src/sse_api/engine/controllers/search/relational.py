@@ -19,7 +19,11 @@ class DBTextSearchController:
         pass
 
     def get_texts(
-        self, texts_ids: list, texts_scores: list, surrounding_chunks: int = 0
+        self,
+        texts_ids: list,
+        texts_scores: list,
+        surrounding_chunks: int = 0,
+        texts_similarity: list | None = None,
     ) -> list:
         """
         Retrieve ``DocumentPageText`` objects for the given IDs and attach
@@ -30,9 +34,14 @@ class DBTextSearchController:
         texts_ids : list
             List of primary keys of ``DocumentPageText`` records.
         texts_scores : list
-            Corresponding relevance scores.
+            Corresponding relevance scores. Those are the scores which
+            ordered the results (cosine, RRF or a reranker logit).
         surrounding_chunks : int, default 0
             Number of neighbouring text chunks to include as context.
+        texts_similarity : list, optional
+            Cosine similarity of every id, reported next to ``score``.
+            Entries are ``None`` for chunks which the vector search did not
+            return; the whole argument may be ``None`` as well.
 
         Returns
         -------
@@ -54,16 +63,21 @@ class DBTextSearchController:
             )
 
         doc_results = []
-        for text_id, score in zip(texts_ids, texts_scores):
+        for index, (text_id, score) in enumerate(zip(texts_ids, texts_scores)):
             doc_page = pages_map.get(text_id)
-            if doc_page:
-                doc_results.append(
-                    self._prepare_document_page_with_map(
-                        doc_page,
-                        score=float(score),
-                        context_map=context_map,
-                    )
+            if not doc_page:
+                continue
+            similarity = None
+            if texts_similarity is not None and index < len(texts_similarity):
+                similarity = texts_similarity[index]
+            doc_results.append(
+                self._prepare_document_page_with_map(
+                    doc_page,
+                    score=float(score),
+                    context_map=context_map,
+                    similarity=similarity,
                 )
+            )
         return doc_results
 
     @staticmethod
@@ -136,6 +150,7 @@ class DBTextSearchController:
         doc_page: DocumentPageText,
         score: float,
         context_map: dict,
+        similarity: float | None = None,
     ) -> dict:
         """
         Build the result dictionary using a pre-fetched context map
@@ -143,6 +158,7 @@ class DBTextSearchController:
         """
         main_text = {
             "score": score,
+            "similarity": similarity,
             "document_name": doc_page.page.document.name,
             "relative_path": doc_page.page.document.relative_path,
             "page_number": doc_page.page.page_number,

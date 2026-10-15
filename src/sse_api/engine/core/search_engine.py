@@ -66,6 +66,47 @@ def rrf_merge(
     return sorted_ids, [scores[tid] for tid in sorted_ids]
 
 
+def cosine_scores_by_text_id(milvus_results: list[dict]) -> dict:
+    """
+    Map ``text_id`` to the cosine similarity reported by the vector store.
+
+    Both the hybrid and the plain vector search need the similarity of a
+    chunk independently of the score used for ordering: the fusion and the
+    reranker overwrite ``score``, and a chunk coming only from the
+    full‑text list has no similarity at all.  Hits already carrying a
+    ``similarity`` key (they were reranked, so ``score`` holds a logit)
+    keep it.
+
+    Parameters
+    ----------
+    milvus_results : list[dict]
+        Vector search hits.
+
+    Returns
+    -------
+    dict
+        ``{text_id: cosine_similarity}``; hits without a usable
+        identifier or score are skipped.
+    """
+    similarities: dict[int, float] = {}
+    for hit in milvus_results or []:
+        if not isinstance(hit, dict):
+            continue
+        metadata = hit.get("metadata") or {}
+        try:
+            text_id = int(metadata["external_text_id"])
+            raw_score = hit.get("similarity")
+            if raw_score is None:
+                raw_score = hit.get("score")
+            similarity = _as_float(raw_score)
+            if similarity is None:
+                continue
+        except (KeyError, TypeError, ValueError):
+            continue
+        similarities[text_id] = similarity
+    return similarities
+
+
 def rerank_results_with_vector_store(
     query_text: str,
     results: list[dict],
@@ -230,6 +271,57 @@ def retrieval_score_scale(rerank: bool = False, hybrid_search: bool = False) -> 
     return SCORE_SCALE_COSINE
 
 
+def _as_float(value: Any) -> Optional[float]:
+    """Return ``value`` as a float, or ``None`` when it is not a number."""
+    try:
+        similarity = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(similarity) or math.isinf(similarity):
+        return None
+    return similarity
+
+
+def annotate_chunk_scores(
+    postgres_docs: list[dict],
+    score_scale: str = SCORE_SCALE_COSINE,
+    rrf_k: int = DEFAULT_RRF_K,
+) -> list[dict]:
+    """
+    Attach the normalized relevance to every chunk of a ``get_texts`` result.
+
+    ``score`` stays exactly what ordered the results — cosine similarity, a
+    Reciprocal Rank Fusion value or a reranker logit — which makes its raw
+    value hard to compare.  ``score_normalized`` is the same relevance on
+    the ``[0, 1]`` scale of :func:`normalize_relevance`, and ``similarity``
+    is the cosine similarity of the chunk when the vector search produced
+    one.
+
+    Parameters
+    ----------
+    postgres_docs : list[dict]
+        Document fragments as returned by ``get_texts`` (modified in place).
+    score_scale : str, default "cosine"
+        Scale of the ``score`` of every chunk.
+    rrf_k : int, default 60
+        Reciprocal Rank Fusion constant used by the ``"rrf"`` scale.
+
+    Returns
+    -------
+    list[dict]
+        The same list that was passed in.
+    """
+    for doc in postgres_docs or []:
+        text_info = (doc.get("result") or {}).get("text")
+        if not isinstance(text_info, dict):
+            continue
+        text_info["score_normalized"] = normalize_relevance(
+            text_info.get("score"), score_scale, rrf_k
+        )
+        text_info.setdefault("similarity", None)
+    return postgres_docs
+
+
 def prepare_documents_stats(
     postgres_docs: list[dict],
     smooth_factor: float = 0.0001,
@@ -267,6 +359,8 @@ def prepare_documents_stats(
 
         * ``score`` -- mean of the raw chunk scores,
         * ``score_normalized`` -- the same mean in ``[0, 1]``,
+        * ``similarity`` -- mean cosine similarity of the hits, ``None``
+          when none of them came from the vector search,
         * ``score_weighted`` -- document mass, i.e.
           ``score_normalized * hits * pages_count``,
         * ``score_weighted_scaled`` -- share of the total mass; all shares
@@ -278,6 +372,7 @@ def prepare_documents_stats(
         return {}
 
     doc_stats: dict[str, dict] = {}
+    cosine_samples: dict[str, list[float]] = {}
     for result in postgres_docs:
         result_inner = result["result"]
         text_info = result_inner["text"]
@@ -304,13 +399,20 @@ def prepare_documents_stats(
             doc_score, score_scale, rrf_k
         )
         doc_stats[doc_name]["pages"].append(doc_page_number)
+        cosine = _as_float(text_info.get("similarity"))
+        if cosine is not None:
+            cosine_samples.setdefault(doc_name, []).append(cosine)
 
-    for res in doc_stats.values():
+    for doc_name, res in doc_stats.items():
         hits = res["hits"]
         res["score"] /= hits
         res["score_normalized"] /= hits
         res["pages"] = sorted(set(res["pages"]))
         res["pages_count"] = len(res["pages"])
+        # Mean cosine similarity of the hits; None when the vector search
+        # did not contribute any of them (pure full-text matches).
+        samples = cosine_samples.get(doc_name)
+        res["similarity"] = sum(samples) / len(samples) if samples else None
         # Document mass keeps the original intuition -- mean relevance times
         # the amount of evidence -- but is built from normalized scores, so
         # it is defined for every metric and can never be negative.
@@ -477,6 +579,8 @@ def reformat_search_results_to_display(
         text_info = a["text"]
         ans_dict[idx] = {
             "score": text_info["score"],
+            "score_normalized": text_info.get("score_normalized"),
+            "similarity": text_info.get("similarity"),
             "document_name": text_info["document_name"],
             "relative_filepath": text_info["relative_path"],
             "page_number": text_info["page_number"],
@@ -594,6 +698,13 @@ class SearchEngineCore:
         # Step 3: RRF merge
         texts_scores: list[float] = []
         fused_with_fts = hybrid_search and bool(postgres_fts_results)
+        # A cosine similarity is reported only when the vector search is the
+        # single ranking criterion. In a hybrid search the ranking is decided
+        # by the fused ranks and full-text only chunks have no similarity,
+        # so a cosine next to such a score would be misleading.
+        vector_similarity = (
+            {} if fused_with_fts else cosine_scores_by_text_id(milvus_results)
+        )
         if fused_with_fts:
             texts_ids, texts_scores = rrf_merge(
                 milvus_results,
@@ -606,6 +717,11 @@ class SearchEngineCore:
                 int(hit["metadata"]["external_text_id"]) for hit in milvus_results
             ]
             texts_scores = [float(hit.get("score", 0.0)) for hit in milvus_results]
+        texts_similarity = None
+        if vector_similarity:
+            texts_similarity = [
+                vector_similarity.get(text_id) for text_id in texts_ids
+            ]
 
         # Step 4: Get text details via data source protocol
         if texts_ids:
@@ -613,6 +729,7 @@ class SearchEngineCore:
                 texts_ids,
                 surrounding_chunks=2,
                 text_scores=texts_scores,
+                text_similarity=texts_similarity,
             )
         else:
             texts_with_context = []
@@ -624,17 +741,20 @@ class SearchEngineCore:
             )
 
         # Step 6: Compute stats
+        score_scale = retrieval_score_scale(
+            rerank=rerank, hybrid_search=fused_with_fts
+        )
+        annotate_chunk_scores(texts_with_context, score_scale, rrf_k)
         docs_stats = prepare_documents_stats(
             texts_with_context,
-            score_scale=retrieval_score_scale(
-                rerank=rerank, hybrid_search=fused_with_fts
-            ),
+            score_scale=score_scale,
             rrf_k=rrf_k,
         )
         filtered_stats = filter_stats_to_display_results(docs_stats)
 
         return {
             "query": query_text,
+            "score_scale": score_scale,
             "stats": filtered_stats,
             "detailed_results": texts_with_context,
         }
