@@ -483,12 +483,50 @@ each app.
 | `GET`  | `/api/filter_options/`         | Retrieve mock filter metadata (URLs, categories) – useful for UI drop‑downs.    |
 | `GET`  | `/api/categories/`             | List distinct categories present in a collection.                               |
 | `GET`  | `/api/documents/`              | List document names within a collection (used for UI selectors).                |
+| `POST` | `/api/delete_texts/`           | Delete text chunks (`chunk_ids[]`) from PostgreSQL and their vectors from Milvus.|
+| `POST` | `/api/delete_documents/`       | Delete documents (`documents[]` names and/or `document_ids[]`) with their pages and chunks. |
+| `POST` | `/api/delete_collection/`      | Delete the whole collection with all of its content from both databases.        |
 | `GET`  | `/api/chats/`                  | Retrieve all chats for the current user.                                        |
 | `POST` | `/api/add_user_message/`       | Append a user message to a chat, optionally run RAG and return assistant reply. |
 | `POST` | `/api/save_chat/`              | Mark a chat as saved and optionally set it to read‑only.                        |
 | `GET`  | `/api/get_chat_by_hash/`       | Retrieve a saved chat by its hash (read‑only).                                  |
 
 All endpoints require an **Authorization** header (`Token <jwt>`), unless `ENV_PUBLIC_API_AVAILABLE` is set.
+
+### Deleting content
+
+The three deletion endpoints accept `POST` (and, equivalently, `DELETE`) and always touch **both**
+databases: the relational rows are removed first, the embeddings of the removed texts afterwards.
+
+| Endpoint | Parameters | Removed |
+|----------|------------|---------|
+| `/api/delete_texts/` | `collection_name`, `chunk_ids[]` | Text chunks (and the pages left without any chunk) |
+| `/api/delete_documents/` | `collection_name` and `documents[]` and/or `document_ids[]` | Documents with their pages and text chunks |
+| `/api/delete_collection/` | `collection_name` | Collection, its documents, pages, text chunks and the Milvus collection |
+
+Answers look like:
+
+```json
+{
+  "status": true,
+  "body": {
+    "deleted": {"texts": 128, "pages": 12, "documents": 3},
+    "deleted_vectors": 128,
+    "dropped_collection": false,
+    "not_found": ["missing.pdf"]
+  }
+}
+```
+
+* A collection may be deleted only by its **owner** — a collection which is merely shared with the
+  groups of the user organisation is reported as `COLLECTION_NOT_FOUND`.
+* Vectors are matched through the `metadata` field written during indexing
+  (`external_text_id`, `external_document_id`), so re-indexing is never required for a deletion.
+* Chats and search history referencing a deleted collection are removed with it, because their
+  foreign keys are protected against cascading deletion.
+* Content which other rows still reference is refused with `DELETE_PROTECTED`, and identifiers
+  which match nothing with `DOCUMENT_NOT_FOUND` / `CHUNK_NOT_FOUND`. Names or ids which do not
+  exist are additionally listed in `not_found`.
 
 ### Search Options & Filters
 
