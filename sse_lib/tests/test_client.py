@@ -353,6 +353,23 @@ class CollectionsTest(unittest.TestCase):
         )
         self.assertEqual(client.list_documents("docs"), ["a.pdf", "b.pdf"])
 
+    def test_list_documents_with_disabled_keeps_the_plain_names(self):
+        client = build_client(
+            [
+                ok(
+                    {
+                        "documents": [
+                            {"id": 1, "name": "a.pdf", "use_in_search": True},
+                            {"id": 2, "name": "off.pdf", "use_in_search": False},
+                        ]
+                    }
+                )
+            ]
+        )
+        self.assertEqual(
+            client.list_documents("docs", with_disabled=True), ["a.pdf", "off.pdf"]
+        )
+
     def test_templates_and_filter_options(self):
         client = build_client(
             [
