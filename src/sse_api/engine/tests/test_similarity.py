@@ -69,8 +69,15 @@ from sse_api.engine.controllers.search.semantic import (  # noqa: E402
     DBSemanticSearchController,
 )
 from sse_api.engine.core.search_engine import (  # noqa: E402
+    SCORE_SCALE_COSINE,
+    SCORE_SCALE_RAW,
+    SCORE_SCALE_RERANKER,
+    SCORE_SCALE_RRF,
     SearchEngineCore,
+    get_accumulated_docs_by_rank_perc,
+    normalize_relevance,
     prepare_documents_stats,
+    retrieval_score_scale,
 )
 
 # ---------------------------------------------------------------------------
@@ -331,7 +338,7 @@ def test_search_engine_core_propagates_min_similarity():
     vs = _RecordingVectorStore([])
 
     class _FakeDataSource:
-        def get_text_for_id(self, text_ids, surrounding_chunks=0):
+        def get_text_for_id(self, text_ids, surrounding_chunks=0, text_scores=None):
             return [_make_postgres_doc("docA", 0.9, page=1) for _ in text_ids]
 
     engine = SearchEngineCore(vector_store=vs, data_source=_FakeDataSource())
@@ -345,3 +352,316 @@ def test_search_engine_core_propagates_min_similarity():
         min_similarity=0.42,
     )
     assert vs.last_min_similarity == 0.42
+
+
+# ---------------------------------------------------------------------------
+# normalize_relevance — mapping raw scores onto [0, 1]
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_relevance_cosine_is_linear_on_unit_interval():
+    assert normalize_relevance(-1.0, SCORE_SCALE_COSINE) == 0.0
+    assert normalize_relevance(0.0, SCORE_SCALE_COSINE) == 0.5
+    assert normalize_relevance(1.0, SCORE_SCALE_COSINE) == 1.0
+    assert normalize_relevance(0.8, SCORE_SCALE_COSINE) == 0.9
+
+
+def test_normalize_relevance_clamps_out_of_range_values():
+    assert normalize_relevance(3.5, SCORE_SCALE_COSINE) == 1.0
+    assert normalize_relevance(-3.5, SCORE_SCALE_COSINE) == 0.0
+    assert normalize_relevance(1.4, SCORE_SCALE_RAW) == 1.0
+    assert normalize_relevance(-0.4, SCORE_SCALE_RAW) == 0.0
+
+
+def test_normalize_relevance_reranker_squashes_logits():
+    assert normalize_relevance(0.0, SCORE_SCALE_RERANKER) == 0.5
+    assert normalize_relevance(4.0, SCORE_SCALE_RERANKER) > 0.5
+    assert normalize_relevance(-4.0, SCORE_SCALE_RERANKER) < 0.5
+    # monotone and overflow-safe
+    assert normalize_relevance(-1000.0, SCORE_SCALE_RERANKER) == 0.0
+    assert normalize_relevance(1000.0, SCORE_SCALE_RERANKER) == 1.0
+
+
+def test_normalize_relevance_rrf_accounts_for_the_fused_lists():
+    top = 1.0 / 61.0
+    # first place in a single list
+    assert normalize_relevance(top, SCORE_SCALE_RRF) == 0.5
+    # first place in both lists is the maximum
+    assert normalize_relevance(2.0 * top, SCORE_SCALE_RRF) == 1.0
+    # anything above the theoretical maximum is clamped
+    assert normalize_relevance(4.0 * top, SCORE_SCALE_RRF) == 1.0
+
+
+def test_normalize_relevance_ignores_garbage():
+    assert normalize_relevance(None, SCORE_SCALE_COSINE) == 0.0
+    assert normalize_relevance("junk", SCORE_SCALE_COSINE) == 0.0
+    assert normalize_relevance(float("nan"), SCORE_SCALE_COSINE) == 0.0
+    assert normalize_relevance(float("inf"), SCORE_SCALE_COSINE) == 1.0
+    assert normalize_relevance(float("-inf"), SCORE_SCALE_COSINE) == 0.0
+
+
+def test_normalize_relevance_rejects_unknown_scale():
+    try:
+        normalize_relevance(0.5, "euclidean")
+    except ValueError as exc:
+        assert "euclidean" in str(exc)
+    else:
+        raise AssertionError("unknown score scale must be rejected")
+
+
+def test_retrieval_score_scale_follows_the_search_configuration():
+    assert retrieval_score_scale() == SCORE_SCALE_COSINE
+    assert retrieval_score_scale(hybrid_search=True) == SCORE_SCALE_RRF
+    # reranking overwrites every retained score, so it wins
+    assert retrieval_score_scale(rerank=True) == SCORE_SCALE_RERANKER
+    assert (
+        retrieval_score_scale(rerank=True, hybrid_search=True)
+        == SCORE_SCALE_RERANKER
+    )
+
+
+# ---------------------------------------------------------------------------
+# prepare_documents_stats — normalized, comparable document weights
+# ---------------------------------------------------------------------------
+
+
+def test_stats_empty_input():
+    assert prepare_documents_stats([]) == {}
+
+
+def test_stats_score_normalized_is_bounded():
+    docs = [
+        _make_postgres_doc("neg", -0.7, page=1),
+        _make_postgres_doc("pos", 0.7, page=1),
+    ]
+    stats = prepare_documents_stats(docs, score_scale=SCORE_SCALE_COSINE)
+    for res in stats.values():
+        assert 0.0 <= res["score_normalized"] <= 1.0
+    # the raw mean keeps the original metric for the API consumers
+    assert stats["neg"]["score"] == -0.7
+    assert math.isclose(stats["neg"]["score_normalized"], 0.15, rel_tol=1e-9)
+
+
+def test_stats_shares_sum_to_one():
+    docs = [
+        _make_postgres_doc("a", 0.91, page=1),
+        _make_postgres_doc("a", 0.88, page=3),
+        _make_postgres_doc("b", 0.42, page=1),
+        _make_postgres_doc("c", -0.3, page=2),
+    ]
+    stats = prepare_documents_stats(docs)
+    total = sum(res["score_weighted_scaled"] for res in stats.values())
+    assert math.isclose(total, 1.0, rel_tol=1e-9)
+
+
+def test_stats_shares_sum_to_one_for_non_positive_scores():
+    """A regression test: with every log-weight negative the old scaling
+    returned 1.0 per document, so the mass was three times too big."""
+    docs = [_make_postgres_doc(n, 0.7, page=1) for n in ("a", "b", "c")]
+    stats = prepare_documents_stats(docs)
+    total = sum(res["score_weighted_scaled"] for res in stats.values())
+    assert math.isclose(total, 1.0, rel_tol=1e-9)
+    for res in stats.values():
+        assert math.isclose(res["score_weighted_scaled"], 1.0 / 3.0, rel_tol=1e-9)
+
+
+def test_stats_identical_documents_are_weighted_equally():
+    docs = []
+    for name in ("a", "b", "c"):
+        docs.extend(
+            [
+                _make_postgres_doc(name, 0.66, page=1),
+                _make_postgres_doc(name, 0.66, page=2),
+            ]
+        )
+    stats = prepare_documents_stats(docs)
+    shares = {doc: res["score_weighted_scaled"] for doc, res in stats.items()}
+    assert math.isclose(shares["a"], shares["b"], rel_tol=1e-9)
+    assert math.isclose(shares["b"], shares["c"], rel_tol=1e-9)
+
+
+def test_stats_single_document_takes_the_whole_mass():
+    stats = prepare_documents_stats([_make_postgres_doc("only", 0.9, page=1)])
+    assert stats["only"]["score_weighted_scaled"] == 1.0
+    assert stats["only"]["weight_normalized"] == 1.0
+
+
+def test_stats_negative_reranker_logits_keep_their_ordering():
+    """A regression test: negative logits used to be clamped to the smooth
+    factor, making a -1 and a -8 hit indistinguishable."""
+    docs = [
+        _make_postgres_doc("better", -1.0, page=1),
+        _make_postgres_doc("worse", -8.0, page=1),
+    ]
+    stats = prepare_documents_stats(docs, score_scale=SCORE_SCALE_RERANKER)
+    assert stats["better"]["score_weighted"] > stats["worse"]["score_weighted"]
+    assert stats["better"]["score_weighted_scaled"] > 0.9
+    assert stats["worse"]["score_weighted_scaled"] > 0.0
+    total = sum(res["score_weighted_scaled"] for res in stats.values())
+    assert math.isclose(total, 1.0, rel_tol=1e-9)
+
+
+def test_stats_weight_normalized_is_relative_to_the_best_document():
+    docs = [
+        _make_postgres_doc("best", 0.95, page=1),
+        _make_postgres_doc("mid", 0.6, page=1),
+        _make_postgres_doc("weak", 0.3, page=1),
+    ]
+    stats = prepare_documents_stats(docs)
+    assert stats["best"]["weight_normalized"] == 1.0
+    assert (
+        stats["best"]["weight_normalized"]
+        > stats["mid"]["weight_normalized"]
+        > stats["weak"]["weight_normalized"]
+        > 0.0
+    )
+    assert stats["mid"]["weight_normalized"] <= 1.0
+
+
+def test_stats_weights_are_never_negative():
+    docs = [
+        _make_postgres_doc("a", -0.99, page=1),
+        _make_postgres_doc("b", -1.0, page=1),
+    ]
+    stats = prepare_documents_stats(docs)
+    for res in stats.values():
+        assert res["score_weighted"] >= 0.0
+        assert res["score_weighted_scaled"] >= 0.0
+        assert math.isfinite(res["weight_normalized"])
+
+
+def test_stats_without_any_relevance_falls_back_to_uniform_shares():
+    docs = [
+        _make_postgres_doc("a", -1.0, page=1),
+        _make_postgres_doc("b", -1.0, page=1),
+    ]
+    stats = prepare_documents_stats(docs)
+    for res in stats.values():
+        assert res["score_weighted"] == 0.0
+        assert math.isclose(res["score_weighted_scaled"], 0.5, rel_tol=1e-9)
+        assert res["weight_normalized"] == 0.0
+
+
+def test_stats_rrf_scale_is_rescaled_before_weighting():
+    top = 1.0 / 61.0
+    docs = [
+        _make_postgres_doc("top", top, page=1),
+        _make_postgres_doc("tail", top / 10.0, page=1),
+    ]
+    stats = prepare_documents_stats(docs, score_scale=SCORE_SCALE_RRF)
+    assert stats["top"]["score_normalized"] == 0.5
+    assert math.isclose(stats["tail"]["score_normalized"], 0.05, rel_tol=1e-9)
+    assert stats["top"]["weight_normalized"] == 1.0
+
+
+def test_stats_accumulated_docs_follow_the_normalized_shares():
+    docs = []
+    for page in range(1, 6):
+        docs.append(_make_postgres_doc("dominant", 0.95, page=page))
+    docs.append(_make_postgres_doc("other", 0.6, page=1))
+    stats = prepare_documents_stats(docs)
+    results = {"stats": stats}
+    assert get_accumulated_docs_by_rank_perc(results, 10) == ["dominant"]
+    selected = get_accumulated_docs_by_rank_perc(results, 100)
+    assert selected[0] == "dominant"
+    assert set(selected) == {"dominant", "other"}
+
+
+# ---------------------------------------------------------------------------
+# Score propagation through SearchEngineCore and the data adapter
+# ---------------------------------------------------------------------------
+
+
+def _engine_hits_and_pages():
+    """Ten hits spread over two documents of five hits / five pages each.
+
+    ``SearchEngineCore`` prunes the stats to documents with at least five
+    hits on at least three pages, so both documents have to clear that
+    threshold for the shares of the returned stats to sum up to one.
+    """
+    hits, pages = [], {}
+    scores = [0.95, 0.9, 0.85, 0.8, 0.75, 0.5, 0.4, 0.3, 0.2, 0.1]
+    for index, score in enumerate(scores):
+        text_id = 101 + index
+        page = (index % 5) + 1
+        hits.append({"score": score, "metadata": {"external_text_id": str(text_id)}})
+        pages[text_id] = page
+    return hits, pages
+
+
+class _CapturingDataSource:
+    """Data source that mirrors the scores handed over by the engine."""
+
+    def __init__(self, pages, fts_results=None):
+        self.pages = pages
+        self.fts_results = fts_results or []
+        self.scores = None
+        self.texts = None
+
+    def fts_search(self, query_str, collection_id, max_results, language=None):
+        return list(self.fts_results)
+
+    def get_text_for_id(self, text_ids, surrounding_chunks=0, text_scores=None):
+        self.scores = list(text_scores or [])
+        self.texts = [
+            _make_postgres_doc(
+                "doc101" if text_id <= 105 else "doc102",
+                score,
+                page=self.pages.get(text_id, 1),
+            )
+            for text_id, score in zip(text_ids, self.scores)
+        ]
+        return self.texts
+
+
+def test_search_engine_core_passes_vector_scores_to_the_data_source():
+    hits, pages = _engine_hits_and_pages()
+    ds = _CapturingDataSource(pages)
+    engine = SearchEngineCore(
+        vector_store=_RecordingVectorStore(hits), data_source=ds
+    )
+    outcome = engine.hybrid_search(
+        query_text="pytanie",
+        collection_id=1,
+        filter_doc_names=[],
+        max_results=10,
+        rerank=False,
+        hybrid_search=False,
+    )
+    # the cosine scores of the vector search reach the data source
+    assert ds.scores == [0.95, 0.9, 0.85, 0.8, 0.75, 0.5, 0.4, 0.3, 0.2, 0.1]
+    stats = outcome["stats"]
+    assert math.isclose(
+        stats["doc101"]["score"], (0.95 + 0.9 + 0.85 + 0.8 + 0.75) / 5, rel_tol=1e-9
+    )
+    assert stats["doc101"]["weight_normalized"] == 1.0
+    assert 0.0 < stats["doc101"]["score_normalized"] < 1.0
+
+
+def test_search_engine_core_stats_use_the_rrf_scale_for_hybrid_results():
+    hits, pages = _engine_hits_and_pages()
+    top = 1.0 / 61.0
+    fts_results = [(101 + index, 9.0 - index) for index in range(10)]
+    ds = _CapturingDataSource(pages, fts_results=fts_results)
+    engine = SearchEngineCore(
+        vector_store=_RecordingVectorStore(hits), data_source=ds
+    )
+    outcome = engine.hybrid_search(
+        query_text="pytanie",
+        collection_id=1,
+        filter_doc_names=[],
+        max_results=10,
+        rerank=False,
+        hybrid_search=True,
+        rrf_k=60,
+    )
+    # the fused scores, not the cosine ones, are handed over
+    assert math.isclose(ds.scores[0], 2.0 * top, rel_tol=1e-9)
+    stats = outcome["stats"]
+    # the fused scores are normalized onto [0, 1] before being weighted
+    assert 0.0 < stats["doc101"]["score_normalized"] <= 1.0
+    assert stats["doc101"]["score_normalized"] > stats["doc102"]["score_normalized"]
+    assert stats["doc101"]["weight_normalized"] == 1.0
+    # the shares of the *displayed* (filtered) documents sum up to 1.0
+    total = sum(res["score_weighted_scaled"] for res in stats.values())
+    assert math.isclose(total, 1.0, rel_tol=1e-9)
