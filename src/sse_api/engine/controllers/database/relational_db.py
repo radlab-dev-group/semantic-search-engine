@@ -4,6 +4,8 @@ import tqdm
 
 from typing import List, Dict, Any
 from django.db.models import Q, QuerySet
+from django.apps import apps
+from django.db import transaction
 
 from radlab_data.text.reader import DirectoryFileReader
 from radlab_data.text.document import Document as InputTextDocument
@@ -368,7 +370,23 @@ class RelationalDBController:
         created_by: OrganisationUser,
         collection_name: str,
         check_in_organisation: bool = True,
+        owner_only: bool = False,
     ) -> CollectionOfDocuments | None:
+        """
+        Find the collection by name.
+        :param created_by: User looking for the collection
+        :param collection_name: Name of the collection to find
+        :param check_in_organisation: Include collections shared with the
+        groups of the user organisation
+        :param owner_only: Return only the collections created by the user,
+        used for the operations which change the collection (f.e. deletion)
+        :return: CollectionOfDocuments or None when the collection doesn't
+        exist or is not visible to the user
+        """
+        if owner_only:
+            return CollectionOfDocuments.objects.filter(
+                created_by=created_by, name=collection_name
+            ).first()
         return (
             RelationalDBController.get_visible_collections(
                 created_by, check_in_organisation=check_in_organisation
@@ -468,6 +486,152 @@ class RelationalDBController:
             name = os.path.basename(doc_as_dict["filepath"])
         return Document.objects.filter(collection=collection, name=name).exists()
 
+    # ------------------------------------------------------------------
+    # Deleting collection content
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def get_collection_documents_by_ids(
+        collection: CollectionOfDocuments, document_ids
+    ) -> QuerySet[Document]:
+        """
+        Documents of the collection with given ids.
+        :param collection: Collection to search in
+        :param document_ids: ids of the documents to find
+        :return: QuerySet of Document
+        """
+        return Document.objects.filter(
+            collection=collection, pk__in=[int(pk) for pk in document_ids]
+        )
+
+    @staticmethod
+    def get_collection_documents_by_names(
+        collection: CollectionOfDocuments, document_names
+    ) -> QuerySet[Document]:
+        """
+        Documents of the collection with given names.
+        :param collection: Collection to search in
+        :param document_names: Names of the documents to find
+        :return: QuerySet of Document
+        """
+        return Document.objects.filter(
+            collection=collection, name__in=list(document_names)
+        )
+
+    @staticmethod
+    def get_collection_chunks_by_ids(
+        collection: CollectionOfDocuments, chunk_ids
+    ) -> QuerySet[DocumentPageText]:
+        """
+        Text chunks of the collection with given ids.
+        :param collection: Collection to search in
+        :param chunk_ids: ids of the text chunks to find
+        :return: QuerySet of DocumentPageText
+        """
+        return DocumentPageText.objects.filter(
+            pk__in=[int(pk) for pk in chunk_ids],
+            page__document__collection=collection,
+        )
+
+    @staticmethod
+    def chunks_to_delete(chunk_ids) -> List[int]:
+        """
+        Expand the ids of the chunks to delete with the chunks referencing
+        them through "paged_text" (chunks of a merged document point back to
+        the chunks of a single page), which are protected against removal.
+        :param chunk_ids: ids of the text chunks to delete
+        :return: Sorted list of all chunk ids that have to be removed
+        """
+        all_chunk_ids = {int(chunk_id) for chunk_id in chunk_ids}
+        current_chunk_ids = list(all_chunk_ids)
+        while len(current_chunk_ids):
+            current_chunk_ids = [
+                int(chunk_id)
+                for chunk_id in DocumentPageText.objects.filter(
+                    paged_text__in=current_chunk_ids
+                ).values_list("pk", flat=True)
+                if chunk_id not in all_chunk_ids
+            ]
+            all_chunk_ids.update(current_chunk_ids)
+        return sorted(all_chunk_ids)
+
+    @staticmethod
+    def delete_chunks(chunk_ids) -> Dict[str, int]:
+        """
+        Delete text chunks (and pages left without any chunk) from the db.
+        :param chunk_ids: ids of the text chunks to delete
+        :return: Number of deleted texts, pages and documents
+        """
+        deleted = {"texts": 0, "pages": 0, "documents": 0}
+        chunk_ids = RelationalDBController.chunks_to_delete(chunk_ids)
+        if not chunk_ids:
+            return deleted
+
+        with transaction.atomic():
+            page_ids = list(
+                DocumentPageText.objects.filter(pk__in=chunk_ids)
+                .values_list("page_id", flat=True)
+                .distinct()
+            )
+            result = DocumentPageText.objects.filter(pk__in=chunk_ids).delete()
+            deleted["texts"] += _deleted_rows(result, DocumentPageText)
+
+            result = DocumentPage.objects.filter(
+                pk__in=page_ids, documentpagetext__isnull=True
+            ).delete()
+            deleted["pages"] += _deleted_rows(result, DocumentPage)
+        return deleted
+
+    @staticmethod
+    def delete_documents(documents) -> Dict[str, int]:
+        """
+        Delete documents with their pages and text chunks from the db.
+        :param documents: Documents (iterable of Document) to delete
+        :return: Number of deleted texts, pages and documents
+        """
+        deleted = {"texts": 0, "pages": 0, "documents": 0}
+        document_ids = [document.pk for document in documents]
+        if not document_ids:
+            return deleted
+
+        with transaction.atomic():
+            result = DocumentPageText.objects.filter(
+                page__document__in=document_ids
+            ).delete()
+            deleted["texts"] += _deleted_rows(result, DocumentPageText)
+
+            result = DocumentPage.objects.filter(document__in=document_ids).delete()
+            deleted["pages"] += _deleted_rows(result, DocumentPage)
+
+            result = Document.objects.filter(pk__in=document_ids).delete()
+            deleted["documents"] += _deleted_rows(result, Document)
+        return deleted
+
+    @staticmethod
+    def delete_collection(collection: CollectionOfDocuments) -> Dict[str, int]:
+        """
+        Delete the collection with all its documents, pages and text chunks.
+        Chats and search history referencing the collection are removed too,
+        because they are protected against cascading deletion.
+        :param collection: Collection to delete
+        :return: Number of deleted texts, pages, documents, chats, queries
+        and collection
+        """
+        with transaction.atomic():
+            deleted = RelationalDBController.delete_documents(
+                Document.objects.filter(collection=collection)
+            )
+            deleted["chats"] = 0
+            deleted["queries"] = 0
+            deleted["collection"] = 0
+
+            deleted["chats"] = _delete_collection_chats(collection)
+            deleted["queries"] = _delete_collection_queries(collection)
+
+            result = CollectionOfDocuments.objects.filter(pk=collection.pk).delete()
+            deleted["collection"] += _deleted_rows(result, CollectionOfDocuments)
+        return deleted
+
 
 class PublicRelationDBController:
 
@@ -504,3 +668,58 @@ class PublicRelationDBController:
                 continue
             filtered_pages.append(d_page)
         return filtered_pages
+
+
+# ----------------------------------------------------------------------------
+# Deletion helpers
+# ----------------------------------------------------------------------------
+
+
+def _deleted_rows(delete_result, model) -> int:
+    """
+    Number of rows of the model deleted by QuerySet.delete().
+    :param delete_result: Result of QuerySet.delete()
+    :param model: Model which rows were deleted
+    :return: Number of deleted rows
+    """
+    # QuerySet.delete() returns (number_of_deleted_rows, counts_by_model)
+    if isinstance(delete_result, tuple) and len(delete_result) == 2:
+        delete_result = delete_result[1]
+    if not isinstance(delete_result, dict):
+        return 0
+    # The counts are keyed by "<app>.<Model>".
+    for label in (model._meta.label, model.__name__):
+        if label in delete_result:
+            return int(delete_result[label])
+    return 0
+
+
+def _delete_collection_chats(collection: CollectionOfDocuments) -> int:
+    """
+    Delete chats referencing the collection. Models of other apps are
+    resolved dynamically to avoid a circular import (chat imports data).
+    :param collection: Collection referenced by the chats
+    :return: Number of deleted chats
+    """
+    chat_model = apps.get_model("chat", "Chat")
+    result = chat_model.objects.filter(collection=collection).delete()
+    return _deleted_rows(result, chat_model)
+
+
+def _delete_collection_queries(collection: CollectionOfDocuments) -> int:
+    """
+    Delete search history (answers, responses and queries) referencing the
+    collection, in the order which respects the protected foreign keys.
+    :param collection: Collection referenced by the search history
+    :return: Number of deleted user queries
+    """
+    user_query_model = apps.get_model("engine", "UserQuery")
+    user_response_model = apps.get_model("engine", "UserQueryResponse")
+    user_answer_model = apps.get_model("engine", "UserQueryResponseAnswer")
+
+    user_answer_model.objects.filter(
+        user_response__user_query__collection=collection
+    ).delete()
+    user_response_model.objects.filter(user_query__collection=collection).delete()
+    result = user_query_model.objects.filter(collection=collection).delete()
+    return _deleted_rows(result, user_query_model)

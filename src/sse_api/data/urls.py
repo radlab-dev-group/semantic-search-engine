@@ -9,6 +9,9 @@ from sse_api.data.api import (
     ListDocumentsFromCollection,
     ListQuestionTemplates,
     ListFilteringOptions,
+    DeleteTextsFromCollection,
+    DeleteDocumentsFromCollection,
+    DeleteCollection,
 )
 from sse_api.core.constants import prepare_api_url
 
@@ -42,6 +45,21 @@ urlpatterns = [
         prepare_api_url("add_and_index_texts"),
         AddAndIndexTextsFromEP.as_view(),
         name="add_and_index_texts",
+    ),
+    path(
+        prepare_api_url("delete_texts"),
+        DeleteTextsFromCollection.as_view(),
+        name="delete_texts",
+    ),
+    path(
+        prepare_api_url("delete_documents"),
+        DeleteDocumentsFromCollection.as_view(),
+        name="delete_documents",
+    ),
+    path(
+        prepare_api_url("delete_collection"),
+        DeleteCollection.as_view(),
+        name="delete_collection",
     ),
     path(
         prepare_api_url("question_templates"),

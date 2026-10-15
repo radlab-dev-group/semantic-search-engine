@@ -8,6 +8,8 @@ from sse_api.core.validation import (
     request_params,
     required_text,
     optional_text,
+    identifiers,
+    text_list,
     indexing_options,
     texts,
 )
@@ -26,7 +28,16 @@ from sse_api.data.serializers import (
     SimpleQueryTemplateSerializer,
 )
 from sse_api.data.controllers.upload import UploadDocumentsController, UploadRejected
-from sse_api.data.core.errors import UPLOAD_REJECTED
+from sse_api.data.controllers.deletion import (
+    ContentDeletionController,
+    ContentProtected,
+)
+from sse_api.data.core.errors import (
+    UPLOAD_REJECTED,
+    CHUNK_NOT_FOUND,
+    DOCUMENT_NOT_FOUND,
+    DELETE_PROTECTED,
+)
 
 
 from sse_api.chat.core.errors import COLLECTION_NOT_FOUND
@@ -36,6 +47,27 @@ from sse_api.engine.controllers.database.semantic_db import SemanticDBController
 from sse_api.engine.controllers.database.relational_db import RelationalDBController
 
 from sse_api.data.models import Document, CollectionOfDocuments
+
+# Connection configuration of the vector database (Milvus).
+MILVUS_CONFIG_PATH = "./configs/milvus_config.json"
+
+
+def get_owned_collection(
+    collection_name: str, organisation_user
+) -> CollectionOfDocuments | None:
+    """
+    Collection created by the user. Deleting is allowed only for the owner of
+    the collection, collections shared with the groups of the user are not
+    enough.
+    :param collection_name: Name of the collection to find
+    :param organisation_user: User who is asking for the collection
+    :return: CollectionOfDocuments or None
+    """
+    return RelationalDBController.get_collection(
+        collection_name=collection_name,
+        created_by=organisation_user,
+        owner_only=True,
+    )
 
 
 class NewCollection(APIView):
@@ -409,3 +441,157 @@ class ListFilteringOptions(APIView):
                 "categories": categories,
             },
         )
+
+
+class DeleteTextsFromCollection(APIView):
+    """
+    Delete text chunks of the collection from the relational database and
+    their embeddings from Milvus.
+    """
+
+    required_params = ["collection_name", "chunk_ids[]"]
+    input_validators = {"collection_name": required_text, "chunk_ids[]": identifiers}
+
+    @required_params_exists(required_params=required_params)
+    @get_organisation_user
+    @get_default_language
+    def post(self, language, organisation_user, request, *args, **kwargs):
+        params = request_params(request)
+        collection = get_owned_collection(
+            collection_name=params.get("collection_name"),
+            organisation_user=organisation_user,
+        )
+        if collection is None:
+            return response_with_status(
+                status=False, language=language, error_name=COLLECTION_NOT_FOUND
+            )
+
+        controller = ContentDeletionController(milvus_config_path=MILVUS_CONFIG_PATH)
+        try:
+            result = controller.delete_texts(
+                collection=collection, chunk_ids=params.get("chunk_ids[]")
+            )
+        except ContentProtected:
+            return response_with_status(
+                status=False, language=language, error_name=DELETE_PROTECTED
+            )
+
+        if not result.deleted.get("texts"):
+            return response_with_status(
+                status=False, language=language, error_name=CHUNK_NOT_FOUND
+            )
+
+        return response_with_status(
+            status=True,
+            language=language,
+            error_name=None,
+            response_body=result.as_dict(),
+        )
+
+    delete = post
+
+
+class DeleteDocumentsFromCollection(APIView):
+    """
+    Delete documents, with their pages and text chunks, from the relational
+    database and their embeddings from Milvus. Documents may be given by
+    names (``documents[]``) and/or by ids (``document_ids[]``).
+    """
+
+    required_params = ["collection_name"]
+    optional_params = ["documents[]", "document_ids[]"]
+    input_validators = {
+        "collection_name": required_text,
+        "documents[]": text_list,
+        "document_ids[]": identifiers,
+    }
+
+    @required_params_exists(
+        required_params=required_params, optional_params=optional_params
+    )
+    @get_organisation_user
+    @get_default_language
+    def post(self, language, organisation_user, request, *args, **kwargs):
+        params = request_params(request)
+        collection = get_owned_collection(
+            collection_name=params.get("collection_name"),
+            organisation_user=organisation_user,
+        )
+        if collection is None:
+            return response_with_status(
+                status=False, language=language, error_name=COLLECTION_NOT_FOUND
+            )
+
+        document_names = params.get("documents[]")
+        document_ids = params.get("document_ids[]")
+        if not len(document_names or []) and not len(document_ids or []):
+            return error_response(INVALID_PARAMS, language)
+
+        controller = ContentDeletionController(milvus_config_path=MILVUS_CONFIG_PATH)
+        try:
+            result = controller.delete_documents(
+                collection=collection,
+                document_names=document_names,
+                document_ids=document_ids,
+            )
+        except ContentProtected:
+            return response_with_status(
+                status=False, language=language, error_name=DELETE_PROTECTED
+            )
+
+        if not result.deleted.get("documents"):
+            return response_with_status(
+                status=False,
+                language=language,
+                error_name=DOCUMENT_NOT_FOUND,
+            )
+
+        return response_with_status(
+            status=True,
+            language=language,
+            error_name=None,
+            response_body=result.as_dict(),
+        )
+
+    delete = post
+
+
+class DeleteCollection(APIView):
+    """
+    Delete the whole collection: its documents, pages and text chunks from
+    the relational database, and the collection itself from Milvus.
+    """
+
+    required_params = ["collection_name"]
+    input_validators = {"collection_name": required_text}
+
+    @required_params_exists(required_params=required_params)
+    @get_organisation_user
+    @get_default_language
+    def post(self, language, organisation_user, request, *args, **kwargs):
+        params = request_params(request)
+        collection = get_owned_collection(
+            collection_name=params.get("collection_name"),
+            organisation_user=organisation_user,
+        )
+        if collection is None:
+            return response_with_status(
+                status=False, language=language, error_name=COLLECTION_NOT_FOUND
+            )
+
+        controller = ContentDeletionController(milvus_config_path=MILVUS_CONFIG_PATH)
+        try:
+            result = controller.delete_collection(collection=collection)
+        except ContentProtected:
+            return response_with_status(
+                status=False, language=language, error_name=DELETE_PROTECTED
+            )
+
+        return response_with_status(
+            status=True,
+            language=language,
+            error_name=None,
+            response_body=result.as_dict(),
+        )
+
+    delete = post

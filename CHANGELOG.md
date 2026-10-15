@@ -4,8 +4,43 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
+| [Unreleased](#unreleased) | Deletion API for texts, documents and whole collections (PostgreSQL + Milvus) |
 | [0.1.0](#010) | Python client library, hybrid search, production deployment tooling, `src/` layout and CI |
 | [0.0.1](#001) | Initial version |
+
+
+## [Unreleased]
+
+### Added
+
+#### API — deletion of collection content
+- **`POST delete_texts`** — remove text chunks of a collection by their ids
+  (`chunk_ids[]`) from PostgreSQL (including the pages left without any
+  chunk) and their embeddings from Milvus.
+- **`POST delete_documents`** — remove documents of a collection by names
+  (`documents[]`) and/or ids (`document_ids[]`) together with their pages
+  and text chunks, from both databases.
+- **`POST delete_collection`** — remove the whole collection with all of its
+  documents, pages, text chunks and the Milvus collection.
+- Deletion endpoints accept `DELETE` as well as `POST` and report what was
+  removed (`deleted` rows, `deleted_vectors`, `dropped_collection`,
+  `not_found`). Deleting is allowed only for the **owner** of a collection.
+- `ContentDeletionController` (`data/controllers/deletion.py`) orchestrates
+  the removal in both databases: rows first, vectors afterwards, so removed
+  rows are never indexed again. Chats and search history referencing a
+  deleted collection are removed with it (protected foreign keys).
+- `MilvusHandler` deletion API: `delete_texts_by_external_ids`,
+  `delete_documents_by_external_ids` (primary-key based delete resolved
+  through a metadata query, batched) and `drop_collection`;
+  `SemanticDBController` exposes `delete_texts`, `delete_documents` and
+  `drop_collection`.
+- New errors: `DOCUMENT_NOT_FOUND`, `CHUNK_NOT_FOUND`, `DELETE_PROTECTED`.
+
+#### Client library
+- **`SSEClient.delete_texts`, `SSEClient.delete_documents` and
+  `SSEClient.delete_collection`** with client side validation of the given
+  ids/names, plus `DELETE_TEXTS`, `DELETE_DOCUMENTS`, `DELETE_COLLECTION`
+  endpoint constants.
 
 ## [0.1.0]
 

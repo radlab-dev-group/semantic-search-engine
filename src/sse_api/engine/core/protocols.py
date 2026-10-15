@@ -79,8 +79,15 @@ class RelationalDataProtocol(Protocol):
         self,
         text_ids: List[int],
         surrounding_chunks: int = 0,
+        text_scores: Optional[List[float]] = None,
     ) -> List[Dict[str, Any]]:
-        """Get text chunks by ID with surrounding context."""
+        """
+        Get text chunks by ID with surrounding context.
+
+        ``text_scores`` carries the retrieval score of every id, so that
+        document level statistics can be computed; when omitted the chunks
+        are scored uniformly.
+        """
 
     def get_all_documents_from_collection(
         self, collection_id: int

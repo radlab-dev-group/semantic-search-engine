@@ -146,6 +146,18 @@ def indexing_options(value):
     return value
 
 
+def identifiers(value):
+    if not isinstance(value, (list, tuple)) or not value:
+        raise ValueError("Expected list of identifiers")
+    return [identifier(item) for item in value]
+
+
+def text_list(value):
+    if not isinstance(value, (list, tuple)) or not value:
+        raise ValueError("Expected list of texts")
+    return [required_text(item) for item in value]
+
+
 def texts(value):
     if not isinstance(value, list) or not value:
         raise ValueError("Expected texts list")

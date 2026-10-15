@@ -57,6 +57,7 @@ class MilvusHandler:
     DB_FIELD_TEXT = "text"
     DB_FIELD_METADATA = "metadata"
     DB_FIELD_IS_ACTIVE = "is_active"
+    DB_FIELD_PK = "pk"
     DB_FIELD_EMBEDDING = "embedding"
 
     DEFAULT_INDEX_PARAMS = {
@@ -68,6 +69,11 @@ class MilvusHandler:
     SEARCH_FIELDS = [DB_FIELD_TEXT, DB_FIELD_METADATA]
 
     SEMANTIC_SEARCH_FACTOR_MAX_RESULTS = 10
+
+    # Upper bound of values put into a single Milvus boolean expression.
+    MILVUS_DELETE_ID_BATCH = 500
+    # Limit of the query used to resolve pks before a Milvus delete.
+    MILVUS_DELETE_QUERY_LIMIT = 4096
 
     def __init__(
         self,
@@ -156,11 +162,115 @@ class MilvusHandler:
     def close_connection(self):
         self._disconnect_from_milvus_db()
 
+    def drop_collection(self) -> bool:
+        """
+        Remove whole Milvus collection together with its data.
+        :return: True when the collection existed and was removed,
+        False when there was nothing to remove
+        """
+        self._prepare_milvus_client()
+        if self._collection_exists():
+            self._milvus_client.drop_collection(self._collection_name)
+            return True
+        return False
+
+    def delete_texts_by_external_ids(self, external_ids) -> int:
+        """
+        Delete texts by their "external_text_id" metadata value.
+        :param external_ids: Identifiers of the relational db text chunks
+        :return: Number of removed Milvus entries
+        """
+        return self.delete_entries_by_metadata(
+            metadata_key="external_text_id", external_ids=external_ids
+        )
+
+    def delete_documents_by_external_ids(self, external_ids) -> int:
+        """
+        Delete texts by their "external_document_id" metadata value.
+        :param external_ids: Identifiers of the relational db documents
+        :return: Number of removed Milvus entries
+        """
+        return self.delete_entries_by_metadata(
+            metadata_key="external_document_id", external_ids=external_ids
+        )
+
+    def delete_entries_by_metadata(self, metadata_key: str, external_ids) -> int:
+        """
+        Delete Milvus entries whose "metadata" json field holds one of the
+        given values.
+        :param metadata_key: Key of the metadata json field to filter on
+        :param external_ids: Values to match (numbers or strings)
+        :return: Number of removed Milvus entries
+        """
+        ids = list(dict.fromkeys(str(external_id) for external_id in external_ids))
+        if not ids:
+            return 0
+
+        self._prepare_milvus_client()
+        if not self._collection_exists():
+            return 0
+
+        deleted = 0
+        for offset in range(0, len(ids), self.MILVUS_DELETE_ID_BATCH):
+            batch = ids[offset : offset + self.MILVUS_DELETE_ID_BATCH]
+            id_values = ", ".join(f'"{value}"' for value in batch)
+            filter_expr = (
+                f'{self.DB_FIELD_METADATA}["{metadata_key}"] in [{id_values}]'
+            )
+            deleted += self._delete_entries(filter_expr)
+        return deleted
+
+    def _collection_exists(self) -> bool:
+        return self._collection_name in self._list_collections()
+
+    def _list_collections(self):
+        """
+        List of collections of the connected vector database.
+        :return: List of collection names
+        """
+        return self._milvus_client.list_collections()
+
+    def _delete_entries(self, filter_expr: str, max_rounds: int = 100) -> int:
+        # pylint: disable=too-many-branches
+        """
+        Delete entries selected by filter_expr. Milvus guarantees only
+        primary key based delete expressions, so matching primary keys are
+        queried first and removed in batches.
+        :param filter_expr: Boolean expression selecting entries to remove
+        :param max_rounds: Safety limit of the query/delete rounds
+        :return: Number of removed entries
+        """
+        deleted_pks = set()
+        for _ in range(max_rounds):
+            found = self._milvus_client.query(
+                collection_name=self._collection_name,
+                filter=filter_expr,
+                output_fields=[self.DB_FIELD_PK],
+                limit=self.MILVUS_DELETE_QUERY_LIMIT,
+            )
+            fresh_pks = [
+                entry[self.DB_FIELD_PK]
+                for entry in found
+                if entry.get(self.DB_FIELD_PK) is not None
+                and entry[self.DB_FIELD_PK] not in deleted_pks
+            ]
+            if not fresh_pks:
+                break
+            for offset in range(0, len(fresh_pks), self.MILVUS_DELETE_ID_BATCH):
+                batch = fresh_pks[offset : offset + self.MILVUS_DELETE_ID_BATCH]
+                pk_values = ", ".join(str(pk) for pk in batch)
+                self._milvus_client.delete(
+                    collection_name=self._collection_name,
+                    filter=f"{self.DB_FIELD_PK} in [{pk_values}]",
+                )
+            deleted_pks.update(fresh_pks)
+        return len(deleted_pks)
+
     def db_collections(self) -> List[str]:
         not_connected = False
         if self._milvus_client is None:
             not_connected = True
-            self.__prepare_milvus_client()
+            self._prepare_milvus_client()
         collections = self._milvus_client.list_collections()
         if not_connected:
             self.close_connection()
@@ -258,7 +368,7 @@ class MilvusHandler:
         score lower than this value are dropped. ``None`` means no cutoff.
         :return: List of results
         """
-        self.__prepare_milvus_client()
+        self._prepare_milvus_client()
 
         search_text_emb = self.prepare_embeddings([search_text])
         filter_expr = self.BASE_FILTER_EXPR
@@ -464,9 +574,7 @@ class MilvusHandler:
     # ----------------------------------------------------------------------------
     def __prepare_collection_index_params(self, params: dict | None):
         if params is None:
-            self._collection_index_params = copy.deepcopy(
-                self.DEFAULT_INDEX_PARAMS
-            )
+            self._collection_index_params = copy.deepcopy(self.DEFAULT_INDEX_PARAMS)
         else:
             self._collection_index_params = copy.deepcopy(params)
             self._collection_index_params.setdefault(
@@ -578,9 +686,7 @@ class MilvusHandler:
             self.__prepare_collection_index_params(None)
 
         index_params = self._milvus_client.prepare_index_params()
-        index_params.add_index(
-            **self._collection_index_params
-        )
+        index_params.add_index(**self._collection_index_params)
 
         self._milvus_client.create_index(
             collection_name=self._collection_name, index_params=index_params
@@ -600,14 +706,14 @@ class MilvusHandler:
         Creates schema or extended schema
         :return: Milvus Collection object
         """
-        self.__prepare_milvus_client()
+        self._prepare_milvus_client()
         self.__prepare_collection_schema()
         if self._collection_name not in self._milvus_client.list_collections():
             if self.embedding_size is None:
                 raise Exception("Collection embedding size must be set")
             self.__add_milvus_collection(load_collection=True)
 
-    def __prepare_milvus_client(self, load_collection: bool = False):
+    def _prepare_milvus_client(self, load_collection: bool = False):
         if self._milvus_client is None:
             port = self._connection_config["port"]
             host = self._connection_config["host"].strip("/")

@@ -102,6 +102,9 @@ Python 3.9+, `requests` as the only runtime dependency.
 | `list_documents(collection)` | `GET documents` |
 | `upload_files(collection, files, ...)` | `POST upload_and_index_files` |
 | `index_documents(collection, documents, ...)` | `POST add_and_index_texts` |
+| `delete_texts(collection, chunk_ids)` | `POST delete_texts` |
+| `delete_documents(collection, documents=None, document_ids=None)` | `POST delete_documents` |
+| `delete_collection(collection)` | `POST delete_collection` |
 | `list_question_templates()` | `GET question_templates` |
 | `list_filter_options()` | `GET filter_options` |
 | `search(collection, query, options, ...)` | `POST search_with_options` |

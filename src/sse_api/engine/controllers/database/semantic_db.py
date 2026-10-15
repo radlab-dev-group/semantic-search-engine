@@ -50,6 +50,67 @@ class SemanticDBController:
         )
         m_handler.close_connection()
 
+    def drop_collection(self, collection_name: str) -> bool:
+        """
+        Remove the whole collection from the vector database.
+        :param collection_name: Name of the collection to remove
+        :return: True when the collection was removed
+        """
+        m_handler = self.__prepare_milvus_handler(
+            collection_name=collection_name,
+            collection_description=None,
+            embedding_size=None,
+            load_collection_and_schema=False,
+        )
+        dropped = m_handler.drop_collection()
+        m_handler.close_connection()
+        return dropped
+
+    def delete_texts(self, collection_name: str, text_ids) -> int:
+        """
+        Remove texts (chunks) of the collection from the vector database.
+        :param collection_name: Name of the collection with the texts
+        :param text_ids: Relational db ids of the text chunks
+        :return: Number of removed vector entries
+        """
+        return self.__delete_by_external_ids(
+            collection_name=collection_name,
+            metadata_handler="delete_texts_by_external_ids",
+            external_ids=text_ids,
+        )
+
+    def delete_documents(self, collection_name: str, document_ids) -> int:
+        """
+        Remove all texts of the given documents from the vector database.
+        :param collection_name: Name of the collection with the documents
+        :param document_ids: Relational db ids of the documents
+        :return: Number of removed vector entries
+        """
+        return self.__delete_by_external_ids(
+            collection_name=collection_name,
+            metadata_handler="delete_documents_by_external_ids",
+            external_ids=document_ids,
+        )
+
+    def __delete_by_external_ids(
+        self, collection_name: str, metadata_handler: str, external_ids
+    ) -> int:
+        external_ids = list(external_ids)
+        if not external_ids:
+            return 0
+
+        m_handler = self.__prepare_milvus_handler(
+            collection_name=collection_name,
+            collection_description=None,
+            embedding_size=None,
+            load_collection_and_schema=False,
+        )
+        try:
+            deleted = getattr(m_handler, metadata_handler)(external_ids=external_ids)
+        finally:
+            m_handler.close_connection()
+        return deleted
+
     def collections(self) -> List[str]:
         m_handler = self.__prepare_milvus_handler(
             collection_name=None,
