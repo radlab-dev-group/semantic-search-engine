@@ -33,6 +33,7 @@ from sse_api.data.models import (
     DocumentPageText,
 )
 from sse_api.engine.controllers.database.relational_db import RelationalDBController
+from sse_api.engine.controllers.database.semantic_db import SemanticDBController
 from sse_api.engine.models import UserQuery, UserQueryResponse
 from sse_api.system.models import Organisation, OrganisationUser
 
@@ -431,3 +432,47 @@ class DeletionEndpointTests(FixtureTestCase):
 
         self.assertFalse(response.data["status"])
         self.assertEqual(response.data["errors"][0]["error_code"], "000003_DATA")
+
+
+class FakeMilvusHandler:
+    """
+    Records the ids which the controller asks the vector store to remove and
+    reports them as deleted.
+    """
+
+    def delete_texts_by_external_ids(self, external_ids):
+        return len(list(external_ids))
+
+    def delete_documents_by_external_ids(self, external_ids):
+        return len(list(external_ids))
+
+    def close_connection(self):
+        return None
+
+
+class SemanticControllerSignatureTests(FixtureTestCase):
+    """
+    The vector-side controller is called with keyword arguments from
+    ``ContentDeletionController``.  A mismatch of the parameter names used to
+    raise a ``TypeError`` (500) only in production, because the unit tests
+    replace the whole controller with a mock.  These tests call the real
+    ``SemanticDBController`` with a stubbed Milvus handler, so a drift of the
+    signature is caught here.
+    """
+
+    def _run(self, method, external_ids):
+        with patch.object(
+            SemanticDBController,
+            "_SemanticDBController__prepare_milvus_handler",
+            return_value=FakeMilvusHandler(),
+        ):
+            controller = SemanticDBController(milvus_config_path="")
+            return getattr(controller, method)(
+                collection_name=self.collection.name, external_ids=external_ids
+            )
+
+    def test_delete_documents_accepts_external_ids(self):
+        self.assertEqual(self._run("delete_documents", [self.document.pk]), 1)
+
+    def test_delete_texts_accepts_external_ids(self):
+        self.assertEqual(self._run("delete_texts", [self.chunk.pk]), 1)
