@@ -420,9 +420,17 @@ curl -H "Authorization: Token $TOKEN" \
 `ENV_USE_CELERY=1` pozostaje nietknięty):
 
 ```bash
-# .env: ENV_USE_CELERY=1, RABBITMQ_USER, RABBITMQ_PASSWORD
-docker compose --profile indexing up -d          # api + worker + rabbitmq
-# ... albo lokalnie, po zainstalowaniu zależności API:
+# .env: ENV_USE_CELERY=1 — broker, użytkownik i hasło mają wartości lokalne
+docker compose --profile indexing up -d     # api + worker + rabbitmq
+
+# ... albo lokalnie przez run.sh, bez żadnych dodatkowych konfigów:
+./run.sh infra    # PostgreSQL + Milvus + RabbitMQ (127.0.0.1:5672, UI 15672)
+./run.sh worker   # worker indeksacji w foreground
+./run.sh start    # API; przy ENV_USE_CELERY=1 worker startuje razem z nim
+./run.sh status   # kontenery, worker, porty 5471/19530/19121/5672/8271
+./run.sh down     # zatrzymuje workera i usuwa kontenery
+
+# ... albo worker odpalony ręcznie, po zainstalowaniu zależności API:
 celery -A sse_api.config worker -Q indexing -l INFO
 ```
 
