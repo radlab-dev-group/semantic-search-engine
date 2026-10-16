@@ -801,6 +801,28 @@ class SSEClient:
         )
         return SearchHistory.from_api(body)
 
+    def delete_search_history(
+        self, query_ids: Union[int, Sequence[int]]
+    ) -> Dict[str, Any]:
+        """Delete stored queries of the user (``POST delete_search_history``).
+
+        ``query_ids`` are the ``query_id`` values served by
+        :meth:`list_search_history` / :meth:`get_search_history`.  The
+        responses, the generated answers and the RAG states of the chats which
+        reference the queries are removed with them; nothing of the
+        collections themselves is touched.  The answer reports how many rows
+        disappeared (``deleted``) and which ids were not found
+        (``not_found``).
+        """
+        ids = [_as_identifier(query_id) for query_id in _as_sequence(query_ids)]
+        if not ids:
+            raise SSEValueError("query_ids cannot be empty")
+        body = self.post(
+            endpoints.DELETE_SEARCH_HISTORY,
+            {"query_ids[]": ids},
+        )
+        return dict(body or {})
+
     def list_generative_models(self) -> Dict[str, Any]:
         """Active generative models and their hosts (``GET generative_models``)."""
         body = self.get(endpoints.GENERATIVE_MODELS)
