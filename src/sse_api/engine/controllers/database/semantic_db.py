@@ -66,30 +66,30 @@ class SemanticDBController:
         m_handler.close_connection()
         return dropped
 
-    def delete_texts(self, collection_name: str, text_ids) -> int:
+    def delete_texts(self, collection_name: str, external_ids) -> int:
         """
         Remove texts (chunks) of the collection from the vector database.
         :param collection_name: Name of the collection with the texts
-        :param text_ids: Relational db ids of the text chunks
+        :param external_ids: Relational db ids of the text chunks
         :return: Number of removed vector entries
         """
         return self.__delete_by_external_ids(
             collection_name=collection_name,
             metadata_handler="delete_texts_by_external_ids",
-            external_ids=text_ids,
+            external_ids=external_ids,
         )
 
-    def delete_documents(self, collection_name: str, document_ids) -> int:
+    def delete_documents(self, collection_name: str, external_ids) -> int:
         """
         Remove all texts of the given documents from the vector database.
         :param collection_name: Name of the collection with the documents
-        :param document_ids: Relational db ids of the documents
+        :param external_ids: Relational db ids of the documents
         :return: Number of removed vector entries
         """
         return self.__delete_by_external_ids(
             collection_name=collection_name,
             metadata_handler="delete_documents_by_external_ids",
-            external_ids=document_ids,
+            external_ids=external_ids,
         )
 
     def __delete_by_external_ids(
