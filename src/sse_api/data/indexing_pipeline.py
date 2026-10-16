@@ -21,6 +21,7 @@ loaded for every document.
 """
 
 import logging
+import multiprocessing
 
 from sse_api.data.core import indexing_progress
 from sse_api.data.core.constants import (
@@ -39,6 +40,28 @@ MAIN_LOGGER = logging.getLogger("sse_api")
 
 # (collection pk, index type, embedder, reranker) -> controller
 _CONTROLLERS: dict = {}
+
+
+def reading_processes(number_of_process: int = DB_INDEXING_PROCESS_COUNT) -> int:
+    """How many processes may read the files of a job in parallel.
+
+    ``radlab_data`` reads with a ``multiprocessing.Pool`` of its own, and Python
+    refuses to create one inside a process which is itself the child of a daemon
+    ("daemonic processes are not allowed to have children") -- which is exactly
+    what a task of a Celery ``prefork`` worker is.  Reading then falls back to
+    the current process instead of failing the whole job; a worker started with
+    ``--pool solo`` (the default of ``run.sh``, ``CELERY_WORKER_POOL``) keeps
+    the parallel reading.
+    """
+    if number_of_process > 1 and multiprocessing.current_process().daemon:
+        MAIN_LOGGER.warning(
+            "Reading the files of a job inside a daemon process: one process "
+            "instead of %s (start the worker with --pool solo to read in "
+            "parallel)",
+            number_of_process,
+        )
+        return 1
+    return number_of_process
 
 
 def semantic_controller_for(collection, jsonl_config_path: str = MILVUS_CONFIG_PATH):
@@ -94,7 +117,7 @@ def run_prepare(
             max_tokens_in_chunk=options.get("max_tokens_in_chunk"),
             number_of_overlap_tokens=options.get("number_of_overlap_tokens"),
             check_text_language=options.get("check_text_lang", True),
-            number_of_process=number_of_process,
+            number_of_process=reading_processes(number_of_process),
             indexing_job=job,
         )
     elif job.kind == INDEXING_JOB_TEXTS:
