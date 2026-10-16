@@ -104,7 +104,7 @@ Python 3.9+, `requests` as the only runtime dependency.
 | `search(collection, query, options, ...)` | `POST search_with_options` |
 | `generate_answer(query_response_id, options, ...)` | `POST generative_answer` |
 | `rate_answer(answer_response_id, value, value_max, comment=None)` | `POST rate_generative_answer` |
-| `list_search_history(collection=None, query_response_id=None)`, `get_search_history(query_response_id)` | `GET search_history`, `GET get_search_history` |
+| `list_search_history(collection=None, query_response_id=None)`, `get_search_history(query_response_id)`, `delete_search_history(query_ids)` | `GET search_history`, `GET get_search_history`, `POST delete_search_history` |
 | `list_generative_models()`, `list_embedders()`, `list_rerankers()` | `GET generative_models`, `GET embedders`, `GET rerankers` |
 | `embedders_info()`, `rerankers_info()` | `GET embedders`, `GET rerankers` — `models_info` with `vector_size`, `device` and `max_model_length` |
 | `new_chat(...)`, `send_chat_message(...)`, `save_chat(...)`, `get_chat_by_hash(...)`, `list_chats()` | `POST new_chat`, `POST add_user_message`, `POST save_chat`, `GET get_chat_by_hash`, `GET chats` |
