@@ -40,3 +40,8 @@ radlab-llm-router
 # =========================================================
 # # NOTE: Addons - have to be removed from radlab-data
 langchain_community
+
+# queue
+# Indexing tasks (ENV_USE_CELERY=1).  Without the queue the engine indexes in
+# the request which uploaded the files and none of this is imported.
+celery>=5.3,<6.0

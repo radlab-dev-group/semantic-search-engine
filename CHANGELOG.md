@@ -4,11 +4,57 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
+| [0.1.3](#013) | Indexing in a Celery + RabbitMQ queue, per-document indexing progress, `indexing_status` endpoint |
 | [0.1.2](#012) | Deletion of the search history (`delete_search_history`), form-encoded `[]` list params |
 | [0.1.1](#0.1.1) | Deletion API (PostgreSQL + Milvus), document deactivation (`use_in_search`), normalized `[0, 1]` document ranking weights, collection-level chunking and `max_model_length` |
 | [0.1.0](#010) | Python client library, hybrid search, production deployment tooling, `src/` layout and CI |
 | [0.0.1](#001) | Initial version |
 
+
+## [0.1.3]
+
+### Added
+
+#### Indexing queue (Celery + RabbitMQ)
+- Indexing can be handed over to a **Celery** queue with **RabbitMQ**:
+  `ENV_USE_CELERY=1` (or `"use_celery": true` in `django-config.json`) makes
+  `upload_and_index_files` and `add_and_index_texts` store the content, write an
+  `IndexingJob` and answer immediately; a worker does the parsing and the
+  embeddings.  With the flag off, both endpoints index in the request exactly as
+  before, and both modes report the same progress.
+- The **document** is the unit of work: `prepare_indexing_job` stores the
+  documents of one upload and queues one `index_document` per document
+  (`sse_api/data/tasks.py`).  A document is retried three times with an
+  exponential backoff and then marked `failed` without stopping the rest of the
+  job; both tasks acknowledge late, so a killed worker loses no message.
+- `IndexingJob` (kind, status, `total_documents`, `documents_indexed`,
+  `documents_failed`, `documents_skipped`, `current_document`, `error_message`,
+  timestamps) and `Document.indexing_status` (`pending` / `indexing` / `indexed`
+  / `failed` / `skipped`, `NULL` for documents indexed before this change) keep
+  the progress in the relational database, so it survives a restart of a worker.
+  New migration `data/0003_indexing_jobs`.
+- **`GET indexing_status`** — the progress of one job (`job_id`) or of the
+  newest job of a collection (`collection_name`): the job with its counters and
+  `percent`, its documents with their own status, and
+  `pending_documents` of the collection.  `upload_and_index_files` and
+  `add_and_index_texts` answer with the same job under `indexing_job`, plus
+  `"async": true` when the work was only queued.  `documents` reports
+  `indexing_status` per document.  New error: `INDEXING_JOB_NOT_FOUND`.
+- `python -m sse_api.manage reset_stale_indexing_jobs` closes jobs and
+  documents which a killed worker left running (`--minutes`, `--dry-run`).
+- `docker compose --profile indexing up -d` starts `rabbitmq` and `worker`;
+  without the profile the compose stack is unchanged.  New variables in
+  `.env.example`: `ENV_CELERY_RESULT_BACKEND` (empty by default: the progress is
+  kept in PostgreSQL), `ENV_CELERY_TASK_TIME_LIMIT`, `RABBITMQ_USER`,
+  `RABBITMQ_PASSWORD`, `RABBITMQ_BIND_HOST`, `RABBITMQ_HOST_PORT`,
+  `CELERY_CONCURRENCY`.
+
+### Changed
+- `sse_api/config/__init__.py` creates the Celery application (imported only
+  when Celery is installed), `config/settings.py` configures it through the
+  `CELERY_*` namespace instead of adding Celery to `INSTALLED_APPS`.
+- `celery` is a dependency now; the embedder of a collection is loaded once per
+  worker process.
 
 ## [0.1.2]
 
