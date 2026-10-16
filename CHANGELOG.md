@@ -32,7 +32,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
   `getlist`, so a form-encoded request behaves like the JSON one (previously
   a repeated key kept only its last value).
 
-## [011]
+## [0.1.1]
 
 ### Added
 
