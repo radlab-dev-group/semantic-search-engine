@@ -4,10 +4,33 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
+| [0.1.2](#012) | Deletion of the search history (`delete_search_history`), form-encoded `[]` list params |
 | [0.1.1](#0.1.1) | Deletion API (PostgreSQL + Milvus), document deactivation (`use_in_search`), normalized `[0, 1]` document ranking weights, collection-level chunking and `max_model_length` |
 | [0.1.0](#010) | Python client library, hybrid search, production deployment tooling, `src/` layout and CI |
 | [0.0.1](#001) | Initial version |
 
+
+## [0.1.2]
+
+### Added
+
+#### API — deletion of the search history
+- **`POST delete_search_history`** (also accepted as `DELETE`) — remove the
+  stored queries of the authenticated user by their ids (`query_ids[]`)
+  together with their responses, the generated answers and the RAG states of
+  the chats which reference them.  The `state` of a chat message is detached
+  instead of removed, so the message keeps its life and only loses the
+  reference.  The answer reports what was removed (`deleted`) and which ids
+  were not found (`not_found`).  New errors: `QUERY_NOT_FOUND`,
+  `DELETE_PROTECTED` (engine).
+- `SearchHistoryDeletionController`
+  (`engine/controllers/history/deletion.py`) removes the rows in the order
+  which respects the `PROTECT` foreign keys, inside one transaction, so a
+  failure leaves the history untouched.
+- `sse_lib.SSEClient.delete_search_history(query_ids)` wraps the endpoint.
+- `request_params` reads the `[]` list parameters of a form-encoded body with
+  `getlist`, so a form-encoded request behaves like the JSON one (previously
+  a repeated key kept only its last value).
 
 ## [011]
 
