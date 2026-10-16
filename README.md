@@ -506,7 +506,7 @@ each app.
 | `POST` | `/api/set_documents_use_in_search/` | Enable/disable documents in the search (`use_in_search` flag).              |
 | `GET`  | `/api/search_history/`           | Search history of the authenticated user (optionally one query by id).      |
 | `GET`  | `/api/get_search_history/`       | A single search history entry by its id.                                    |
-| `POST` | `/api/delete_search_history/`    | Delete stored queries (`query_ids[]`) with their responses, answers and RAG states. |
+| `POST` | `/api/delete_search_history/`    | Delete stored queries (`query_ids[]` and/or `query_response_ids[]`) with their responses, answers and RAG states. |
 | `GET`  | `/api/chats/`                  | Retrieve all chats for the current user.                                        |
 | `POST` | `/api/add_user_message/`       | Append a user message to a chat, optionally run RAG and return assistant reply. |
 | `POST` | `/api/save_chat/`              | Mark a chat as saved and optionally set it to read‑only.                        |
@@ -549,6 +549,40 @@ Answers look like:
 * Content which other rows still reference is refused with `DELETE_PROTECTED`, and identifiers
   which match nothing with `DOCUMENT_NOT_FOUND` / `CHUNK_NOT_FOUND`. Names or ids which do not
   exist are additionally listed in `not_found`.
+
+### Deleting the search history
+
+`POST delete_search_history` removes the queries of the authenticated user.  The
+entries are addressed with the identifiers which the history endpoints serve, and
+at least one of them is required:
+
+| Parameter | Meaning |
+|-----------|---------|
+| `query_ids[]` | The `query_id` of a query |
+| `query_response_ids[]` | The `query_response_id` of a response |
+| `query_id`, `query_response_id` | The same, a single id |
+
+The responses, the generated answers and the RAG states of the chats which
+reference the queries are removed with them; nothing of the collections
+themselves is touched.  The `state` of a chat message is **detached** rather than
+removed, so a message keeps its life and only loses the reference to the deleted
+RAG state.
+
+```json
+{
+  "status": true,
+  "body": {
+    "deleted": {"answers": 1, "responses": 2, "queries": 2, "rag_states": 1},
+    "not_found": {"query_ids": [99], "query_response_ids": []}
+  }
+}
+```
+
+Only the history of the authenticated user can be deleted — an identifier of
+another user is reported in `not_found` and stays untouched.  A request whose
+identifiers match nothing at all fails with `QUERY_NOT_FOUND`, history which other
+rows still reference with `DELETE_PROTECTED`, and a request without any identifier
+with `INVALID_PARAMS`.  `DELETE` is accepted as an alias of `POST`.
 
 ### Document visibility
 
