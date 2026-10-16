@@ -383,11 +383,14 @@ class ListDocumentsWithDisabledTests(FixtureTestCase):
                     "id": self.document.pk,
                     "name": "document.txt",
                     "use_in_search": False,
+                    # Documents indexed before the progress was kept: unknown.
+                    "indexing_status": None,
                 },
                 {
                     "id": self.other_document.pk,
                     "name": "other.txt",
                     "use_in_search": True,
+                    "indexing_status": None,
                 },
             ],
         )
