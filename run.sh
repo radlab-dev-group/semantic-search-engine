@@ -43,6 +43,9 @@
 #   ./run.sh worker     # worker kolejki "indexing" (foreground)
 #   ./run.sh start      # startuje worker w tle, gdy ENV_USE_CELERY=1 w .env
 #   .env: ENV_USE_CELERY=1 — indeksacja przez kolejkę; status: GET /api/indexing_status
+#  Worker działa domyślnie na basenie "solo" (CELERY_WORKER_POOL) — odczyt
+#  plików tworzy własny multiprocessing.Pool, a zadania basenu "prefork" są
+#  daemonami i nie mogą mieć dzieci.
 #
 # Plik .env:
 #   Jeśli istnieje w root repo, jest wczytywany przed każdą komendą (set -a,
@@ -71,6 +74,11 @@ export RABBITMQ_BIND_HOST="${RABBITMQ_BIND_HOST:-127.0.0.1}"
 export RABBITMQ_HOST_PORT="${RABBITMQ_HOST_PORT:-5672}"
 export RABBITMQ_MGMT_HOST_PORT="${RABBITMQ_MGMT_HOST_PORT:-15672}"
 export ENV_CELERY_BROKER_URL="${ENV_CELERY_BROKER_URL:-amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@localhost:5672/}"
+# Basen workera: "solo", bo sam pipeline indeksacji czyta pliki własnym
+# basenem procesów (multiprocessing.Pool), a procesy basenu "prefork" są
+# daemonami i nie mogą mieć dzieci ("daemonic processes are not allowed to
+# have children").
+export CELERY_WORKER_POOL="${CELERY_WORKER_POOL:-solo}"
 
 # Worker Celery startowany przez ./run.sh start (ENV_USE_CELERY=1) jest
 # procesem w tle; jego PID i log mieszczą się tutaj.
@@ -383,6 +391,15 @@ check_celery() {
   fi
 }
 
+# Argumenty workera Celery; "solo" nie przyjmuje --concurrency (i tak 1).
+celery_worker_args() {
+  local pool="${CELERY_WORKER_POOL:-solo}"
+  CELERY_WORKER_ARGS=(-A sse_api.config worker -Q indexing -l INFO --pool "$pool")
+  if [[ "$pool" != "solo" ]]; then
+    CELERY_WORKER_ARGS+=(--concurrency "${CELERY_CONCURRENCY:-1}")
+  fi
+}
+
 init() {
   step "Krok 6: inicjalizacja bazy + konto + szablony"
   if [[ "$NO_INIT" == "1" ]]; then
@@ -442,8 +459,9 @@ start() {
     check_celery
     log "ENV_USE_CELERY=1 — odpalam workera Celery w tle (kolejka 'indexing')."
     mkdir -p "$ROOT_DIR/logs"
-    ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" celery -A sse_api.config worker -Q indexing \
-        -l INFO --concurrency="${CELERY_CONCURRENCY:-1}" \
+    local -a CELERY_WORKER_ARGS
+    celery_worker_args
+    ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" celery "${CELERY_WORKER_ARGS[@]}" \
         >>"$ROOT_DIR/logs/celery-worker.log" 2>&1 &
       echo $! >"$WORKER_PID_FILE" )
     log "Log workera: logs/celery-worker.log (PID $(cat "$WORKER_PID_FILE" 2>/dev/null || echo '?'))"
@@ -462,9 +480,11 @@ worker() {
   [[ "$NO_VENV" == "1" ]] || activate_venv
   check_celery
   wait_port "${RABBITMQ_HOST_PORT:-5672}" "RabbitMQ" 30
+  local -a CELERY_WORKER_ARGS
+  celery_worker_args
+  log "Worker: pool=${CELERY_WORKER_POOL:-solo}, kolejka=indexing"
   log "Login testowy: default_admin / password  (POST /api/login)"
-  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" celery -A sse_api.config worker -Q indexing \
-      -l INFO --concurrency="${CELERY_CONCURRENCY:-1}" )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" celery "${CELERY_WORKER_ARGS[@]}" )
 }
 
 down() {

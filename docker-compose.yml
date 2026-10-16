@@ -141,6 +141,7 @@ services:
         "indexing",
         "-l",
         "INFO",
+        "--pool=${CELERY_WORKER_POOL:-solo}",
         "--concurrency=${CELERY_CONCURRENCY:-1}",
       ]
     depends_on:
