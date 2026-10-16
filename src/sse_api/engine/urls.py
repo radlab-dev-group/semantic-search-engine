@@ -21,6 +21,7 @@ from sse_api.engine.api import (
     SetRateForQueryResponseAnswer,
     ListOfSearchHistory,
     GetSearchHistoryById,
+    DeleteSearchHistory,
 )
 
 urlpatterns = [
@@ -38,6 +39,11 @@ urlpatterns = [
         prepare_api_url("get_search_history"),
         GetSearchHistoryById.as_view(),
         name="get_search_history",
+    ),
+    path(
+        prepare_api_url("delete_search_history"),
+        DeleteSearchHistory.as_view(),
+        name="delete_search_history",
     ),
     path(
         prepare_api_url("generative_answer"),

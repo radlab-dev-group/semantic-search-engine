@@ -11,6 +11,7 @@ from sse_api.core.validation import (
     optional_text,
     identifier,
     boolean,
+    identifiers,
     search_options,
     generation_options,
     rating_integer,
@@ -22,11 +23,17 @@ from sse_api.engine.core.errors import (
     RESPONSE_ACCESS_DENIED,
     ANSWER_ACCESS_DENIED,
     GENERATION_FAILED,
+    QUERY_NOT_FOUND,
+    DELETE_PROTECTED,
 )
 
 from sse_api.system.core.decorators import get_organisation_user
 from sse_api.engine.controllers.search.query import SearchQueryController
 from sse_api.engine.controllers.database.relational_db import RelationalDBController
+from sse_api.engine.controllers.history.deletion import (
+    SearchHistoryDeletionController,
+    HistoryDeletionProtected,
+)
 from sse_api.engine.controllers.system_logic.system import EngineSystemController
 from sse_api.engine.controllers.models_logic.generative import (
     GenerativeModelController,
@@ -377,3 +384,51 @@ class GetSearchHistoryById(APIView):
                 user_response
             ),
         )
+
+
+class DeleteSearchHistory(APIView):
+    """
+    Delete the search history of the authenticated user: the queries given by
+    their ids (``query_ids[]``), their responses, the generated answers and
+    the RAG states of the chats which reference them.  Nothing is removed
+    from the collections themselves - only the history rows of the user.
+    """
+
+    required_params = ["query_ids[]"]
+    input_validators = {
+        "query_ids[]": identifiers,
+    }
+
+    @required_params_exists(required_params=required_params)
+    @get_organisation_user
+    @get_default_language
+    def post(self, language, organisation_user, request, *args, **kwargs):
+        params = request_params(request)
+        query_ids = params.get("query_ids[]")
+
+        controller = SearchHistoryDeletionController()
+        try:
+            result = controller.delete_queries(
+                organisation_user=organisation_user,
+                query_ids=query_ids,
+            )
+        except HistoryDeletionProtected:
+            return response_with_status(
+                status=False, language=language, error_name=DELETE_PROTECTED
+            )
+
+        if not result.deleted.get("queries"):
+            return response_with_status(
+                status=False,
+                language=language,
+                error_name=QUERY_NOT_FOUND,
+            )
+
+        return response_with_status(
+            status=True,
+            language=language,
+            error_name=None,
+            response_body=result.as_dict(),
+        )
+
+    delete = post
