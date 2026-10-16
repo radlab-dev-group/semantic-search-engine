@@ -7,6 +7,8 @@ from sse_api.data.core.constants import (
     CHUNKING_METADATA_KEY,
     DEFAULT_MAX_TOKENS_IN_CHUNK,
     DEFAULT_NUMBER_OF_OVERLAP_TOKENS,
+    JOB_STATUS_QUEUED,
+    JOB_TERMINAL_STATUSES,
     MAX_TOKENS_IN_CHUNK_KEY,
     NUMBER_OF_OVERLAP_TOKENS_KEY,
     STRICT_CHUNKING_METADATA_KEY,
@@ -175,6 +177,15 @@ class Document(models.Model):
         UploadedDocuments, on_delete=models.PROTECT, null=True
     )
 
+    # Indexing of a document is tracked one document at a time, so a client can
+    # tell which document is already in the vector database and how many are
+    # still waiting.  ``None`` means "unknown": the document was indexed
+    # before this bookkeeping existed.
+    indexing_status = models.TextField(null=True)
+    indexing_job = models.ForeignKey(
+        "IndexingJob", on_delete=models.SET_NULL, null=True, related_name="documents"
+    )
+
     added_by = models.ForeignKey(
         OrganisationUser, on_delete=models.PROTECT, null=False
     )
@@ -183,6 +194,75 @@ class Document(models.Model):
 
     class Meta:
         unique_together = ("name", "collection", "path", "document_hash")
+
+
+class IndexingJob(models.Model):
+    """
+    One indexing request (uploaded files or pasted texts) and its progress.
+
+    The row is created before the work starts and is updated by the queue (or
+    by the request itself when ``use_celery`` is off), so the counters are
+    always readable, also after a restart of the API or of a worker.
+    """
+
+    # pk: auto-id
+
+    collection = models.ForeignKey(
+        CollectionOfDocuments, on_delete=models.CASCADE, related_name="indexing_jobs"
+    )
+    # Upload process of the files; pasted texts do not have one.
+    upload_process = models.ForeignKey(
+        UploadedDocuments,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="indexing_jobs",
+    )
+
+    # ``files`` or ``texts``.
+    kind = models.TextField(null=False)
+    # ``queued`` / ``preparing`` / ``indexing`` / ``completed`` / ``partial`` /
+    # ``failed``.
+    status = models.TextField(null=False, default=JOB_STATUS_QUEUED)
+
+    # Options the documents have to be indexed with; the task may not read the
+    # request of the upload anymore.
+    indexing_options = models.JSONField(null=True)
+    # Body of the request for the kinds which need it: the pasted ``texts``.
+    request_payload = models.JSONField(null=True)
+
+    total_documents = models.IntegerField(null=True)
+    documents_indexed = models.IntegerField(default=0, null=False)
+    documents_failed = models.IntegerField(default=0, null=False)
+    documents_skipped = models.IntegerField(default=0, null=False)
+
+    # Name of the document the worker is working on right now.
+    current_document = models.TextField(null=True)
+    error_message = models.TextField(null=True)
+
+    created_on = models.DateTimeField(default=django.utils.timezone.now, null=False)
+    started_on = models.DateTimeField(null=True)
+    finished_on = models.DateTimeField(null=True)
+    created_by = models.ForeignKey(
+        OrganisationUser, on_delete=models.PROTECT, null=False
+    )
+
+    @property
+    def is_finished(self) -> bool:
+        """Whether the job will not change anymore."""
+        return self.status in JOB_TERMINAL_STATUSES
+
+    @property
+    def documents_processed(self) -> int:
+        return (
+            self.documents_indexed + self.documents_failed + self.documents_skipped
+        )
+
+    def percent(self) -> int:
+        """Share of the processed documents, ``0`` while it is not known."""
+        total = self.total_documents or 0
+        if not total:
+            return 0
+        return min(100, int(round(100.0 * self.documents_processed / total)))
 
 
 class DocumentPage(models.Model):

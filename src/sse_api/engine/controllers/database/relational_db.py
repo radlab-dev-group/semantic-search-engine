@@ -20,6 +20,7 @@ from sse_api.data.models import (
     QueryTemplate,
 )
 from sse_api.data.controllers.denoiser import DenoiserController
+from sse_api.data.core.constants import DOCUMENT_STATUS_PENDING
 from sse_api.engine.controllers.models_logic.embedders_rerankers import (
     EmbeddingModelsConfig,
 )
@@ -78,6 +79,7 @@ class RelationalDBController:
         number_of_overlap_tokens: int = None,
         check_text_language: bool = True,
         number_of_process: int = 1,
+        indexing_job=None,
     ) -> (UploadedDocuments, list):
         """
         Adds previously uploaded files to database.
@@ -94,6 +96,8 @@ class RelationalDBController:
         between chunks (if given)
         :param check_text_language: Check text language (if set to True)
         :param number_of_process: Number of processes to use (default is 1)
+        :param indexing_job: IndexingJob the new documents belong to; when given,
+            every new document starts in status ``pending`` (default is None)
         :return: UploadedDocuments
         """
         self.dir_reader = DirectoryFileReader(
@@ -143,6 +147,7 @@ class RelationalDBController:
                     organisation_user=organisation_user,
                     upload_process=uploaded_document,
                     use_text_denoiser=use_text_denoiser,
+                    indexing_job=indexing_job,
                 )
                 added_document_chunks.extend(document_pages_chunks)
                 pbar.update()
@@ -160,6 +165,7 @@ class RelationalDBController:
         texts: List[Dict],
         organisation_user: OrganisationUser,
         indexing_options: Dict,
+        indexing_job=None,
     ):
         indexed_documents = []
         for doc_as_dict in texts:
@@ -202,6 +208,7 @@ class RelationalDBController:
                     organisation_user=organisation_user,
                     upload_process=None,
                     use_text_denoiser=False,
+                    indexing_job=indexing_job,
                 )
 
                 indexed_documents.append(
@@ -216,6 +223,7 @@ class RelationalDBController:
         organisation_user: OrganisationUser,
         upload_process: UploadedDocuments = None,
         use_text_denoiser: bool = False,
+        indexing_job=None,
     ) -> (Document, list):
         """
         Adds a document from dictionary to collection of documents.
@@ -225,6 +233,7 @@ class RelationalDBController:
         :param document_dict: The document in dictionary format
         :param upload_process: If given then document will be connected with upload proces
         :param use_text_denoiser: Text will be denoised if true
+        :param indexing_job: IndexingJob to remember on a newly created document
         :return: Document
         """
         metadata = document_dict["options"]
@@ -253,6 +262,10 @@ class RelationalDBController:
                 upload_process=upload_process,
                 metadata_json=metadata,
                 added_by=organisation_user,
+                indexing_job=indexing_job,
+                indexing_status=(
+                    DOCUMENT_STATUS_PENDING if indexing_job is not None else None
+                ),
             )
 
         if cr and document.upload_process is not None:

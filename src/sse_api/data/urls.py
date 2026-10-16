@@ -13,6 +13,7 @@ from sse_api.data.api import (
     DeleteDocumentsFromCollection,
     DeleteCollection,
     SetDocumentsUseInSearch,
+    IndexingStatus,
 )
 from sse_api.core.constants import prepare_api_url
 
@@ -46,6 +47,11 @@ urlpatterns = [
         prepare_api_url("add_and_index_texts"),
         AddAndIndexTextsFromEP.as_view(),
         name="add_and_index_texts",
+    ),
+    path(
+        prepare_api_url("indexing_status"),
+        IndexingStatus.as_view(),
+        name="indexing_status",
     ),
     path(
         prepare_api_url("delete_texts"),
