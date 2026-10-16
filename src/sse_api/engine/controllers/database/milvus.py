@@ -220,6 +220,54 @@ class MilvusHandler:
             deleted += self._delete_entries(filter_expr)
         return deleted
 
+    def set_active_by_external_ids(self, external_ids, is_active: bool) -> int:
+        """
+        Set the "is_active" flag of the Milvus entries whose "metadata" json
+        field holds one of the given values.
+
+        The entries of the documents which are not used in the search anymore
+        are kept in the vector database and only deactivated, so they may be
+        activated again without any re-indexing and any consumer of the
+        collection (not only the search of the engine) sees the current state.
+        :param external_ids: Values of the "external_document_id" metadata key
+        :param is_active: Value to set on the matched entries
+        :return: Number of updated Milvus entries
+        """
+        ids = list(dict.fromkeys(str(external_id) for external_id in external_ids))
+        if not ids:
+            return 0
+
+        self._prepare_milvus_client()
+        if not self._collection_exists():
+            return 0
+
+        # pymilvus has no scalar "update", so the matched rows are read and
+        # written back (upsert) with the changed flag.  The query does not use
+        # the "is_active == true" base filter, otherwise the rows which are
+        # being activated again would never be found.
+        updated = 0
+        for offset in range(0, len(ids), self.MILVUS_DELETE_ID_BATCH):
+            batch = ids[offset : offset + self.MILVUS_DELETE_ID_BATCH]
+            id_values = ", ".join(f'"{value}"' for value in batch)
+            filter_expr = (
+                f'{self.DB_FIELD_METADATA}["external_document_id"] in [{id_values}]'
+            )
+            rows = self._milvus_client.query(
+                collection_name=self._collection_name,
+                filter=filter_expr,
+                output_fields=["*"],
+                limit=self.MILVUS_DELETE_QUERY_LIMIT,
+            )
+            rows = [row for row in rows if row.get(self.DB_FIELD_PK) is not None]
+            for row in rows:
+                row[self.DB_FIELD_IS_ACTIVE] = is_active
+            if rows:
+                self._milvus_client.upsert(
+                    collection_name=self._collection_name, data=rows
+                )
+                updated += len(rows)
+        return updated
+
     def _collection_exists(self) -> bool:
         return self._collection_name in self._list_collections()
 

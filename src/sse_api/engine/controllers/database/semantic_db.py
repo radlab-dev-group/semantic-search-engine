@@ -92,6 +92,36 @@ class SemanticDBController:
             external_ids=external_ids,
         )
 
+    def set_documents_active(
+        self, collection_name: str, external_ids, is_active: bool
+    ) -> int:
+        """
+        Activate or deactivate the vectors of the given documents, i.e. set
+        their "is_active" flag.  The entries are kept in the vector database,
+        so a document may be activated again without any re-indexing.
+        :param collection_name: Name of the collection with the documents
+        :param external_ids: Relational db ids of the documents
+        :param is_active: Value to set on the vectors of those documents
+        :return: Number of updated vector entries
+        """
+        external_ids = list(external_ids)
+        if not external_ids:
+            return 0
+
+        m_handler = self.__prepare_milvus_handler(
+            collection_name=collection_name,
+            collection_description=None,
+            embedding_size=None,
+            load_collection_and_schema=False,
+        )
+        try:
+            updated = m_handler.set_active_by_external_ids(
+                external_ids=external_ids, is_active=is_active
+            )
+        finally:
+            m_handler.close_connection()
+        return updated
+
     def __delete_by_external_ids(
         self, collection_name: str, metadata_handler: str, external_ids
     ) -> int:
