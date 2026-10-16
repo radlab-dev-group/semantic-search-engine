@@ -685,17 +685,21 @@ documents.
   "status": true,
   "body": {
     "updated_documents": 1,
+    "updated_vectors": 128,
     "use_in_search": false,
     "not_found": []
   }
 }
 ```
 
-Deactivation is reversible and touches **nothing** in the vector database: the pages, the text
-chunks and the embeddings of a disabled document stay in both databases, so the document may be
-enabled again (with `use_in_search: true`) without any re-indexing. While disabled, its chunks
-are not returned by `search_with_options` — neither from the vector search nor from the
-full-text side.
+Deactivation is reversible and **nothing is removed**: the pages, the text
+chunks and the embeddings of a disabled document stay in both databases, so
+the document may be enabled again (with `use_in_search: true`) without any
+re-indexing.  The embeddings are not deleted either — their `is_active` flag
+in Milvus follows the relational one, so the state is consistent for **every
+consumer** of the vector collection, not only for the search of this engine.
+While disabled, its chunks are not returned by `search_with_options` —
+neither from the vector search nor from the full-text side.
 
 ### Chunking of a collection
 

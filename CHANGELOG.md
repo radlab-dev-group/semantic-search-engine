@@ -4,12 +4,28 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
+| [Unreleased](#unreleased) | Deactivation propagates to Milvus (`is_active` of the vectors) |
 | [0.1.3](#013) | Indexing in a Celery + RabbitMQ queue, per-document indexing progress, `indexing_status` endpoint |
 | [0.1.2](#012) | Deletion of the search history (`delete_search_history`), form-encoded `[]` list params |
 | [0.1.1](#0.1.1) | Deletion API (PostgreSQL + Milvus), document deactivation (`use_in_search`), normalized `[0, 1]` document ranking weights, collection-level chunking and `max_model_length` |
 | [0.1.0](#010) | Python client library, hybrid search, production deployment tooling, `src/` layout and CI |
 | [0.0.1](#001) | Initial version |
 
+
+## [Unreleased]
+
+### Changed
+
+- `POST set_documents_use_in_search` now propagates the visibility change to
+  the vector database as well.  The embeddings of the changed documents are
+  **not removed** — their `is_active` flag in Milvus follows the relational
+  `Document.use_in_search` one, so the state is consistent for **every**
+  consumer of the vector collection, not only for the search of this engine.
+  Re-activating a document still needs no re-indexing.  `MilvusHandler` gains
+  `set_active_by_external_ids` (the rows are read and upserted, since
+  `pymilvus` has no scalar update).
+- The answer of `POST set_documents_use_in_search` reports how many vectors
+  were changed as well (`updated_vectors`, next to `updated_documents`).
 
 ## [0.1.3]
 
