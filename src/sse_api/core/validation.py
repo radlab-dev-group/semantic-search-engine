@@ -7,9 +7,35 @@ def request_params(request):
     if hasattr(request, "validated_params"):
         return request.validated_params
     body = request.data
-    params = dict(body.items()) if isinstance(body, Mapping) else {}
+    params = _as_params(body)
     if request.method == "GET":
-        params.update(request.query_params.items())
+        params.update(_as_params(request.query_params))
+    return params
+
+
+#: Suffix which names a list parameter of the API (``texts[]``, ``chunk_ids[]``).
+LIST_PARAM_SUFFIX = "[]"
+
+
+def _as_params(body):
+    """
+    Parameters of a request body as a plain dictionary.
+
+    A form-encoded body arrives as a ``QueryDict`` whose ``items()`` keeps only
+    the **last** value of a repeated key, so ``chunk_ids[]=1`` would be a
+    string rather than the one-element list the validators of the list
+    parameters expect.  Keys named with the ``[]`` suffix are therefore always
+    read with ``getlist``, which makes a form-encoded request behave exactly
+    like the JSON one.
+    """
+    if not isinstance(body, Mapping):
+        return {}
+    params = dict(body.items())
+    getlist = getattr(body, "getlist", None)
+    if callable(getlist):
+        for key in params:
+            if isinstance(key, str) and key.endswith(LIST_PARAM_SUFFIX):
+                params[key] = getlist(key)
     return params
 
 
