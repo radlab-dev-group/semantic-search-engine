@@ -802,25 +802,36 @@ class SSEClient:
         return SearchHistory.from_api(body)
 
     def delete_search_history(
-        self, query_ids: Union[int, Sequence[int]]
+        self,
+        query_ids: Optional[Union[int, Sequence[int]]] = None,
+        query_response_ids: Optional[Union[int, Sequence[int]]] = None,
     ) -> Dict[str, Any]:
         """Delete stored queries of the user (``POST delete_search_history``).
 
-        ``query_ids`` are the ``query_id`` values served by
-        :meth:`list_search_history` / :meth:`get_search_history`.  The
-        responses, the generated answers and the RAG states of the chats which
-        reference the queries are removed with them; nothing of the
+        Entries are addressed with the identifiers served by
+        :meth:`list_search_history` / :meth:`get_search_history`: either the
+        ``query_id`` of the query or the ``query_response_id`` of its response.
+        At least one of them has to be given, a single id or a list of ids.
+        The responses, the generated answers and the RAG states of the chats
+        which reference the queries are removed with them; nothing of the
         collections themselves is touched.  The answer reports how many rows
-        disappeared (``deleted``) and which ids were not found
-        (``not_found``).
+        disappeared (``deleted``) and which ids were not found (``not_found``).
         """
         ids = [_as_identifier(query_id) for query_id in _as_sequence(query_ids)]
-        if not ids:
-            raise SSEValueError("query_ids cannot be empty")
-        body = self.post(
-            endpoints.DELETE_SEARCH_HISTORY,
-            {"query_ids[]": ids},
-        )
+        response_ids = [
+            _as_identifier(query_response_id)
+            for query_response_id in _as_sequence(query_response_ids)
+        ]
+        if not ids and not response_ids:
+            raise SSEValueError(
+                "either query_ids or query_response_ids has to be given"
+            )
+        payload: Dict[str, Any] = {}
+        if ids:
+            payload["query_ids[]"] = ids
+        if response_ids:
+            payload["query_response_ids[]"] = response_ids
+        body = self.post(endpoints.DELETE_SEARCH_HISTORY, payload)
         return dict(body or {})
 
     def list_generative_models(self) -> Dict[str, Any]:
