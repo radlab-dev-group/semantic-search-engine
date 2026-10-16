@@ -34,6 +34,8 @@ from sse_api.core.constants import (
     ENV_USE_INTROSPECT,
     ENV_INTROSPECT_EMAIL_VERIFICATION,
     ENV_CELERY_BROKER_URL,
+    ENV_CELERY_RESULT_BACKEND,
+    ENV_CELERY_TASK_TIME_LIMIT,
     CONFIG_DIR,
     ENV_USE_RADLAB_PROXY,
     ENV_USE_RADLAB_PROXY_SEE,
@@ -157,7 +159,9 @@ class SystemSettingsHandler:
 
         self._properly_config_read()
         if self.json_config and "main" in self.json_config:
-            return split_list_value(self.json_config["main"].get("allowed_hosts", []))
+            return split_list_value(
+                self.json_config["main"].get("allowed_hosts", [])
+            )
         return []
 
     def get_aws_config_value(self, aws_section: str) -> str:
@@ -184,6 +188,44 @@ class SystemSettingsHandler:
         if self.json_config and "celery" in self.json_config:
             return self.json_config["celery"].get("broker_url")
         return None
+
+    def celery_result_backend(self):
+        """
+        Return celery result backend url (``None`` keeps the results out of
+        the backend: the progress of the indexing lives in the relational
+        database and is read from there by the API).
+        :return: URL or None
+        """
+        if (
+            self.use_environment
+            and ENV_CELERY_RESULT_BACKEND in os.environ
+            and os.getenv(ENV_CELERY_RESULT_BACKEND, "").strip()
+        ):
+            return os.getenv(ENV_CELERY_RESULT_BACKEND).strip()
+
+        self._properly_config_read()
+        if self.json_config and "celery" in self.json_config:
+            return self.json_config["celery"].get("result_backend")
+        return None
+
+    def celery_task_time_limit(self, default: int = 14400) -> int:
+        """
+        Hard time limit of one task, in seconds (default: 4 hours).
+        :return: seconds
+        """
+        if (
+            self.use_environment
+            and ENV_CELERY_TASK_TIME_LIMIT in os.environ
+            and os.getenv(ENV_CELERY_TASK_TIME_LIMIT, "").strip()
+        ):
+            return int(os.getenv(ENV_CELERY_TASK_TIME_LIMIT).strip())
+
+        self._properly_config_read()
+        if self.json_config and "celery" in self.json_config:
+            return int(
+                self.json_config["celery"].get("task_time_limit", default) or default
+            )
+        return default
 
     def installed_apps(self):
         """
@@ -310,9 +352,7 @@ class SystemSettingsHandler:
 
         self._properly_config_read()
         if self.json_config and "main" in self.json_config:
-            return bool_config_value(
-                self.json_config["main"].get("use_aws", False)
-            )
+            return bool_config_value(self.json_config["main"].get("use_aws", False))
         return False
 
     @staticmethod
@@ -350,9 +390,7 @@ class SystemSettingsHandler:
         self._properly_config_read()
         if self.json_config and "main" in self.json_config:
             return bool_config_value(
-                self.json_config["main"].get(
-                    "use_authorization_introspect", False
-                )
+                self.json_config["main"].get("use_authorization_introspect", False)
             )
         return False
 
@@ -367,9 +405,7 @@ class SystemSettingsHandler:
         self._properly_config_read()
         if self.json_config and "main" in self.json_config:
             return bool_config_value(
-                self.json_config["main"].get(
-                    "introspect_email_verification", False
-                )
+                self.json_config["main"].get("introspect_email_verification", False)
             )
         return False
 
@@ -609,7 +645,9 @@ class SystemSettingsHandler:
         self._properly_config_read()
         if self.json_config:
             if sec_name is not None and variable_name is not None:
-                config_variable = self.json_config.get(sec_name, {}).get(variable_name)
+                config_variable = self.json_config.get(sec_name, {}).get(
+                    variable_name
+                )
             elif sec_name is not None:
                 config_variable = self.json_config.get(sec_name)
 

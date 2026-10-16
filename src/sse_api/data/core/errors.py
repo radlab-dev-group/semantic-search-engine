@@ -6,6 +6,7 @@ CHUNK_NOT_FOUND = "CHUNK_NOT_FOUND"
 DELETE_PROTECTED = "DELETE_PROTECTED"
 CHUNKING_TOO_LONG = "CHUNKING_TOO_LONG"
 CHUNKING_MISMATCH = "CHUNKING_MISMATCH"
+INDEXING_JOB_NOT_FOUND = "INDEXING_JOB_NOT_FOUND"
 
 ALL_ERRORS_DATA = {
     DOCUMENT_NOT_FOUND: {
@@ -53,6 +54,13 @@ ALL_ERRORS_DATA = {
                 "Chunking settings differ from the ones of the collection "
                 "(the collection enforces its own chunking)."
             ),
+        },
+    },
+    INDEXING_JOB_NOT_FOUND: {
+        ECODE: "000007_DATA",
+        MSG: {
+            MSG_PL: "Nie znaleziono takiego procesu indeksacji.",
+            MSG_EN: "This indexing process was not found.",
         },
     },
     UPLOAD_REJECTED: {
