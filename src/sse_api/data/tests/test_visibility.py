@@ -2,8 +2,9 @@
 Deactivation of documents in the search of a collection
 (``Document.use_in_search``).
 
-Tests use a real (in memory) relational database: the flag is set in the
-relational db only, the texts and the embeddings are never touched.
+Tests use a real (in memory) relational database and a faked Milvus
+controller: the flag is set in the relational db and the matching vectors of
+the documents are only deactivated, never removed.
 """
 
 import json
@@ -49,6 +50,12 @@ class FixtureTestCase(TestCase):
             document=self.document, page_number=1
         )
         self.chunk = self.add_chunk(self.page, 1, "first chunk")
+        semantic_db = patch(
+            "sse_api.data.controllers.visibility.SemanticDBController"
+        )
+        self.semantic_db = semantic_db.start().return_value
+        self.addCleanup(semantic_db.stop)
+        self.semantic_db.set_documents_active.return_value = 1
         self.controller = ContentVisibilityController()
 
     def add_document(self, name, document_hash, collection=None):
@@ -73,6 +80,47 @@ class FixtureTestCase(TestCase):
 
 
 class DocumentVisibilityControllerTests(FixtureTestCase):
+    def test_the_vectors_are_deactivated_with_the_rows(self):
+        result = self.controller.set_documents_use_in_search(
+            collection=self.collection,
+            use_in_search=False,
+            document_names=["document.txt"],
+        )
+
+        self.semantic_db.set_documents_active.assert_called_once_with(
+            collection_name="collection",
+            external_ids=[self.document.pk],
+            is_active=False,
+        )
+        self.assertEqual(result.updated_vectors, 1)
+
+    def test_the_vectors_are_activated_when_the_document_is_enabled(self):
+        self.controller.set_documents_use_in_search(
+            collection=self.collection,
+            use_in_search=False,
+            document_ids=[self.document.pk],
+        )
+        self.controller.set_documents_use_in_search(
+            collection=self.collection,
+            use_in_search=True,
+            document_ids=[self.document.pk],
+        )
+
+        self.semantic_db.set_documents_active.assert_called_with(
+            collection_name="collection",
+            external_ids=[self.document.pk],
+            is_active=True,
+        )
+
+    def test_nothing_is_asked_from_the_vector_db_when_nothing_was_found(self):
+        self.controller.set_documents_use_in_search(
+            collection=self.collection,
+            use_in_search=False,
+            document_names=["missing.txt"],
+        )
+
+        self.semantic_db.set_documents_active.assert_not_called()
+
     def test_document_is_disabled_by_its_name(self):
         result = self.controller.set_documents_use_in_search(
             collection=self.collection,
@@ -84,7 +132,12 @@ class DocumentVisibilityControllerTests(FixtureTestCase):
         self.assertFalse(self.document.use_in_search)
         self.assertEqual(
             result.as_dict(),
-            {"updated_documents": 1, "use_in_search": False, "not_found": []},
+            {
+                "updated_documents": 1,
+                "updated_vectors": 1,
+                "use_in_search": False,
+                "not_found": [],
+            },
         )
         # Nothing is removed: the page and the text chunk are still there.
         self.assertTrue(self.page.pk)
@@ -207,7 +260,12 @@ class DocumentVisibilityEndpointTests(FixtureTestCase):
         self.assertTrue(response.data["status"])
         self.assertEqual(
             response.data["body"],
-            {"updated_documents": 1, "use_in_search": False, "not_found": []},
+            {
+                "updated_documents": 1,
+                "updated_vectors": 1,
+                "use_in_search": False,
+                "not_found": [],
+            },
         )
         self.document.refresh_from_db()
         self.assertFalse(self.document.use_in_search)

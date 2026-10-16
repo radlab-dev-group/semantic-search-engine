@@ -877,7 +877,9 @@ class SetDocumentsUseInSearch(APIView):
 
         use_in_search = params.get("use_in_search", False)
 
-        controller = ContentVisibilityController()
+        controller = ContentVisibilityController(
+            milvus_config_path=MILVUS_CONFIG_PATH
+        )
         result = controller.set_documents_use_in_search(
             collection=collection,
             use_in_search=use_in_search,
