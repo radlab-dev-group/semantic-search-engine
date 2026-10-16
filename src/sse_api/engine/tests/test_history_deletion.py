@@ -31,7 +31,7 @@ from sse_api.engine.models import (
     UserQueryResponse,
     UserQueryResponseAnswer,
 )
-from sse_api.core.errors_list import BUILT_IN_GENERAL_ERRORS, NO_REQUIRED_PARAMS
+from sse_api.core.errors_list import BUILT_IN_GENERAL_ERRORS, INVALID_PARAMS
 from sse_api.core.errors_constants import ECODE
 from sse_api.engine.core.errors import (
     QUERY_NOT_FOUND,
@@ -139,7 +139,10 @@ class SearchHistoryDeletionControllerTests(FixtureTestCase):
                 "rag_states": 1,
             },
         )
-        self.assertEqual(result.not_found, [])
+        self.assertEqual(
+            result.not_found,
+            {"query_ids": [], "query_response_ids": []},
+        )
         self.assertFalse(
             UserQuery.objects.filter(organisation_user=self.org_user1).exists()
         )
@@ -171,7 +174,10 @@ class SearchHistoryDeletionControllerTests(FixtureTestCase):
         )
 
         self.assertEqual(result.deleted["queries"], 0)
-        self.assertEqual(result.not_found, [self.query_u2.pk])
+        self.assertEqual(
+            result.not_found,
+            {"query_ids": [self.query_u2.pk], "query_response_ids": []},
+        )
         self.assertTrue(UserQuery.objects.filter(pk=self.query_u2.pk).exists())
         self.assertTrue(
             UserQueryResponse.objects.filter(pk=self.response_u2.pk).exists()
@@ -184,7 +190,63 @@ class SearchHistoryDeletionControllerTests(FixtureTestCase):
         )
 
         self.assertEqual(result.deleted["queries"], 1)
-        self.assertEqual(result.not_found, [999999])
+        self.assertEqual(
+            result.not_found,
+            {"query_ids": [999999], "query_response_ids": []},
+        )
+
+    def test_responses_are_removed_by_their_ids(self):
+        # The history API serves query_response_id, so deleting by it has to
+        # work exactly like deleting by query_id.
+        result = self.controller.delete_queries(
+            organisation_user=self.org_user1,
+            query_response_ids=[self.response1.pk],
+        )
+
+        self.assertEqual(result.deleted["queries"], 1)
+        self.assertEqual(result.deleted["responses"], 1)
+        self.assertEqual(result.deleted["answers"], 1)
+        self.assertEqual(
+            result.not_found,
+            {"query_ids": [], "query_response_ids": []},
+        )
+        self.assertFalse(UserQuery.objects.filter(pk=self.query1.pk).exists())
+        self.assertTrue(UserQuery.objects.filter(pk=self.query2.pk).exists())
+
+    def test_a_single_response_id_reaches_its_query(self):
+        result = self.controller.delete_queries(
+            organisation_user=self.org_user1,
+            query_response_ids=self.response2.pk,
+        )
+
+        self.assertEqual(result.deleted["queries"], 1)
+        self.assertFalse(UserQuery.objects.filter(pk=self.query2.pk).exists())
+
+    def test_both_identifiers_delete_the_union_only_once(self):
+        result = self.controller.delete_queries(
+            organisation_user=self.org_user1,
+            query_ids=[self.query1.pk],
+            query_response_ids=[self.response1.pk, self.response2.pk],
+        )
+
+        # query1 is addressed twice but has to be counted once.
+        self.assertEqual(result.deleted["queries"], 2)
+        self.assertEqual(result.deleted["responses"], 2)
+
+    def test_responses_of_other_users_are_not_removed(self):
+        result = self.controller.delete_queries(
+            organisation_user=self.org_user1,
+            query_response_ids=[self.response_u2.pk],
+        )
+
+        self.assertEqual(result.deleted["queries"], 0)
+        self.assertEqual(
+            result.not_found,
+            {"query_ids": [], "query_response_ids": [self.response_u2.pk]},
+        )
+        self.assertTrue(
+            UserQueryResponse.objects.filter(pk=self.response_u2.pk).exists()
+        )
 
     def test_an_answer_quoted_by_a_state_of_another_query_is_protected(self):
         # The RAG state belongs to query 2 but quotes the answer of query 1
@@ -254,7 +316,8 @@ class DeleteSearchHistoryApiTests(FixtureTestCase):
         self.assertEqual(body["deleted"]["queries"], 2)
         self.assertEqual(body["deleted"]["responses"], 2)
         self.assertEqual(body["deleted"]["answers"], 1)
-        self.assertEqual(body["not_found"], [])
+        self.assertEqual(body["not_found"]["query_ids"], [])
+        self.assertEqual(body["not_found"]["query_response_ids"], [])
         self.assertFalse(
             UserQuery.objects.filter(organisation_user=self.org_user1).exists()
         )
@@ -283,12 +346,42 @@ class DeleteSearchHistoryApiTests(FixtureTestCase):
         )
         self.assertTrue(UserQuery.objects.filter(pk=self.query_u2.pk).exists())
 
-    def test_missing_ids_are_rejected_before_the_call(self):
+    def test_responses_are_deleted_by_their_ids(self):
+        response = self.call(
+            self.user1, {"query_response_ids[]": [self.response1.pk]}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["status"])
+        self.assertEqual(response.data["body"]["deleted"]["queries"], 1)
+        self.assertFalse(UserQuery.objects.filter(pk=self.query1.pk).exists())
+        self.assertTrue(UserQuery.objects.filter(pk=self.query2.pk).exists())
+
+    def test_a_single_query_response_id_is_accepted(self):
+        # The shape which the clients of get_search_history already hold.
+        response = self.call(
+            self.user1, {"query_response_id": int(self.response2.pk)}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["status"])
+        self.assertEqual(response.data["body"]["deleted"]["queries"], 1)
+        self.assertFalse(UserQuery.objects.filter(pk=self.query2.pk).exists())
+
+    def test_a_single_query_id_is_accepted(self):
+        response = self.call(self.user1, {"query_id": int(self.query1.pk)})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["status"])
+        self.assertFalse(UserQuery.objects.filter(pk=self.query1.pk).exists())
+
+    def test_no_identifiers_at_all_are_rejected(self):
         response = self.call(self.user1, {})
 
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.data["status"])
         self.assertEqual(
             response.data["errors"][0][ECODE],
-            BUILT_IN_GENERAL_ERRORS[NO_REQUIRED_PARAMS][ECODE],
+            BUILT_IN_GENERAL_ERRORS[INVALID_PARAMS][ECODE],
         )
+        self.assertTrue(UserQuery.objects.filter(pk=self.query1.pk).exists())
