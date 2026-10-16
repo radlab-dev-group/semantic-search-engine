@@ -116,6 +116,7 @@ class ApiContractTest(unittest.TestCase):
             "rate_answer",
             "list_search_history",
             "get_search_history",
+            "delete_search_history",
             "new_chat",
             "send_chat_message",
             "save_chat",
