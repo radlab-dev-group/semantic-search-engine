@@ -370,6 +370,33 @@ class IndexingPipelineTests(IndexingFixtureTestCase):
             with self.assertRaises(OSError):
                 indexing_pipeline.run_prepare(job)
 
+    def test_reading_processes_survive_a_daemon(self):
+        """A daemonic process may not create the reading pool of the files."""
+        with patch.object(
+            indexing_pipeline.multiprocessing, "current_process"
+        ) as current_process:
+            current_process.return_value.daemon = False
+            self.assertEqual(indexing_pipeline.reading_processes(5), 5)
+
+            current_process.return_value.daemon = True
+            self.assertEqual(indexing_pipeline.reading_processes(5), 1)
+            self.assertEqual(indexing_pipeline.reading_processes(1), 1)
+
+    def test_files_of_a_daemon_are_read_in_one_process(self):
+        """The job is prepared slowly rather than not at all in a prefork task."""
+        job = self.make_job()
+        with patch.object(
+            indexing_pipeline.multiprocessing, "current_process"
+        ) as current_process:
+            current_process.return_value.daemon = True
+            with patch(
+                "sse_api.engine.controllers.database.relational_db."
+                "RelationalDBController.add_uploaded_documents_to_db"
+            ) as add_documents:
+                indexing_pipeline.run_prepare(job)
+
+        self.assertEqual(add_documents.call_args.kwargs["number_of_process"], 1)
+
 
 class IndexingStatusEndpointTests(IndexingEndpointTestCase):
     def test_without_job_and_collection(self):

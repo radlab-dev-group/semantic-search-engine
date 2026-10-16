@@ -434,6 +434,14 @@ docker compose --profile indexing up -d     # api + worker + rabbitmq
 celery -A sse_api.config worker -Q indexing -l INFO
 ```
 
+**Basen workera to `solo`** (`CELERY_WORKER_POOL`, wartość domyślna `run.sh` i
+`docker compose`).  Odczyt wgranych plików działa w własnym basenie
+`multiprocessing.Pool`, a zadania basenu `prefork` są procesami-demona, którym
+Python zabrania tworzenia własnych dzieci: taki worker odpowiada
+`AssertionError: daemonic processes are not allowed to have children` zamiast
+cokolwiek zaindeksować.  Zadanie, które mimo to trafi do procesu-demona,
+przeczyta swoje pliki w jednym procesie (z ostrzeżeniem) zamiast paść.
+
 Embedder kolekcji jest ładowany raz na proces workera, więc `CELERY_CONCURRENCY`
 to pytanie o pamięć; zostaw go na 1, o ile każdy proces nie uniesie własnego
 modelu. Worker zabity na zawsze zostawia zadanie jako uruchomione --

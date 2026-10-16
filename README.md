@@ -451,8 +451,8 @@ the same pipeline and report the same progress:
 
 | Mode | What happens | When |
 |------|--------------|------|
-| `ENV_USE_CELERY=0` (default) | The request stores the files, splits them and embeds them before it answers. | single-machine setups, no broker to run |
-| `ENV_USE_CELERY=1` | The request stores the files, writes an `IndexingJob` and answers at once; a worker does the rest. | anything bigger than a few documents |
+| `ENV_USE_CELERY=0` | The request stores the files, splits them and embeds them before it answers. | single-machine setups, no broker to run |
+| `ENV_USE_CELERY=1` (default) | The request stores the files, writes an `IndexingJob` and answers at once; a worker does the rest. | anything bigger than a few documents |
 
 **The unit of work is one document.**  `prepare_indexing_job` reads the files of
 one upload, stores `Document` / `DocumentPage` / `DocumentPageText` rows and
@@ -509,6 +509,15 @@ docker compose --profile indexing up -d     # api + worker + rabbitmq
 # ... or the worker by hand, with the dependencies of the API installed:
 celery -A sse_api.config worker -Q indexing -l INFO
 ```
+
+**The pool of the worker is `solo`** (`CELERY_WORKER_POOL`, the default of
+`run.sh` and of `docker compose`).  Reading the uploaded files runs in a
+`multiprocessing.Pool` of its own, while the tasks of a `prefork` worker are
+daemonic children, which Python does not allow to have children of their own:
+such a worker answers `AssertionError: daemonic processes are not allowed to
+have children` instead of indexing anything.  A job which still lands on a
+daemonic process reads its files in one process, with a warning, rather than
+failing.
 
 The embedder of a collection is loaded once per worker process, so
 `CELERY_CONCURRENCY` is a question of memory; keep it at 1 unless every process
