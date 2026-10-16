@@ -11,11 +11,18 @@ to be removed in the order which respects those keys: chat states first,
 then answers, responses, and only then the queries themselves.  The states
 of the chat messages are not deleted - the message keeps its life and only
 loses the reference (``state`` is set to ``None``).  Everything runs in one
-transaction, so a partial failure leaves the history untouched::
+transaction, so a partial failure leaves the history untouched.
+
+Entries can be addressed by their ``query_id`` or by their
+``query_response_id``: the two are the identifiers which the rest of the
+history API (``search_history``, ``get_search_history``) serves, so either
+of them can be given.  When both are given, the union is deleted::
 
     controller = SearchHistoryDeletionController()
     result = controller.delete_queries(
-        organisation_user=organisation_user, query_ids=[1, 2]
+        organisation_user=organisation_user,
+        query_ids=[1, 2],
+        query_response_ids=[7],
     )
     print(result.as_dict())
 """
@@ -47,6 +54,32 @@ def _deleted_rows(delete_result: Any, model: Any) -> int:
     return 0
 
 
+def _as_ids(values) -> List[int]:
+    """
+    Normalise a parameter which may be a single value, a list, or ``None``
+    into a de-duplicated list of positive integers.
+    :param values: The raw parameter value
+    :return: List of integers
+    """
+    if values is None:
+        return []
+    if isinstance(values, (list, tuple)):
+        items = list(values)
+    else:
+        items = [values]
+    ids = set()
+    for item in items:
+        if item is None or str(item).strip() == "":
+            continue
+        try:
+            value = int(item)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            ids.add(value)
+    return sorted(ids)
+
+
 class HistoryDeletionProtected(Exception):
     """
     Raised when other rows are protected against the removal of the history.
@@ -57,16 +90,16 @@ class HistoryDeletionProtected(Exception):
 class HistoryDeletionResult:
     """
     Outcome of a single deletion of search history: what was removed and
-    which of the requested queries were not found.
+    which of the requested ids were not found.
     """
 
     deleted: dict = field(default_factory=dict)
-    not_found: List[int] = field(default_factory=list)
+    not_found: dict = field(default_factory=dict)
 
     def as_dict(self) -> dict:
         """
         Deletion outcome prepared for the API response: the number of the
-        deleted rows and the ids which were not found.
+        deleted rows and the ids which were not found, per identifier type.
         :return: Dictionary with ``deleted`` and ``not_found``
         """
         return {"deleted": self.deleted, "not_found": self.not_found}
@@ -80,31 +113,70 @@ class SearchHistoryDeletionController:
     @staticmethod
     def delete_queries(
         organisation_user: OrganisationUser,
-        query_ids,
+        query_ids=None,
+        query_response_ids=None,
     ) -> HistoryDeletionResult:
         """
-        Delete the queries of the user given by their ids, together with
-        their responses, answers and the RAG states which reference them.
-        The ``state`` of the chat messages is cleared instead of removed.
+        Delete the queries of the user, addressed by their ``query_id`` and/or
+        their ``query_response_id``, together with their responses, answers and
+        the RAG states which reference them.  The ``state`` of the chat
+        messages is cleared instead of removed.
         :param organisation_user: User who the history belongs to
         :param query_ids: Ids of the queries to delete
+        :param query_response_ids: Ids of the query responses to delete
         :return: HistoryDeletionResult
         """
-        wanted_ids = [
-            int(query_id) for query_id in query_ids if str(query_id).strip()
-        ]
+        wanted_query_ids = _as_ids(query_ids)
+        wanted_response_ids = _as_ids(query_response_ids)
+
         query_model = apps.get_model("engine", "UserQuery")
         query_response_model = apps.get_model("engine", "UserQueryResponse")
         query_answer_model = apps.get_model("engine", "UserQueryResponseAnswer")
         rag_state_model = apps.get_model("chat", "RAGMessageState")
         message_state_model = apps.get_model("chat", "MessageState")
 
-        queries = list(
-            query_model.objects.filter(
-                organisation_user=organisation_user, pk__in=wanted_ids
+        # Resolve the ids of the queries which are actually owned by the user,
+        # from both the query ids and the response ids which were given.
+        query_ids_of_user = set()
+        if wanted_query_ids:
+            query_ids_of_user |= {
+                query.pk
+                for query in query_model.objects.filter(
+                    organisation_user=organisation_user,
+                    pk__in=wanted_query_ids,
+                )
+            }
+        if wanted_response_ids:
+            query_ids_of_user |= {
+                response.user_query_id
+                for response in query_response_model.objects.filter(
+                    user_query__organisation_user=organisation_user,
+                    pk__in=wanted_response_ids,
+                )
+            }
+        query_ids_of_user = sorted(query_ids_of_user)
+
+        # Report, per identifier type, which of the requested ids were not
+        # found (or did not belong to the user).
+        not_found = {"query_ids": [], "query_response_ids": []}
+        if wanted_query_ids:
+            not_found["query_ids"] = sorted(
+                set(wanted_query_ids) - set(query_ids_of_user)
             )
-        )
-        query_ids_of_user = [query.pk for query in queries]
+        if wanted_response_ids:
+            found_response_ids = set()
+            if query_ids_of_user:
+                found_response_ids = {
+                    response.pk
+                    for response in query_response_model.objects.filter(
+                        user_query__organisation_user=organisation_user,
+                        user_query__pk__in=query_ids_of_user,
+                    )
+                }
+            # Only the requested response ids count as found.
+            not_found["query_response_ids"] = sorted(
+                set(wanted_response_ids) - found_response_ids
+            )
 
         deleted = {
             "answers": 0,
@@ -113,9 +185,7 @@ class SearchHistoryDeletionController:
             "rag_states": 0,
         }
         if not query_ids_of_user:
-            return HistoryDeletionResult(
-                deleted=deleted, not_found=sorted(wanted_ids)
-            )
+            return HistoryDeletionResult(deleted=deleted, not_found=not_found)
 
         try:
             with transaction.atomic():
@@ -162,5 +232,5 @@ class SearchHistoryDeletionController:
 
         return HistoryDeletionResult(
             deleted=deleted,
-            not_found=sorted(set(wanted_ids) - set(query_ids_of_user)),
+            not_found=not_found,
         )

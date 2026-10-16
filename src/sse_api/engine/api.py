@@ -388,29 +388,54 @@ class GetSearchHistoryById(APIView):
 
 class DeleteSearchHistory(APIView):
     """
-    Delete the search history of the authenticated user: the queries given by
-    their ids (``query_ids[]``), their responses, the generated answers and
-    the RAG states of the chats which reference them.  Nothing is removed
-    from the collections themselves - only the history rows of the user.
+    Delete the search history of the authenticated user.
+
+    Entries can be given by ``query_ids[]`` and/or by ``query_response_ids[]``
+    (at least one of them is required); the single ``query_id`` and
+    ``query_response_id`` are accepted as aliases.  These are the identifiers
+    which the rest of the history API (``search_history``,
+    ``get_search_history``) serves.  The responses, the generated answers and
+    the RAG states of the chats which reference them are removed with them;
+    nothing is removed from the collections themselves.
     """
 
-    required_params = ["query_ids[]"]
+    required_params = []
+    optional_params = [
+        "query_ids[]",
+        "query_response_ids[]",
+        "query_id",
+        "query_response_id",
+    ]
     input_validators = {
         "query_ids[]": identifiers,
+        "query_response_ids[]": identifiers,
+        "query_id": identifier,
+        "query_response_id": identifier,
     }
 
-    @required_params_exists(required_params=required_params)
+    @required_params_exists(
+        required_params=required_params, optional_params=optional_params
+    )
     @get_organisation_user
     @get_default_language
     def post(self, language, organisation_user, request, *args, **kwargs):
         params = request_params(request)
-        query_ids = params.get("query_ids[]")
+        query_ids = list(params.get("query_ids[]") or [])
+        query_response_ids = list(params.get("query_response_ids[]") or [])
+        if params.get("query_id") is not None:
+            query_ids.append(params["query_id"])
+        if params.get("query_response_id") is not None:
+            query_response_ids.append(params["query_response_id"])
+
+        if not query_ids and not query_response_ids:
+            return error_response(INVALID_PARAMS, language)
 
         controller = SearchHistoryDeletionController()
         try:
             result = controller.delete_queries(
                 organisation_user=organisation_user,
                 query_ids=query_ids,
+                query_response_ids=query_response_ids,
             )
         except HistoryDeletionProtected:
             return response_with_status(
