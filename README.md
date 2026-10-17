@@ -215,8 +215,10 @@ python -m sse_api.manage migrate
 If you don’t have a remote Milvus cluster, you can run a Docker container:
 
 ```shell script
+# Milvus >= 3.0 requires the standalone deploy mode for an embedded etcd
 docker run -d --name milvus-standalone \
   --security-opt seccomp:unconfined \
+  -e DEPLOY_MODE=STANDALONE \
   -e ETCD_USE_EMBED=true \
   -e ETCD_DATA_DIR=/var/lib/milvus/etcd \
   -e COMMON_STORAGETYPE=local \

@@ -4,7 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
-| [Unreleased](#unreleased) | Deactivation propagates to Milvus (`is_active` of the vectors) |
+| [Unreleased](#unreleased) | Deactivation propagates to Milvus (`is_active` of the vectors); Milvus 3.0 |
 | [0.1.3](#013) | Indexing in a Celery + RabbitMQ queue, per-document indexing progress, `indexing_status` endpoint |
 | [0.1.2](#012) | Deletion of the search history (`delete_search_history`), form-encoded `[]` list params |
 | [0.1.1](#0.1.1) | Deletion API (PostgreSQL + Milvus), document deactivation (`use_in_search`), normalized `[0, 1]` document ranking weights, collection-level chunking and `max_model_length` |
@@ -31,6 +31,18 @@ All notable changes to the Semantic Search Engine are documented in this file.
   warning is logged instead of failing the request.
 - The answer of `POST set_documents_use_in_search` reports how many vectors
   were changed as well (`updated_vectors`, next to `updated_documents`).
+
+### Changed
+
+- The bundled vector database is now **Milvus 3.0**
+  (`milvusdb/milvus:v3.0.3`) with a matching `pymilvus` 3.x client
+  (`requirements.txt` pins `pymilvus>=3.0`).  The `DEPLOY_MODE=STANDALONE`
+  environment variable is passed to the standalone container — Milvus >= 3.0
+  refuses to start with an embedded etcd without it — and the compose stack
+  sets `ETCD_AUTH_ENABLED=false` for its unauthenticated sidecar etcd.
+- Upgrading from Milvus 2.x needs a re-index: the old collections do not
+  have the `is_active` field, so they are dropped and re-created (PostgreSQL
+  holds the documents and the embeddings are rebuilt).
 
 ## [0.1.3]
 
