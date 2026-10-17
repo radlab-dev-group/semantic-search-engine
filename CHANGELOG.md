@@ -4,8 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
-| [Unreleased](#unreleased) | Deactivation propagates to Milvus (`is_active` of the vectors); Milvus 3.0 |
-| [0.1.3](#013) | Indexing in a Celery + RabbitMQ queue, per-document indexing progress, `indexing_status` endpoint |
+| [0.1.3](#013) | Indexing in a Celery + RabbitMQ queue, per-document indexing progress, `indexing_status` endpoint. Deactivation propagates to Milvus (`is_active` of the vectors); Milvus 3.0 |
 | [0.1.2](#012) | Deletion of the search history (`delete_search_history`), form-encoded `[]` list params |
 | [0.1.1](#0.1.1) | Deletion API (PostgreSQL + Milvus), document deactivation (`use_in_search`), normalized `[0, 1]` document ranking weights, collection-level chunking and `max_model_length` |
 | [0.1.0](#010) | Python client library, hybrid search, production deployment tooling, `src/` layout and CI |
@@ -14,35 +13,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 ## [Unreleased]
 
-### Changed
 
-- `POST set_documents_use_in_search` now propagates the visibility change to
-  the vector database as well.  The embeddings of the changed documents are
-  **not removed** — their `is_active` flag in Milvus follows the relational
-  `Document.use_in_search` one, so the state is consistent for **every**
-  consumer of the vector collection, not only for the search of this engine.
-  Re-activating a document still needs no re-indexing.  `MilvusHandler` gains
-  `set_active_by_external_ids`, which queries only the matching primary keys
-  and writes back `pk` and `is_active` with a Milvus **partial update**, so
-  the embeddings are never read nor rewritten.  Updating an entry of an
-  `auto_id` collection needs a server which supports it (Milvus >= 2.4.15);
-  against an older one (such as the shipped `milvusdb/milvus:v2.3.0`) the
-  relational flag is still stored and the search still respects it, and a
-  warning is logged instead of failing the request.
-- The answer of `POST set_documents_use_in_search` reports how many vectors
-  were changed as well (`updated_vectors`, next to `updated_documents`).
-
-### Changed
-
-- The bundled vector database is now **Milvus 3.0**
-  (`milvusdb/milvus:v3.0.3`) with a matching `pymilvus` 3.x client
-  (`requirements.txt` pins `pymilvus>=3.0`).  The `DEPLOY_MODE=STANDALONE`
-  environment variable is passed to the standalone container — Milvus >= 3.0
-  refuses to start with an embedded etcd without it — and the compose stack
-  sets `ETCD_AUTH_ENABLED=false` for its unauthenticated sidecar etcd.
-- Upgrading from Milvus 2.x needs a re-index: the old collections do not
-  have the `is_active` field, so they are dropped and re-created (PostgreSQL
-  holds the documents and the embeddings are rebuilt).
 
 ## [0.1.3]
 
@@ -88,6 +59,30 @@ All notable changes to the Semantic Search Engine are documented in this file.
   `CELERY_*` namespace instead of adding Celery to `INSTALLED_APPS`.
 - `celery` is a dependency now; the embedder of a collection is loaded once per
   worker process.
+- `POST set_documents_use_in_search` now propagates the visibility change to
+  the vector database as well.  The embeddings of the changed documents are
+  **not removed** — their `is_active` flag in Milvus follows the relational
+  `Document.use_in_search` one, so the state is consistent for **every**
+  consumer of the vector collection, not only for the search of this engine.
+  Re-activating a document still needs no re-indexing.  `MilvusHandler` gains
+  `set_active_by_external_ids`, which queries only the matching primary keys
+  and writes back `pk` and `is_active` with a Milvus **partial update**, so
+  the embeddings are never read nor rewritten.  Updating an entry of an
+  `auto_id` collection needs a server which supports it (Milvus >= 2.4.15);
+  against an older one (such as the shipped `milvusdb/milvus:v2.3.0`) the
+  relational flag is still stored and the search still respects it, and a
+  warning is logged instead of failing the request.
+- The answer of `POST set_documents_use_in_search` reports how many vectors
+  were changed as well (`updated_vectors`, next to `updated_documents`).
+- The bundled vector database is now **Milvus 3.0**
+  (`milvusdb/milvus:v3.0.3`) with a matching `pymilvus` 3.x client
+  (`requirements.txt` pins `pymilvus>=3.0`).  The `DEPLOY_MODE=STANDALONE`
+  environment variable is passed to the standalone container — Milvus >= 3.0
+  refuses to start with an embedded etcd without it — and the compose stack
+  sets `ETCD_AUTH_ENABLED=false` for its unauthenticated sidecar etcd.
+- Upgrading from Milvus 2.x needs a re-index: the old collections do not
+  have the `is_active` field, so they are dropped and re-created (PostgreSQL
+  holds the documents and the embeddings are rebuilt).
 
 ## [0.1.2]
 
