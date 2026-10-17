@@ -240,8 +240,11 @@ infra() {
 
   log "Milvus standalone (ports 19530, 19121)"
   docker_cmd rm -f milvus-standalone >/dev/null 2>&1 || true
+  # Milvus >= 3.0 refuses to start with an embedded etcd unless the
+  # deployment mode is marked as standalone from the very beginning.
   docker_cmd run -d --name milvus-standalone \
     --security-opt seccomp:unconfined \
+    -e DEPLOY_MODE=STANDALONE \
     -e ETCD_USE_EMBED=true \
     -e ETCD_DATA_DIR=/var/lib/milvus/etcd \
     -e COMMON_STORAGETYPE=local \
