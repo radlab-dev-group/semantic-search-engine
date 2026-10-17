@@ -15,7 +15,7 @@
 #   ./run-en.sh init            # migrate + semantic + add_user + add_query_templates (step 6)
 #   ./run-en.sh cosine          # migrate existing collections to COSINE (defaults to --all)
 #   ./run-en.sh start|up        # run the API server in the foreground → http://0.0.0.0:8271/api/ (step 7)
-#   ./run-en.sh down            # stop and remove the PG + Milvus containers
+#   ./run-en.sh down            # stop and remove the PG + Milvus containers + the milvus_data volume
 #   ./run-en.sh status          # show the state of containers and ports (5471/19530/19121/8271)
 #
 # Flags:
@@ -343,6 +343,11 @@ down() {
   have docker || need docker
   docker_cmd rm -f pg_sse_backend_engine >/dev/null 2>&1 || true
   docker_cmd rm -f milvus-standalone    >/dev/null 2>&1 || true
+  # The vectors are reproducible from PostgreSQL (the source of truth), so the
+  # Milvus volume goes away with the containers, like the ephemeral PG data.
+  if docker_cmd volume rm milvus_data >/dev/null 2>&1; then
+    log "Removed the 'milvus_data' volume (vectors); recreate it with ./run-en.sh init + re-indexing"
+  fi
   log "Stopped."
 }
 

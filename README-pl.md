@@ -428,7 +428,7 @@ docker compose --profile indexing up -d     # api + worker + rabbitmq
 ./run.sh worker   # worker indeksacji w foreground
 ./run.sh start    # API; przy ENV_USE_CELERY=1 worker startuje razem z nim
 ./run.sh status   # kontenery, worker, porty 5471/19530/19121/5672/8271
-./run.sh down     # zatrzymuje workera i usuwa kontenery
+./run.sh down     # zatrzymuje workera, usuwa kontenery i wolumen milvus_data
 
 # ... albo worker odpalony ręcznie, po zainstalowaniu zależności API:
 celery -A sse_api.config worker -Q indexing -l INFO

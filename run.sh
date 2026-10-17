@@ -15,7 +15,7 @@
 #   ./run.sh cosine          # migracja istniejących kolekcji na COSINE (domyślnie --all)
 #   ./run.sh start|up        # odpal serwer API w foreground → http://0.0.0.0:8271/api/ (krok 7)
 #   ./run.sh worker          # odpal workera Celery (kolejka indeksacji) w foreground
-#   ./run.sh down            # zatrzymaj i usuń kontenery PG + Milvus + RabbitMQ (+ worker)
+#   ./run.sh down            # zatrzymaj i usuń kontenery PG + Milvus + RabbitMQ (+ worker) + wolumen milvus_data
 #   ./run.sh status          # pokaż stan kontenerów i portów (5471/19530/19121/5672/8271)
 #   ./run.sh config          # utwórz .env i brakujące pliki configs/ z szablonów
 #
@@ -502,6 +502,11 @@ down() {
   docker_cmd rm -f milvus-etcd          >/dev/null 2>&1 || true
   docker_cmd rm -f rabbitmq-sse         >/dev/null 2>&1 || true
   docker_cmd network rm sse-net         >/dev/null 2>&1 || true
+  # Wektory są odtwarzalne z PostgreSQL (źródło prawdy), więc wolumen Milvusa
+  # jest usuwany razem z kontenerami — tak jak ulotne dane PostgreSQL.
+  if docker_cmd volume rm milvus_data >/dev/null 2>&1; then
+    log "Usunięto wolumen 'milvus_data' (wektory); kolekcje odtworzysz przez ./run.sh init + re-indeksację"
+  fi
   log "Zatrzymano."
 }
 
