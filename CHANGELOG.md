@@ -24,7 +24,11 @@ All notable changes to the Semantic Search Engine are documented in this file.
   Re-activating a document still needs no re-indexing.  `MilvusHandler` gains
   `set_active_by_external_ids`, which queries only the matching primary keys
   and writes back `pk` and `is_active` with a Milvus **partial update**, so
-  the embeddings are never read nor rewritten.
+  the embeddings are never read nor rewritten.  Updating an entry of an
+  `auto_id` collection needs a server which supports it (Milvus >= 2.4.15);
+  against an older one (such as the shipped `milvusdb/milvus:v2.3.0`) the
+  relational flag is still stored and the search still respects it, and a
+  warning is logged instead of failing the request.
 - The answer of `POST set_documents_use_in_search` reports how many vectors
   were changed as well (`updated_vectors`, next to `updated_documents`).
 

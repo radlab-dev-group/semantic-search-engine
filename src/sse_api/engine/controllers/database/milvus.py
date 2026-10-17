@@ -9,6 +9,8 @@ from sentence_transformers import SentenceTransformer
 from sentence_transformers.cross_encoder import CrossEncoder
 
 
+from pymilvus.exceptions import MilvusException  # type: ignore[import-untyped]
+from sse_api.core.constants import get_logger
 from pymilvus import (
     db,
     MilvusClient,
@@ -266,34 +268,66 @@ class MilvusHandler:
         :return: Number of updated Milvus entries
         """
         updated_pks = set()
-        for round_number in range(max_rounds):
-            found = self._milvus_client.query(
-                collection_name=self._collection_name,
-                filter=filter_expr,
-                output_fields=[self.DB_FIELD_PK],
-                limit=self.MILVUS_DELETE_QUERY_LIMIT,
-                offset=round_number * self.MILVUS_DELETE_QUERY_LIMIT,
-            )
-            pks = [
-                entry[self.DB_FIELD_PK]
-                for entry in found
-                if entry.get(self.DB_FIELD_PK) is not None
-                and entry[self.DB_FIELD_PK] not in updated_pks
-            ]
-            if not pks:
-                break
-            for offset in range(0, len(pks), self.MILVUS_DELETE_ID_BATCH):
-                batch = pks[offset : offset + self.MILVUS_DELETE_ID_BATCH]
-                self._milvus_client.upsert(
+        try:
+            for round_number in range(max_rounds):
+                found = self._milvus_client.query(
                     collection_name=self._collection_name,
-                    data=[
-                        {self.DB_FIELD_PK: pk, self.DB_FIELD_IS_ACTIVE: is_active}
-                        for pk in batch
-                    ],
-                    partial_update=True,
+                    filter=filter_expr,
+                    output_fields=[self.DB_FIELD_PK],
+                    limit=self.MILVUS_DELETE_QUERY_LIMIT,
+                    offset=round_number * self.MILVUS_DELETE_QUERY_LIMIT,
                 )
-            updated_pks.update(pks)
+                pks = [
+                    entry[self.DB_FIELD_PK]
+                    for entry in found
+                    if entry.get(self.DB_FIELD_PK) is not None
+                    and entry[self.DB_FIELD_PK] not in updated_pks
+                ]
+                if not pks:
+                    break
+                for offset in range(0, len(pks), self.MILVUS_DELETE_ID_BATCH):
+                    batch = pks[offset : offset + self.MILVUS_DELETE_ID_BATCH]
+                    self._milvus_client.upsert(
+                        collection_name=self._collection_name,
+                        data=[
+                            {
+                                self.DB_FIELD_PK: pk,
+                                self.DB_FIELD_IS_ACTIVE: is_active,
+                            }
+                            for pk in batch
+                        ],
+                        partial_update=True,
+                    )
+                updated_pks.update(pks)
+        except MilvusException as error:
+            # Updating the flag of an existing entry needs a server which
+            # supports it (see the note above), and an older one refuses the
+            # whole request.  The relational flag is the source of truth and
+            # the search filters the deactivated documents anyway, so a not
+            # updated vector database is reported instead of failing.
+            get_logger().warning(
+                "Could not set %s=%s on the vectors of %s (%s): %s. "
+                "The relational flag was stored; the search still respects "
+                "it, but the vector collection does not reflect it.",
+                self.DB_FIELD_IS_ACTIVE,
+                is_active,
+                self._collection_name,
+                self._server_version(),
+                error,
+            )
+            return len(updated_pks)
         return len(updated_pks)
+
+    def _server_version(self) -> str:
+        """
+        Version of the connected vector database, for the messages which
+        depend on the features it provides.
+        :return: Version of the server, "unknown" when it cannot be read
+        """
+        try:
+            return str(self._milvus_client.get_server_version())
+        except Exception:  # noqa: BLE001 - only ever used to build a message
+            return "unknown"
 
     def __metadata_in_expression(self, metadata_key: str, values) -> str:
         """

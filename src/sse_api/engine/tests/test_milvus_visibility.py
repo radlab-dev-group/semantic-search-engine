@@ -12,6 +12,8 @@ import re
 import tempfile
 import unittest
 
+from pymilvus.exceptions import MilvusException
+
 from sse_api.engine.controllers.database.milvus import MilvusHandler
 
 
@@ -143,6 +145,21 @@ class SetActiveByExternalIdsTest(unittest.TestCase):
             self.client.queries[0]["filter"],
             'metadata["external_document_id"] in ["10"]',
         )
+
+    def test_a_server_which_refuses_the_update_is_reported(self):
+        # Milvus before 2.4.15 cannot update an entry of an auto_id
+        # collection, so the whole request is refused by the server.  The
+        # flag must not crash the endpoint: the relational one is the source
+        # of truth and a warning is logged instead.
+        def refuse(collection_name, data, partial_update=False):
+            raise MilvusException(code=0, message="partial update not supported")
+
+        self.client.upsert = refuse
+        with self.assertLogs(level="WARNING") as logs:
+            updated = self.handler.set_active_by_external_ids([10], False)
+
+        self.assertEqual(updated, 0)
+        self.assertTrue(any("vectors" in message for message in logs.output))
 
 
 if __name__ == "__main__":
