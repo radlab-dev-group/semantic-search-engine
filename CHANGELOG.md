@@ -11,10 +11,6 @@ All notable changes to the Semantic Search Engine are documented in this file.
 | [0.0.1](#001) | Initial version |
 
 
-## [Unreleased]
-
-
-
 ## [0.1.3]
 
 ### Added
