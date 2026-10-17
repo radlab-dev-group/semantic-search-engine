@@ -22,8 +22,9 @@ All notable changes to the Semantic Search Engine are documented in this file.
   `Document.use_in_search` one, so the state is consistent for **every**
   consumer of the vector collection, not only for the search of this engine.
   Re-activating a document still needs no re-indexing.  `MilvusHandler` gains
-  `set_active_by_external_ids` (the rows are read and upserted, since
-  `pymilvus` has no scalar update).
+  `set_active_by_external_ids`, which queries only the matching primary keys
+  and writes back `pk` and `is_active` with a Milvus **partial update**, so
+  the embeddings are never read nor rewritten.
 - The answer of `POST set_documents_use_in_search` reports how many vectors
   were changed as well (`updated_vectors`, next to `updated_documents`).
 

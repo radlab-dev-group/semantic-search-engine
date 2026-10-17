@@ -27,18 +27,28 @@ class FakeMilvusClient:
     def list_collections(self):
         return ["collection"]
 
-    def query(self, collection_name, filter, output_fields, limit):  # noqa: A002
-        self.queries.append({"filter": filter, "limit": limit})
+    def query(  # noqa: A002
+        self, collection_name, filter, output_fields, limit, offset=0  # noqa: A002
+    ):
+        self.queries.append(
+            {
+                "filter": filter,
+                "limit": limit,
+                "offset": offset,
+                "output_fields": output_fields,
+            }
+        )
         # Emulate Milvus: match the documents listed in the filter.
         wanted = set(re.findall(r'"(\d+)"', filter))
-        return [
-            dict(row)
+        found = [
+            row
             for row in self.rows
             if str(row["metadata"]["external_document_id"]) in wanted
         ]
+        return [dict(row) for row in found[offset : offset + limit]]
 
-    def upsert(self, collection_name, data):
-        self.upserts.append(data)
+    def upsert(self, collection_name, data, partial_update=False):
+        self.upserts.append({"data": data, "partial_update": partial_update})
 
     def close(self):
         return None
@@ -83,16 +93,22 @@ class SetActiveByExternalIdsTest(unittest.TestCase):
 
         self.assertEqual(updated, 2)
         self.assertEqual(len(self.client.upserts), 1)
-        for row in self.client.upserts[0]:
+        upsert = self.client.upserts[0]
+        self.assertTrue(upsert["partial_update"])
+        for row in upsert["data"]:
             self.assertFalse(row["is_active"])
-        # The primary keys are kept, so the entries are updated in place.
-        self.assertEqual(sorted(row["pk"] for row in self.client.upserts[0]), [1, 2])
+        # Only the primary key and the flag are written: no embedding, no text.
+        self.assertEqual(sorted(row["pk"] for row in upsert["data"]), [1, 2])
+        for row in upsert["data"]:
+            self.assertEqual(set(row.keys()), {"pk", "is_active"})
 
     def test_the_entries_are_activated_again(self):
         updated = self.handler.set_active_by_external_ids([10, 20], True)
 
         self.assertEqual(updated, 3)
-        self.assertTrue(all(row["is_active"] for row in self.client.upserts[0]))
+        upsert = self.client.upserts[0]
+        self.assertTrue(upsert["partial_update"])
+        self.assertTrue(all(row["is_active"] for row in upsert["data"]))
 
     def test_the_filter_selects_the_documents_by_their_external_id(self):
         self.handler.set_active_by_external_ids([10, 20], False)
@@ -108,6 +124,12 @@ class SetActiveByExternalIdsTest(unittest.TestCase):
         self.handler.set_active_by_external_ids([10], True)
 
         self.assertNotIn("is_active == true", self.client.queries[0]["filter"])
+
+    def test_only_the_primary_keys_are_queried(self):
+        self.handler.set_active_by_external_ids([10], False)
+
+        # The embeddings must never leave the database for a flag change.
+        self.assertEqual(self.client.queries[0]["output_fields"], ["pk"])
 
     def test_no_ids_means_no_request_at_all(self):
         self.assertEqual(self.handler.set_active_by_external_ids([], False), 0)

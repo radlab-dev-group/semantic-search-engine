@@ -213,21 +213,18 @@ class MilvusHandler:
         deleted = 0
         for offset in range(0, len(ids), self.MILVUS_DELETE_ID_BATCH):
             batch = ids[offset : offset + self.MILVUS_DELETE_ID_BATCH]
-            id_values = ", ".join(f'"{value}"' for value in batch)
-            filter_expr = (
-                f'{self.DB_FIELD_METADATA}["{metadata_key}"] in [{id_values}]'
-            )
+            filter_expr = self.__metadata_in_expression(metadata_key, batch)
             deleted += self._delete_entries(filter_expr)
         return deleted
 
     def set_active_by_external_ids(self, external_ids, is_active: bool) -> int:
         """
         Set the "is_active" flag of the Milvus entries whose "metadata" json
-        field holds one of the given values.
+        field holds one of the given document ids.
 
         The entries of the documents which are not used in the search anymore
         are kept in the vector database and only deactivated, so they may be
-        activated again without any re-indexing and any consumer of the
+        activated again without any re-indexing and every consumer of the
         collection (not only the search of the engine) sees the current state.
         :param external_ids: Values of the "external_document_id" metadata key
         :param is_active: Value to set on the matched entries
@@ -241,32 +238,73 @@ class MilvusHandler:
         if not self._collection_exists():
             return 0
 
-        # pymilvus has no scalar "update", so the matched rows are read and
-        # written back (upsert) with the changed flag.  The query does not use
-        # the "is_active == true" base filter, otherwise the rows which are
-        # being activated again would never be found.
         updated = 0
         for offset in range(0, len(ids), self.MILVUS_DELETE_ID_BATCH):
             batch = ids[offset : offset + self.MILVUS_DELETE_ID_BATCH]
-            id_values = ", ".join(f'"{value}"' for value in batch)
-            filter_expr = (
-                f'{self.DB_FIELD_METADATA}["external_document_id"] in [{id_values}]'
+            filter_expr = self.__metadata_in_expression(
+                "external_document_id", batch
             )
-            rows = self._milvus_client.query(
+            updated += self.__set_active_by_filter(
+                filter_expr=filter_expr, is_active=is_active
+            )
+        return updated
+
+    def __set_active_by_filter(
+        self, filter_expr: str, is_active: bool, max_rounds: int = 100
+    ) -> int:
+        # pylint: disable=too-many-branches
+        """
+        Set the "is_active" flag of the entries selected by a filter.  Only the
+        primary keys are queried and only ``pk`` and ``is_active`` are written
+        back with a partial upsert, so the embeddings are never read nor
+        rewritten and no field of the collection schema has to be assumed.
+        The filter is used exactly as given: the "is_active == true" base
+        filter must not be applied, otherwise the entries which are being
+        activated again would never be found.
+        :param filter_expr: Boolean expression selecting the entries to update
+        :param max_rounds: Safety limit of the paging rounds over the matches
+        :return: Number of updated Milvus entries
+        """
+        updated_pks = set()
+        for round_number in range(max_rounds):
+            found = self._milvus_client.query(
                 collection_name=self._collection_name,
                 filter=filter_expr,
-                output_fields=["*"],
+                output_fields=[self.DB_FIELD_PK],
                 limit=self.MILVUS_DELETE_QUERY_LIMIT,
+                offset=round_number * self.MILVUS_DELETE_QUERY_LIMIT,
             )
-            rows = [row for row in rows if row.get(self.DB_FIELD_PK) is not None]
-            for row in rows:
-                row[self.DB_FIELD_IS_ACTIVE] = is_active
-            if rows:
+            pks = [
+                entry[self.DB_FIELD_PK]
+                for entry in found
+                if entry.get(self.DB_FIELD_PK) is not None
+                and entry[self.DB_FIELD_PK] not in updated_pks
+            ]
+            if not pks:
+                break
+            for offset in range(0, len(pks), self.MILVUS_DELETE_ID_BATCH):
+                batch = pks[offset : offset + self.MILVUS_DELETE_ID_BATCH]
                 self._milvus_client.upsert(
-                    collection_name=self._collection_name, data=rows
+                    collection_name=self._collection_name,
+                    data=[
+                        {self.DB_FIELD_PK: pk, self.DB_FIELD_IS_ACTIVE: is_active}
+                        for pk in batch
+                    ],
+                    partial_update=True,
                 )
-                updated += len(rows)
-        return updated
+            updated_pks.update(pks)
+        return len(updated_pks)
+
+    def __metadata_in_expression(self, metadata_key: str, values) -> str:
+        """
+        Boolean expression selecting the entries whose "metadata" json field
+        holds one of the given values.
+        :param metadata_key: Key of the metadata json field to filter on
+        :param values: Values to match
+        :return: Milvus boolean expression
+        """
+        id_values = ", ".join(f'"{value}"' for value in values)
+        return f'{self.DB_FIELD_METADATA}["{metadata_key}"] in [{id_values}]'
 
     def _collection_exists(self) -> bool:
         return self._collection_name in self._list_collections()
