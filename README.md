@@ -222,7 +222,7 @@ docker run -d --name milvus-standalone \
   -e COMMON_STORAGETYPE=local \
   -v milvus_data:/var/lib/milvus \
   -p 19530:19530 -p 19121:19121 \
-  milvusdb/milvus:v2.3.0 \
+  milvusdb/milvus:v3.0.3 \
   milvus run standalone
 ```
 

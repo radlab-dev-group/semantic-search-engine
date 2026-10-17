@@ -247,7 +247,7 @@ infra() {
     -e COMMON_STORAGETYPE=local \
     -v milvus_data:/var/lib/milvus \
     -p 0.0.0.0:19530:19530 -p 0.0.0.0:19121:19121 \
-    milvusdb/milvus:v2.3.0 \
+    milvusdb/milvus:v3.0.3 \
     milvus run standalone
 
   log "Waiting for ports..."

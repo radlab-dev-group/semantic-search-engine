@@ -62,7 +62,7 @@ API_DIR="$ROOT_DIR"
 CONFIG_DIR="$ROOT_DIR/configs"
 VENV_DIR="$ROOT_DIR/.venv"
 PY_PREFERRED="python3.11"
-MILVUS_IMAGE="milvusdb/milvus:v2.3.0"
+MILVUS_IMAGE="milvusdb/milvus:v3.0.3"
 
 export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/sse_lib/src:${PYTHONPATH:-}"
 export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-sse_api.config.settings}"

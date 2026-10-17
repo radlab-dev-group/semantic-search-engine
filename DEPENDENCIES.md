@@ -191,7 +191,7 @@ Models are loaded from `/mnt/data2/llms/models/radlab-open/` and defined in conf
 Used for local development of PostgreSQL and Milvus services:
 
 - **PostgreSQL:** `scripts/admin/postgres.sh` — `docker run` with credentials from config
-- **Milvus:** `milvusdb/milvus:v2.3.0` — standalone container, ports 19530/19121
+- **Milvus:** `milvusdb/milvus:v3.0.3` — standalone container, ports 19530/19121
 
 ---
 
