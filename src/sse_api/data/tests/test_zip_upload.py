@@ -258,10 +258,15 @@ class UploadPipelineTests(EndpointInputMixin, TestCase):
         )
 
     def test_endpoint_rejection_envelope_and_no_index(self):
+        # The endpoint writes the progress of the indexing, so its collection
+        # has to be a stored one (the pipeline tests keep theirs in memory).
+        collection = CollectionOfDocuments.objects.create(
+            name="collection", display_name="Collection", created_by=self.profile
+        )
         with (
             patch(
                 "sse_api.data.api.RelationalDBController.get_collection",
-                return_value=self.collection,
+                return_value=collection,
             ),
             patch(
                 "sse_api.data.api.UploadDocumentsController",

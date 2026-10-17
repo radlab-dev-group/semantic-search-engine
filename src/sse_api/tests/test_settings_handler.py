@@ -27,6 +27,11 @@ from sse_api.core.constants import (
     ENV_DB_NAME,
     ENV_DB_HOST,
     ENV_DB_PORT,
+    ENV_DB_ENGINE,
+    ENV_DB_USERNAME,
+    ENV_DB_PASSWORD,
+    ENV_CELERY_RESULT_BACKEND,
+    ENV_CELERY_TASK_TIME_LIMIT,
 )
 from sse_api.core.settings import SystemSettingsHandler
 
@@ -100,10 +105,16 @@ def test_allowed_hosts_fallback_to_json(dummy_handler, monkeypatch):
 @pytest.mark.parametrize(
     ("env_val", "expected"),
     [
-        ("localhost,127.0.0.1,192.168.100.70", ["localhost", "127.0.0.1", "192.168.100.70"]),
+        (
+            "localhost,127.0.0.1,192.168.100.70",
+            ["localhost", "127.0.0.1", "192.168.100.70"],
+        ),
         ("192.168.100.70", ["192.168.100.70"]),
         ("*", ["*"]),
-        ("192.168.100.70:8271, localhost:8000", ["192.168.100.70:8271", "localhost:8000"]),
+        (
+            "192.168.100.70:8271, localhost:8000",
+            ["192.168.100.70:8271", "localhost:8000"],
+        ),
         ("  localhost ,  127.0.0.1  ", ["localhost", "127.0.0.1"]),
     ],
 )
@@ -113,8 +124,14 @@ def test_allowed_hosts_from_env(dummy_handler, monkeypatch, env_val, expected):
 
 
 def test_installed_apps_from_env(dummy_handler, monkeypatch):
-    monkeypatch.setenv(ENV_INSTALLED_APPS, "sse_api.system, sse_api.engine, sse_api.chat")
-    assert dummy_handler.installed_apps() == ["sse_api.system", "sse_api.engine", "sse_api.chat"]
+    monkeypatch.setenv(
+        ENV_INSTALLED_APPS, "sse_api.system, sse_api.engine, sse_api.chat"
+    )
+    assert dummy_handler.installed_apps() == [
+        "sse_api.system",
+        "sse_api.engine",
+        "sse_api.chat",
+    ]
 
 
 def test_installed_apps_fallback_to_json(dummy_handler, monkeypatch):
@@ -206,6 +223,20 @@ def test_celery_broker_url(dummy_handler, monkeypatch):
     assert dummy_handler.celery_broker_url() == "amqp://guest:guest@localhost:5672/"
 
 
+def test_celery_result_backend_is_optional(dummy_handler, monkeypatch):
+    monkeypatch.delenv(ENV_CELERY_RESULT_BACKEND, raising=False)
+    assert dummy_handler.celery_result_backend() is None
+    monkeypatch.setenv(ENV_CELERY_RESULT_BACKEND, "redis://redis:6379/0")
+    assert dummy_handler.celery_result_backend() == "redis://redis:6379/0"
+
+
+def test_celery_task_time_limit(dummy_handler, monkeypatch):
+    monkeypatch.delenv(ENV_CELERY_TASK_TIME_LIMIT, raising=False)
+    assert dummy_handler.celery_task_time_limit() == 14400
+    monkeypatch.setenv(ENV_CELERY_TASK_TIME_LIMIT, "600")
+    assert dummy_handler.celery_task_time_limit() == 600
+
+
 def test_default_language(dummy_handler, monkeypatch):
     monkeypatch.setenv(ENV_DEFAULT_LANGUAGE, "en")
     assert dummy_handler.default_language() == "en"
@@ -214,6 +245,10 @@ def test_default_language(dummy_handler, monkeypatch):
 
 
 def test_database_config_env_override(dummy_handler, monkeypatch):
+    # pymilvus reads a ``.env`` of the working directory on import, so the
+    # variables of this test have to start from an environment of its own.
+    for name in (ENV_DB_ENGINE, ENV_DB_USERNAME, ENV_DB_PASSWORD):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv(ENV_DB_NAME, "custom_db")
     monkeypatch.setenv(ENV_DB_HOST, "pg.example.com")
     monkeypatch.setenv(ENV_DB_PORT, "5432")

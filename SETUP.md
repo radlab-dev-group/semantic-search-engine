@@ -67,19 +67,27 @@ Container `pg_sse_backend_engine`, `localhost:5471 → 5432`, user `admin`, db `
 ## 4. Start Milvus
 
 ```bash
+# Milvus >= 3.0 requires the standalone deploy mode for an embedded etcd
 docker run -d --name milvus-standalone \
   --security-opt seccomp:unconfined \
+  -e DEPLOY_MODE=STANDALONE \
   -e ETCD_USE_EMBED=true \
   -e ETCD_DATA_DIR=/var/lib/milvus/etcd \
   -e COMMON_STORAGETYPE=local \
   -v milvus_data:/var/lib/milvus \
   -p 19530:19530 -p 19121:19121 \
-  milvusdb/milvus:v2.3.0 \
+  milvusdb/milvus:v3.0.3 \
   milvus run standalone
 ```
 
 Target: `localhost:19530`, db `sse_backend_engine`, `sse_user`/`sse_password` (`configs/milvus_config.json`).
 > Overrides: `ENV_MILVUS_HOST/PORT/DBNAME/USER/PASSWORD`.
+
+Upgrading from Milvus 2.x: the data of a 2.x collection is not carried over
+by the 3.0 server, and the old collections do not have the `is_active`
+field anyway.  PostgreSQL is the source of truth — drop the old volume
+(`docker volume rm milvus_data`) and re-create and re-index the collections
+after the upgrade.
 
 ## 5. (Optional) LLM router — RAG/chat only
 

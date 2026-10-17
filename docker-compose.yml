@@ -1,6 +1,6 @@
 # =============================================================================
 # Semantic Search Engine — production compose stack (API + PostgreSQL + Milvus
-# + nginx).  Read SETUP.md ("Production deployment") before the first start.
+# + nginx, plus an optional Celery worker + RabbitMQ under --profile indexing).  Read SETUP.md ("Production deployment") before the first start.
 #
 #   cp .env.example .env      # or: ./run-en.sh config
 #   $EDITOR .env              # every CHANGE_ME has to disappear
@@ -85,6 +85,79 @@ services:
         condition: service_healthy
     command: ["python", "-m", "sse_api.manage", "migrate", "--noinput"]
 
+  # --- indexing queue (profile "indexing") -----------------------------------
+  # Both services are only started with:  docker compose --profile indexing up -d
+  # They are needed when ENV_USE_CELERY=1; without the profile the engine keeps
+  # indexing in the request which uploaded the files.
+  rabbitmq:
+    profiles: ["indexing"]
+    image: rabbitmq:3.13-management
+    restart: unless-stopped
+    environment:
+      # Defaults are fine on the loopback interface; change them before
+      # publishing the port with RABBITMQ_BIND_HOST.
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-sse}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-CHANGE_ME_IN_ENV}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    ports:
+      # Loopback only; the broker is used by the worker on this network.
+      - "${RABBITMQ_BIND_HOST:-127.0.0.1}:${RABBITMQ_HOST_PORT:-5672}:5672"
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # Celery worker of the indexing: one document per task, so the concurrency is
+  # about memory (the embedder of a collection is loaded once per process).
+  worker:
+    profiles: ["indexing"]
+    image: sse-api:${SSE_IMAGE_TAG:-0.0.2}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ENV_DB_HOST: postgres
+      ENV_DB_PORT: "5432"
+      ENV_MILVUS_HOST: milvus
+      ENV_MILVUS_PORT: "19530"
+      ENV_DEBUG: "0"
+      ENV_USE_CELERY: "1"
+      ENV_CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-sse}:${RABBITMQ_PASSWORD:-CHANGE_ME_IN_ENV}@rabbitmq:5672/
+      DJANGO_SETTINGS_MODULE: sse_api.config.settings
+      SSE_CONFIG_DIR: /app/configs
+    volumes:
+      - ./configs:/app/configs:ro
+      - upload_sse:/app/upload_sse
+      - staticfiles:/app/staticfiles
+    command:
+      [
+        "celery",
+        "-A",
+        "sse_api.config",
+        "worker",
+        "-Q",
+        "indexing",
+        "-l",
+        "INFO",
+        "--pool=${CELERY_WORKER_POOL:-solo}",
+        "--concurrency=${CELERY_CONCURRENCY:-1}",
+      ]
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      # exec: torch/transformers/joblib unpack temporary code into /tmp.
+      - /tmp:rw,exec
+    stop_grace_period: 5m
+
   # --- PostgreSQL ------------------------------------------------------------
   postgres:
     image: postgres:16
@@ -111,13 +184,16 @@ services:
 
   # --- Milvus ----------------------------------------------------------------
   milvus:
-    image: milvusdb/milvus:v2.3.0
+    image: milvusdb/milvus:v3.0.3
     restart: unless-stopped
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
     environment:
       ETCD_ENDPOINTS: etcd:2379
+      # The sidecar etcd has no authentication; the Milvus >= 3.0 image
+      # defaults to etcd.auth.enabled=true and would refuse to start.
+      ETCD_AUTH_ENABLED: "false"
       MINIO_ADDRESS: minio:9000
       COMMON_SECURITY_AUTHORIZATIONENABLED: ${MILVUS_AUTH_ENABLED:-false}
     volumes:
@@ -134,7 +210,7 @@ services:
       minio:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9091/healthz_1 || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9091/healthz || exit 1"]
       interval: 20s
       timeout: 10s
       retries: 10
@@ -204,6 +280,7 @@ services:
 
 volumes:
   postgres_data:
+  rabbitmq_data:
   milvus_data:
   etcd_data:
   minio_data:

@@ -21,6 +21,7 @@ NLP tasks.*
     - [Any‑Text‑to‑JSON Converter](#anytexttojson-converter)
     - [Doccano Export Converter](#doccano-export-converter)
     - [Upload & Index Pipeline](#upload--index-pipeline)
+    - [Indexing Queue & Progress](#indexing-queue--progress)
 8. [Semantic Indexing (Milvus)](#semantic-indexing-milvus)
     - [Embedding & Reranking Models](#embedding--reranking-models)
     - [Indexing Scripts](#indexing-scripts)
@@ -214,14 +215,16 @@ python -m sse_api.manage migrate
 If you don’t have a remote Milvus cluster, you can run a Docker container:
 
 ```shell script
+# Milvus >= 3.0 requires the standalone deploy mode for an embedded etcd
 docker run -d --name milvus-standalone \
   --security-opt seccomp:unconfined \
+  -e DEPLOY_MODE=STANDALONE \
   -e ETCD_USE_EMBED=true \
   -e ETCD_DATA_DIR=/var/lib/milvus/etcd \
   -e COMMON_STORAGETYPE=local \
   -v milvus_data:/var/lib/milvus \
   -p 19530:19530 -p 19121:19121 \
-  milvusdb/milvus:v2.3.0 \
+  milvusdb/milvus:v3.0.3 \
   milvus run standalone
 ```
 
@@ -330,7 +333,10 @@ The values are exposed by `GET embedders` / `GET rerankers` in `models_info`.
 | `ENV_USE_OAUTH_V1_AUTH` / `ENV_USE_OAUTH_V2_AUTH`                                                       | Use OAuth v1/v2 authentication.                             |
 | `ENV_USE_INTROSPECT`                                                                                    | Enable token introspection for OAuth.                       |
 | `ENV_PUBLIC_API_AVAILABLE`                                                                              | Expose public API endpoints without authentication.         |
+| `ENV_USE_CELERY`                                                                                        | Index in a Celery queue instead of in the upload request.    |
 | `ENV_CELERY_BROKER_URL`                                                                                 | URL of the Celery broker (RabbitMQ, Redis, etc.).           |
+| `ENV_CELERY_RESULT_BACKEND`                                                                             | Result backend of Celery; empty (default) keeps results out. |
+| `ENV_CELERY_TASK_TIME_LIMIT`                                                                            | Hard time limit of one indexing task, in seconds (14400).   |
 | `ENV_DEFAULT_LANGUAGE`                                                                                  | Default language for API responses (`pl` or `en`).          |
 | `DEEPL_AUTH_KEY`                                                                                        | API key for DeepL translation service.                      |
 
@@ -438,6 +444,89 @@ Internally the command:
 3. Instantiates `DBSemanticSearchController` for the target collection and indexes all resulting `DocumentPageText`
    objects.
 
+### Indexing Queue & Progress
+
+Indexing can run in the request which uploaded the files, or in a **Celery
+queue** with **RabbitMQ** as the broker.  `ENV_USE_CELERY` (or
+`"use_celery": true` in `django-config.json`) decides, and both modes execute
+the same pipeline and report the same progress:
+
+| Mode | What happens | When |
+|------|--------------|------|
+| `ENV_USE_CELERY=0` | The request stores the files, splits them and embeds them before it answers. | single-machine setups, no broker to run |
+| `ENV_USE_CELERY=1` (default) | The request stores the files, writes an `IndexingJob` and answers at once; a worker does the rest. | anything bigger than a few documents |
+
+**The unit of work is one document.**  `prepare_indexing_job` reads the files of
+one upload, stores `Document` / `DocumentPage` / `DocumentPageText` rows and
+asks for one `index_document` per document; a broken document is retried three
+times and then reported as `failed` without stopping the others.  Both tasks
+acknowledge late, so a killed worker loses no message.
+
+Progress lives in the relational database, not in the result backend of Celery,
+so it survives a restart of a worker and is readable from several of them at
+the same time:
+
+| Field | Meaning |
+|-------|---------|
+| `IndexingJob.status` | `queued` → `preparing` → `indexing` → `completed` / `partial` / `failed` |
+| `IndexingJob.total_documents`, `documents_indexed`, `documents_failed`, `documents_skipped` | counters of the job, updated with `F()` expressions |
+| `IndexingJob.current_document` | the document a worker is embedding right now |
+| `Document.indexing_status` | `pending` / `indexing` / `indexed` / `failed` / `skipped`; `NULL` for documents indexed before this feature |
+
+`GET api/indexing_status` reads it, by `job_id` or by `collection_name` (the
+newest job of the collection), and answers with the job, its documents with
+their statuses, and how many documents of the collection are still waiting.
+The upload endpoints answer with the same job under `indexing_job`, plus
+`"async": true` when the work was only queued.
+
+```shell
+curl -H "Authorization: Token $TOKEN" \
+  "$HOST/api/indexing_status?collection_name=MyCollection"
+```
+
+```json
+{"status": true, "body": {
+  "job": {"id": 12, "status": "indexing", "total_documents": 30,
+           "documents_indexed": 12, "documents_failed": 1,
+           "documents_pending": 17, "percent": 43,
+           "current_document": "regulation.pdf", "finished": false},
+  "documents": [{"id": 41, "name": "regulation.pdf", "indexing_status": "indexed"}],
+  "pending_documents": 17}}
+```
+
+**Running it** (docker compose keeps the queue behind a profile, so a stack
+without `ENV_USE_CELERY=1` is untouched):
+
+```bash
+# .env: ENV_USE_CELERY=1 — broker, user and password have localhost defaults
+docker compose --profile indexing up -d     # api + worker + rabbitmq
+
+# ... or locally with run.sh, which needs no extra configuration on localhost:
+./run.sh infra    # PostgreSQL + Milvus + RabbitMQ (127.0.0.1:5672, UI 15672)
+./run.sh worker   # the indexing worker in the foreground
+./run.sh start    # the API; with ENV_USE_CELERY=1 a worker starts with it
+./run.sh status   # containers, worker, ports 5471/19530/19121/5672/8271
+./run.sh down     # stops the worker, removes the containers and the milvus_data volume
+
+# ... or the worker by hand, with the dependencies of the API installed:
+celery -A sse_api.config worker -Q indexing -l INFO
+```
+
+**The pool of the worker is `solo`** (`CELERY_WORKER_POOL`, the default of
+`run.sh` and of `docker compose`).  Reading the uploaded files runs in a
+`multiprocessing.Pool` of its own, while the tasks of a `prefork` worker are
+daemonic children, which Python does not allow to have children of their own:
+such a worker answers `AssertionError: daemonic processes are not allowed to
+have children` instead of indexing anything.  A job which still lands on a
+daemonic process reads its files in one process, with a warning, rather than
+failing.
+
+The embedder of a collection is loaded once per worker process, so
+`CELERY_CONCURRENCY` is a question of memory; keep it at 1 unless every process
+can hold its own model.  A worker killed for good leaves its job running;
+`python -m sse_api.manage reset_stale_indexing_jobs` closes everything which is
+still running after an hour (`--minutes`, `--dry-run`).
+
 ---  
 
 ## Semantic Indexing (Milvus)
@@ -500,6 +589,7 @@ each app.
 | `GET`  | `/api/rerankers/`              | Configured rerankers: names and `models_info` (`max_model_length` of a pair).   |
 | `GET`  | `/api/categories/`             | List distinct categories present in a collection.                               |
 | `GET`  | `/api/documents/`              | List document names within a collection (used for UI selectors).                |
+| `GET`  | `/api/indexing_status/`        | Progress of the indexing of a job (`job_id`) or of a collection.                |
 | `POST` | `/api/delete_texts/`           | Delete text chunks (`chunk_ids[]`) from PostgreSQL and their vectors from Milvus.|
 | `POST` | `/api/delete_documents/`       | Delete documents (`documents[]` names and/or `document_ids[]`) with their pages and chunks. |
 | `POST` | `/api/delete_collection/`      | Delete the whole collection with all of its content from both databases.        |
@@ -597,17 +687,21 @@ documents.
   "status": true,
   "body": {
     "updated_documents": 1,
+    "updated_vectors": 128,
     "use_in_search": false,
     "not_found": []
   }
 }
 ```
 
-Deactivation is reversible and touches **nothing** in the vector database: the pages, the text
-chunks and the embeddings of a disabled document stay in both databases, so the document may be
-enabled again (with `use_in_search: true`) without any re-indexing. While disabled, its chunks
-are not returned by `search_with_options` — neither from the vector search nor from the
-full-text side.
+Deactivation is reversible and **nothing is removed**: the pages, the text
+chunks and the embeddings of a disabled document stay in both databases, so
+the document may be enabled again (with `use_in_search: true`) without any
+re-indexing.  The embeddings are not deleted either — their `is_active` flag
+in Milvus follows the relational one, so the state is consistent for **every
+consumer** of the vector collection, not only for the search of this engine.
+While disabled, its chunks are not returned by `search_with_options` —
+neither from the vector search nor from the full-text side.
 
 ### Chunking of a collection
 
@@ -898,6 +992,7 @@ Additional project‑specific commands are provided by the `sse_tools` scripts:
 | `python -m sse_api.manage runserver 0.0.0.0:8271` | Starts the development server (default port 8271 in `run-api.sh`).                             |
 | `python -m sse_api.manage migrate`                | Applies database migrations (including the generated migration files under `chat/migrations`). |
 | `python -m sse_api.manage createsuperuser`        | Creates a Django superuser for the admin UI (if `ENV_SHOW_ADMIN_WINDOW` is true).              |
+| `python -m sse_api.manage reset_stale_indexing_jobs` | Closes indexing jobs and documents which were left running by a killed worker (`--minutes 60`, `--dry-run`). |
 | `python -m sse_api.manage check_collection_chunking` | Reports the chunking of every collection; `--verify` measures the stored chunks with the tokenizer of the embedder, `--fix` repairs the declarations of the collections and `--dry-run` shows that plan (`--collection NAME`, `--limit`, `--json`). |
 
 ### Shell Scripts

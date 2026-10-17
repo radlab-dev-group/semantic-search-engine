@@ -17,13 +17,16 @@ from django.core.files.uploadedfile import TemporaryUploadedFile
 
 from sse_api.system.models import OrganisationUser
 
+from sse_api.data import indexing_pipeline
+from sse_api.data.core import indexing_progress
+from sse_api.data.core.constants import DB_INDEXING_PROCESS_COUNT, INDEXING_JOB_FILES
 from sse_api.data.models import (
     UploadedDocuments,
+    IndexingJob,
     DocumentPageText,
     CollectionOfDocuments,
 )
 
-from sse_api.engine.controllers.search.semantic import DBSemanticSearchController
 from sse_api.engine.controllers.database.relational_db import RelationalDBController
 from sse_api.core.utils import compute_text_hash
 
@@ -122,7 +125,7 @@ class UploadDocumentsController:
     def __init__(
         self,
         upload_dir: str = "./upload/sse/collections/",
-        db_indexing_process_count: int = 5,
+        db_indexing_process_count: int = DB_INDEXING_PROCESS_COUNT,
         store_to_db: bool = True,
     ):
         self.rel_db_controller = RelationalDBController(store_to_db=store_to_db)
@@ -138,7 +141,38 @@ class UploadDocumentsController:
         collection: CollectionOfDocuments,
         indexing_options: dict,
         semantic_config_path: str,
+        indexing_job: IndexingJob = None,
     ) -> UploadedDocuments:
+        """Store the files of one request and index them in this process.
+
+        ``indexing_job`` is the row the progress is written to; without one a
+        job is created here, so that the documents always have a status.
+        """
+        upl_doc = self.store_uploaded_files(
+            organisation_user=organisation_user,
+            files=files,
+            collection=collection,
+        )
+        return self.index_stored_files(
+            upl_doc=upl_doc,
+            organisation_user=organisation_user,
+            collection=collection,
+            indexing_options=indexing_options,
+            semantic_config_path=semantic_config_path,
+            indexing_job=indexing_job,
+        )
+
+    def store_uploaded_files(
+        self,
+        organisation_user: OrganisationUser,
+        files: List[TemporaryUploadedFile],
+        collection: CollectionOfDocuments,
+    ) -> UploadedDocuments:
+        """Save the files of one request on disk and register the upload.
+
+        Nothing is indexed here: the work may be handed over to the queue, and
+        the temporary files of the request are gone once the response ends.
+        """
         upload_dest_dir = self._prepare_upload_dir(
             collection.name, organisation_user
         )
@@ -167,21 +201,80 @@ class UploadDocumentsController:
         if self.store_to_db:
             upl_doc.save()
 
-        (
-            upl_doc,
-            doc_pages_texts,
-        ) = self.rel_db_controller.add_uploaded_documents_to_db(
-            collection_name=collection.name,
-            organisation_user=organisation_user,
-            uploaded_document=upl_doc,
-            prepare_proper_pages=indexing_options["prepare_proper_pages"],
-            merge_document_pages=indexing_options["merge_document_pages"],
-            clear_texts=indexing_options["clear_text"],
-            use_text_denoiser=indexing_options["use_text_denoiser"],
-            max_tokens_in_chunk=indexing_options["max_tokens_in_chunk"],
-            number_of_overlap_tokens=indexing_options["number_of_overlap_tokens"],
-            check_text_language=indexing_options["check_text_lang"],
+        return upl_doc
+
+    def index_stored_files(
+        self,
+        upl_doc: UploadedDocuments,
+        organisation_user: OrganisationUser,
+        collection: CollectionOfDocuments,
+        indexing_options: dict,
+        semantic_config_path: str,
+        indexing_job: IndexingJob = None,
+    ) -> UploadedDocuments:
+        """Prepare and index files which are already stored on disk.
+
+        The progress of the indexing is kept on an :class:`IndexingJob`, which
+        needs a database: without ``store_to_db`` (offline tools, tests) the
+        chunks are indexed in one go and nothing is remembered.
+        """
+        if not self.store_to_db:
+            return self._index_without_job(
+                upl_doc=upl_doc,
+                organisation_user=organisation_user,
+                collection=collection,
+                indexing_options=indexing_options,
+                semantic_config_path=semantic_config_path,
+            )
+
+        job = indexing_job
+        if job is None:
+            job = indexing_progress.create_job(
+                collection=collection,
+                organisation_user=organisation_user,
+                kind=INDEXING_JOB_FILES,
+                indexing_options=indexing_options,
+                upload_process=upl_doc,
+            )
+        elif job.upload_process_id != upl_doc.pk:
+            job.upload_process = upl_doc
+            job.save(update_fields=["upload_process"])
+
+        indexing_pipeline.run_job(
+            job,
+            jsonl_config_path=semantic_config_path,
             number_of_process=self.db_indexing_process_count,
+        )
+
+        # The counters and the times of the upload are written by the pipeline.
+        upl_doc.refresh_from_db()
+        return upl_doc
+
+    def _index_without_job(
+        self,
+        upl_doc: UploadedDocuments,
+        organisation_user: OrganisationUser,
+        collection: CollectionOfDocuments,
+        indexing_options: dict,
+        semantic_config_path: str,
+    ) -> UploadedDocuments:
+        """Index the files of one upload without keeping any progress."""
+        upl_doc, doc_pages_texts = (
+            self.rel_db_controller.add_uploaded_documents_to_db(
+                collection_name=collection.name,
+                organisation_user=organisation_user,
+                uploaded_document=upl_doc,
+                prepare_proper_pages=indexing_options["prepare_proper_pages"],
+                merge_document_pages=indexing_options["merge_document_pages"],
+                clear_texts=indexing_options["clear_text"],
+                use_text_denoiser=indexing_options["use_text_denoiser"],
+                max_tokens_in_chunk=indexing_options["max_tokens_in_chunk"],
+                number_of_overlap_tokens=indexing_options[
+                    "number_of_overlap_tokens"
+                ],
+                check_text_language=indexing_options["check_text_lang"],
+                number_of_process=self.db_indexing_process_count,
+            )
         )
 
         self._index_in_semantic_db(
@@ -192,9 +285,6 @@ class UploadDocumentsController:
         )
 
         upl_doc.end_indexing_time = timezone.now()
-        if self.store_to_db:
-            upl_doc.save()
-
         return upl_doc
 
     def _index_in_semantic_db(
@@ -204,25 +294,15 @@ class UploadDocumentsController:
         doc_pages_texts: List[DocumentPageText],
         semantic_config_path: str,
     ):
+        """Embed a ready list of chunks; used when there is no indexing job."""
         if not len(doc_pages_texts):
             return
 
-        sem_db_controller = DBSemanticSearchController(
-            collection_name=collection.name,
-            index_name=collection.embedder_index_type,
-            batch_size=100,
-            embedder_model=collection.model_embedder,
-            cross_encoder_model=collection.model_reranker,
-            jsonl_config_path=semantic_config_path,
-        )
-
-        sem_db_controller.index_texts_from_list(
-            all_texts=doc_pages_texts, collection=collection
+        indexing_pipeline.index_chunks(
+            collection, doc_pages_texts, jsonl_config_path=semantic_config_path
         )
 
         upl_doc.number_of_indexed_documents_vec_db = len(doc_pages_texts)
-        if self.store_to_db:
-            upl_doc.save()
 
     def get_add_uploaded_documents(
         self, dir_path: str, organisation_user: OrganisationUser

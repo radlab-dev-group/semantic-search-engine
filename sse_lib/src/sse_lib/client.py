@@ -624,14 +624,17 @@ class SSEClient:
 
         Documents are addressed by their names (as served by
         :meth:`list_documents`) and/or by their ids; at least one of them has
-        to be given.  Disabling sets ``use_in_search=False`` on them: their
+        to be given.  Disabling sets ``use_in_search=False`` on them and
+        deactivates their vectors in Milvus (their ``is_active`` flag): the
         chunks stop being returned by the search, but nothing is removed —
         the texts and the embeddings stay in both databases, so
-        :meth:`activate_documents` brings them back without any re-indexing.
+        :meth:`activate_documents` brings them back without any re-indexing,
+        and the state is consistent for every consumer of the collection.
 
         Only the owner of the collection may change its documents.  The answer
-        reports how many documents were changed (``updated_documents``) and
-        which names/ids were not found (``not_found``).
+        reports how many documents and vectors were changed
+        (``updated_documents`` / ``updated_vectors``) and which names/ids were
+        not found (``not_found``).
         """
         names = [
             _require_text(name, "document name") for name in _as_sequence(documents)

@@ -8,6 +8,7 @@ from sse_api.core.validation import (
     request_params,
     required_text,
     optional_text,
+    identifier,
     identifiers,
     text_list,
     boolean,
@@ -30,7 +31,10 @@ from sse_api.data.serializers import (
     DocumentVisibilitySerializer,
     SimpleQueryTemplateSerializer,
 )
+from sse_api.data import indexing_queue
+from sse_api.data.core import indexing_progress
 from sse_api.data.controllers.upload import UploadDocumentsController, UploadRejected
+from sse_api.data import indexing_pipeline
 from sse_api.data.controllers.deletion import (
     ContentDeletionController,
     ContentProtected,
@@ -43,10 +47,15 @@ from sse_api.data.core.errors import (
     DELETE_PROTECTED,
     CHUNKING_TOO_LONG,
     CHUNKING_MISMATCH,
+    INDEXING_JOB_NOT_FOUND,
 )
 from sse_api.data.core.constants import (
     DEFAULT_MAX_TOKENS_IN_CHUNK,
     DEFAULT_NUMBER_OF_OVERLAP_TOKENS,
+    INDEXING_JOB_FILES,
+    INDEXING_JOB_TEXTS,
+    MAX_STATUS_DOCUMENTS,
+    MILVUS_CONFIG_PATH,
 )
 from sse_api.data.controllers.chunking import (
     ChunkingMismatch,
@@ -59,14 +68,10 @@ from sse_api.data.controllers.chunking import (
 
 from sse_api.chat.core.errors import COLLECTION_NOT_FOUND
 
-from sse_api.engine.controllers.search.semantic import DBSemanticSearchController
 from sse_api.engine.controllers.database.semantic_db import SemanticDBController
 from sse_api.engine.controllers.database.relational_db import RelationalDBController
 
-from sse_api.data.models import Document, CollectionOfDocuments
-
-# Connection configuration of the vector database (Milvus).
-MILVUS_CONFIG_PATH = "./configs/milvus_config.json"
+from sse_api.data.models import Document, CollectionOfDocuments, IndexingJob
 
 
 def resolve_request_chunking(
@@ -265,6 +270,17 @@ class ListCollections(APIView):
         return merged_collections
 
 
+def _uploaded_documents_body(upl_doc) -> dict:
+    """
+    The upload process as the body of an answer, ready for extra keys.
+
+    ``indexing_job`` (and ``async`` when the work was only queued) is added on
+    top of it, so that one client handles the queue and the request-mode
+    indexing the same way.
+    """
+    return dict(UploadedDocumentsSerializer(upl_doc).data)
+
+
 class UploadAndIndexFilesToCollection(APIView):
     required_params = ["files[]", "collection_name", "indexing_options"]
     input_validators = {
@@ -302,24 +318,59 @@ class UploadAndIndexFilesToCollection(APIView):
             return error
 
         upl_controller = UploadDocumentsController(upload_dir="./upload_sse")
+        job = indexing_progress.create_job(
+            collection=collection,
+            organisation_user=organisation_user,
+            kind=INDEXING_JOB_FILES,
+            indexing_options=indexing_options,
+        )
+
+        if indexing_queue.async_indexing():
+            try:
+                upl_doc = upl_controller.store_uploaded_files(
+                    organisation_user=organisation_user,
+                    files=files,
+                    collection=collection,
+                )
+            except UploadRejected:
+                indexing_progress.fail_job(job, "upload rejected")
+                return error_response(UPLOAD_REJECTED, language)
+
+            job.upload_process = upl_doc
+            job.save(update_fields=["upload_process"])
+            indexing_queue.dispatch_indexing_job(job)
+
+            response_body = _uploaded_documents_body(upl_doc)
+            response_body["async"] = True
+            response_body["indexing_job"] = indexing_progress.job_payload(job)
+            return response_with_status(
+                status=True,
+                language=language,
+                error_name=None,
+                response_body=response_body,
+            )
+
         try:
             upl_doc = upl_controller.store_and_index_files_rel_db_post_request(
                 organisation_user=organisation_user,
                 files=files,
                 collection=collection,
                 indexing_options=indexing_options,
-                semantic_config_path="./configs/milvus_config.json",
+                semantic_config_path=MILVUS_CONFIG_PATH,
+                indexing_job=job,
             )
         except UploadRejected:
+            indexing_progress.fail_job(job, "upload rejected")
             return error_response(UPLOAD_REJECTED, language)
 
-        upl_doc_serialized = UploadedDocumentsSerializer(upl_doc)
-
+        job.refresh_from_db()
+        response_body = _uploaded_documents_body(upl_doc)
+        response_body["indexing_job"] = indexing_progress.job_payload(job)
         return response_with_status(
             status=True,
             language=language,
             error_name=None,
-            response_body=upl_doc_serialized.data,
+            response_body=response_body,
         )
 
 
@@ -360,40 +411,37 @@ class AddAndIndexTextsFromEP(APIView):
         if error is not None:
             return error
 
-        results_doc = rel_db_controller.add_documents_from_list_of_doc_as_dict(
+        job = indexing_progress.create_job(
             collection=collection,
-            texts=texts,
             organisation_user=organisation_user,
+            kind=INDEXING_JOB_TEXTS,
             indexing_options=indexing_options,
+            request_payload={"texts": texts},
         )
-        l_r_doc = len(results_doc)
 
-        if l_r_doc:
-            sem_db_controller = DBSemanticSearchController(
-                collection_name=collection.name,
-                index_name=collection.embedder_index_type,
-                batch_size=100,
-                embedder_model=collection.model_embedder,
-                cross_encoder_model=collection.model_reranker,
-                jsonl_config_path="./configs/milvus_config.json",
+        if indexing_queue.async_indexing():
+            indexing_queue.dispatch_indexing_job(job)
+            return response_with_status(
+                status=True,
+                language=language,
+                error_name=None,
+                response_body={
+                    "async": True,
+                    "indexing_job": indexing_progress.job_payload(job),
+                },
             )
-            for r_doc in results_doc:
-                pages_chunks = r_doc["pages_chunks"]
-                sem_db_controller.index_texts_from_list(
-                    all_texts=pages_chunks, collection=collection
-                )
 
-        l_i_chunks = (
-            sum(len(pc["pages_chunks"]) for pc in results_doc) if l_r_doc else 0
-        )
+        indexing_pipeline.run_job(job, jsonl_config_path=MILVUS_CONFIG_PATH)
+        job.refresh_from_db()
 
         return response_with_status(
             status=True,
             language=language,
             error_name=None,
             response_body={
-                "indexed_documents": l_r_doc,
-                "indexed_chunks": l_i_chunks,
+                "indexed_documents": job.documents.count(),
+                "indexed_chunks": indexing_pipeline.count_job_chunks(job),
+                "indexing_job": indexing_progress.job_payload(job),
             },
         )
 
@@ -474,6 +522,88 @@ class ListDocumentsFromCollection(APIView):
             language=language,
             error_name=None,
             response_body={"documents": serialized},
+        )
+
+
+class IndexingStatus(APIView):
+    """
+    Progress of the indexing: how much is done and what is still waiting.
+
+    ``job_id`` reports one indexing request, ``collection_name`` the newest
+    request of the collection together with the documents of the collection
+    which are still waiting for their embeddings.  The documents of the job are
+    listed with their own status, so a client can show which document is already
+    indexed and how many are left.
+    """
+
+    required_params = []
+    optional_params = ["job_id", "collection_name"]
+    input_validators = {"job_id": identifier, "collection_name": required_text}
+
+    @required_params_exists(
+        required_params=required_params, optional_params=optional_params
+    )
+    @get_organisation_user
+    @get_default_language
+    def get(self, language, organisation_user, request):
+        params = request_params(request)
+        job_id = params.get("job_id")
+        collection_name = params.get("collection_name")
+        if not job_id and not collection_name:
+            return error_response(INVALID_PARAMS, language)
+
+        job = None
+        if job_id:
+            job = (
+                IndexingJob.objects.filter(pk=job_id)
+                .select_related("collection")
+                .first()
+            )
+            if job is None:
+                return error_response(INDEXING_JOB_NOT_FOUND, language)
+            collection = RelationalDBController.get_collection(
+                collection_name=job.collection.name, created_by=organisation_user
+            )
+            if collection is None or collection.pk != job.collection_id:
+                return error_response(INDEXING_JOB_NOT_FOUND, language)
+        else:
+            collection = RelationalDBController.get_collection(
+                collection_name=collection_name, created_by=organisation_user
+            )
+            if collection is None:
+                return response_with_status(
+                    status=False,
+                    language=language,
+                    error_name=COLLECTION_NOT_FOUND,
+                    response_body=None,
+                )
+            job = indexing_progress.latest_job(collection)
+
+        documents = Document.objects.none()
+        if job is not None:
+            documents = job.documents.order_by("pk")[:MAX_STATUS_DOCUMENTS]
+        elif collection is not None:
+            documents = Document.objects.filter(
+                collection=collection,
+                indexing_status__in=indexing_progress.RUNNING_DOCUMENT_STATUSES,
+            ).order_by("pk")[:MAX_STATUS_DOCUMENTS]
+
+        return response_with_status(
+            status=True,
+            language=language,
+            error_name=None,
+            response_body={
+                "job": indexing_progress.job_payload(job),
+                "documents": [
+                    {
+                        "id": document.pk,
+                        "name": document.name,
+                        "indexing_status": document.indexing_status,
+                    }
+                    for document in documents
+                ],
+                "pending_documents": indexing_progress.pending_documents(collection),
+            },
         )
 
 
@@ -747,7 +877,9 @@ class SetDocumentsUseInSearch(APIView):
 
         use_in_search = params.get("use_in_search", False)
 
-        controller = ContentVisibilityController()
+        controller = ContentVisibilityController(
+            milvus_config_path=MILVUS_CONFIG_PATH
+        )
         result = controller.set_documents_use_in_search(
             collection=collection,
             use_in_search=use_in_search,

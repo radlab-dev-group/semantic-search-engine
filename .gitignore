@@ -212,3 +212,4 @@ sse_rest_api/configs/*
 !sse_rest_api/configs/*.example.*
 sse_rest_api/upload_sse/*
 /upload_sse/*
+/.celery-worker.pid

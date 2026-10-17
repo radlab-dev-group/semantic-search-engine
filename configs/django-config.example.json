@@ -80,7 +80,9 @@
     "sse_api.chat"
   ],
   "celery": {
-    "broker_url": "amqp://CHANGE_ME:CHANGE_ME@localhost:5672/"
+    "broker_url": "amqp://CHANGE_ME:CHANGE_ME@localhost:5672/",
+    "result_backend": null,
+    "task_time_limit": 14400
   },
   "aws": {}
 }

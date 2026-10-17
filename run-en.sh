@@ -15,7 +15,7 @@
 #   ./run-en.sh init            # migrate + semantic + add_user + add_query_templates (step 6)
 #   ./run-en.sh cosine          # migrate existing collections to COSINE (defaults to --all)
 #   ./run-en.sh start|up        # run the API server in the foreground → http://0.0.0.0:8271/api/ (step 7)
-#   ./run-en.sh down            # stop and remove the PG + Milvus containers
+#   ./run-en.sh down            # stop and remove the PG + Milvus containers + the milvus_data volume
 #   ./run-en.sh status          # show the state of containers and ports (5471/19530/19121/8271)
 #
 # Flags:
@@ -240,19 +240,23 @@ infra() {
 
   log "Milvus standalone (ports 19530, 19121)"
   docker_cmd rm -f milvus-standalone >/dev/null 2>&1 || true
+  # Milvus >= 3.0 refuses to start with an embedded etcd unless the
+  # deployment mode is marked as standalone from the very beginning.
   docker_cmd run -d --name milvus-standalone \
     --security-opt seccomp:unconfined \
+    -e DEPLOY_MODE=STANDALONE \
     -e ETCD_USE_EMBED=true \
     -e ETCD_DATA_DIR=/var/lib/milvus/etcd \
     -e COMMON_STORAGETYPE=local \
     -v milvus_data:/var/lib/milvus \
     -p 0.0.0.0:19530:19530 -p 0.0.0.0:19121:19121 \
-    milvusdb/milvus:v2.3.0 \
+    milvusdb/milvus:v3.0.3 \
     milvus run standalone
 
   log "Waiting for ports..."
   wait_port 5471  "PostgreSQL"
-  wait_port 19530 "Milvus"
+  # Milvus 3.0 needs noticeably more time to open its port than 2.x.
+  wait_port 19530 "Milvus" 60
 }
 
 ensure_infra() {
@@ -287,7 +291,7 @@ init() {
   ensure_config
   ensure_infra
   wait_port 5471 "PostgreSQL" 30
-  wait_port 19530 "Milvus" 30
+  wait_port 19530 "Milvus" 60
   [[ "$NO_VENV" == "1" ]] || activate_venv
   local py; py="$(pick_python)"
   ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" -m sse_api.manage migrate )
@@ -339,6 +343,11 @@ down() {
   have docker || need docker
   docker_cmd rm -f pg_sse_backend_engine >/dev/null 2>&1 || true
   docker_cmd rm -f milvus-standalone    >/dev/null 2>&1 || true
+  # The vectors are reproducible from PostgreSQL (the source of truth), so the
+  # Milvus volume goes away with the containers, like the ephemeral PG data.
+  if docker_cmd volume rm milvus_data >/dev/null 2>&1; then
+    log "Removed the 'milvus_data' volume (vectors); recreate it with ./run-en.sh init + re-indexing"
+  fi
   log "Stopped."
 }
 

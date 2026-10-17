@@ -369,3 +369,81 @@ client.embedders_info()   # vector_size, device, max_model_length
 `IndexingOptions` wysyła klucze fragmentowania tylko wtedy, gdy zostały ustawione,
 a `Collection.chunking` / `Collection.strict_chunking` odczytują ustawienia
 kolekcji z `metadata_json`.
+
+---
+
+## Kolejka indeksacji (Celery + RabbitMQ)
+
+Indeksację można uruchomić w wątku żądania (tak jak dotąd) albo w kolejce
+**Celery** z brokerem **RabbitMQ**. Decyduje o tym `ENV_USE_CELERY=1` (lub
+`"use_celery": true` w `django-config.json`). Niezależnie od trybu wykonywany
+jest ten sam pipeline, a postęp wygląda identycznie.
+
+Jednostką pracy jest **dokument**: zadanie `prepare_indexing_job` zapisuje
+dokumenty zgłoszenia i wrzuca do kolejki po jednym `index_document`.
+Uszkodzony dokument jest ponawiany trzy razy, a potem oznaczany jako `failed`
+bez przerywania reszty zgłoszenia; oba zadania potwierdzają wiadomości po
+wykonaniu (`acks_late`), więc zabity worker niczego nie gubi.
+
+Postęp mieszka w bazie relacyjnej (nie w result backendzie Celery), dlatego
+przeżywa restart workera i jest widoczny dla wielu workerów naraz:
+
+| Pole | Znaczenie |
+|------|-----------|
+| `IndexingJob.status` | `queued` → `preparing` → `indexing` → `completed` / `partial` / `failed` |
+| `IndexingJob.total_documents`, `documents_indexed`, `documents_failed`, `documents_skipped` | liczniki zgłoszenia (aktualizowane przez `F()`) |
+| `IndexingJob.current_document` | dokument aktualnie indeksowany |
+| `Document.indexing_status` | `pending` / `indexing` / `indexed` / `failed` / `skipped`; `NULL` dla dokumentów zaindeksowanych wcześniej |
+
+Czyta go `GET api/indexing_status` -- po `job_id` albo po `collection_name`
+(najnowsze zadanie kolekcji). Odpowiedź zawiera zadanie, jego dokumenty ze
+statusami oraz liczbę dokumentów kolekcji wciąż oczekujących na indeksację.
+Endpointy zgłaszające pliki zwracają to samo zadanie w polu `indexing_job`,
+a dodatkowo `"async": true`, gdy praca tylko trafiła do kolejki.
+
+```shell
+curl -H "Authorization: Token $TOKEN" \
+  "$HOST/api/indexing_status?collection_name=MyCollection"
+```
+
+```json
+{"status": true, "body": {
+  "job": {"id": 12, "status": "indexing", "total_documents": 30,
+           "documents_indexed": 12, "documents_failed": 1,
+           "documents_pending": 17, "percent": 43,
+           "current_document": "regulation.pdf", "finished": false},
+  "documents": [{"id": 41, "name": "regulation.pdf", "indexing_status": "indexed"}],
+  "pending_documents": 17}}
+```
+
+**Uruchomienie** (docker compose chowa kolejkę za profilem, więc stack bez
+`ENV_USE_CELERY=1` pozostaje nietknięty):
+
+```bash
+# .env: ENV_USE_CELERY=1 — broker, użytkownik i hasło mają wartości lokalne
+docker compose --profile indexing up -d     # api + worker + rabbitmq
+
+# ... albo lokalnie przez run.sh, bez żadnych dodatkowych konfigów:
+./run.sh infra    # PostgreSQL + Milvus + RabbitMQ (127.0.0.1:5672, UI 15672)
+./run.sh worker   # worker indeksacji w foreground
+./run.sh start    # API; przy ENV_USE_CELERY=1 worker startuje razem z nim
+./run.sh status   # kontenery, worker, porty 5471/19530/19121/5672/8271
+./run.sh down     # zatrzymuje workera, usuwa kontenery i wolumen milvus_data
+
+# ... albo worker odpalony ręcznie, po zainstalowaniu zależności API:
+celery -A sse_api.config worker -Q indexing -l INFO
+```
+
+**Basen workera to `solo`** (`CELERY_WORKER_POOL`, wartość domyślna `run.sh` i
+`docker compose`).  Odczyt wgranych plików działa w własnym basenie
+`multiprocessing.Pool`, a zadania basenu `prefork` są procesami-demona, którym
+Python zabrania tworzenia własnych dzieci: taki worker odpowiada
+`AssertionError: daemonic processes are not allowed to have children` zamiast
+cokolwiek zaindeksować.  Zadanie, które mimo to trafi do procesu-demona,
+przeczyta swoje pliki w jednym procesie (z ostrzeżeniem) zamiast paść.
+
+Embedder kolekcji jest ładowany raz na proces workera, więc `CELERY_CONCURRENCY`
+to pytanie o pamięć; zostaw go na 1, o ile każdy proces nie uniesie własnego
+modelu. Worker zabity na zawsze zostawia zadanie jako uruchomione --
+`python -m sse_api.manage reset_stale_indexing_jobs` domyka wszystko, co wciąż
+się "wykonuje" po godzinie (`--minutes`, `--dry-run`).

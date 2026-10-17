@@ -10,17 +10,18 @@
 #   ./run.sh                 # == all (pełny pipeline: setup+infra+init+start)
 #   ./run.sh all             # setup + infra + init + start
 #   ./run.sh setup           # venv + pip install + zależności z git (krok 2)
-#   ./run.sh infra           # uruchom PostgreSQL + Milvus w Dockerze (kroki 3-4)
+#   ./run.sh infra           # uruchom PostgreSQL + Milvus + RabbitMQ w Dockerze (kroki 3-4)
 #   ./run.sh init            # migrate + semantic + add_user + add_query_templates (krok 6)
 #   ./run.sh cosine          # migracja istniejących kolekcji na COSINE (domyślnie --all)
 #   ./run.sh start|up        # odpal serwer API w foreground → http://0.0.0.0:8271/api/ (krok 7)
-#   ./run.sh down            # zatrzymaj i usuń kontenery PG + Milvus
-#   ./run.sh status          # pokaż stan kontenerów i portów (5471/19530/19121/8271)
+#   ./run.sh worker          # odpal workera Celery (kolejka indeksacji) w foreground
+#   ./run.sh down            # zatrzymaj i usuń kontenery PG + Milvus + RabbitMQ (+ worker) + wolumen milvus_data
+#   ./run.sh status          # pokaż stan kontenerów i portów (5471/19530/19121/5672/8271)
 #   ./run.sh config          # utwórz .env i brakujące pliki configs/ z szablonów
 #
 # Flagi:
 #   --no-venv        nie twórz/wykorzystuj venv (użyj systemowego pythona/pipa)
-#   --no-infra       pomijaj start PG/Milvus (zakładaj, że już działają)
+#   --no-infra       pomijaj start PG/Milvus/RabbitMQ (zakładaj, że już działają)
 #   --no-init        pomijaj migracje/inicjalizację (krok 6)
 #   --skip-server    w "all": nie startuj serwera po setupie (wyjdź po inicjalizacji)
 #
@@ -37,6 +38,15 @@
 #   ./run.sh config                        # utwórz .env + configs/*.json z szablonów
 #   ./run.sh status
 #
+# Kolejka indeksacji (Celery + RabbitMQ):
+#   ./run.sh infra      # startuje też RabbitMQ (127.0.0.1:5672, user/hasło z .env)
+#   ./run.sh worker     # worker kolejki "indexing" (foreground)
+#   ./run.sh start      # startuje worker w tle, gdy ENV_USE_CELERY=1 w .env
+#   .env: ENV_USE_CELERY=1 — indeksacja przez kolejkę; status: GET /api/indexing_status
+#  Worker działa domyślnie na basenie "solo" (CELERY_WORKER_POOL) — odczyt
+#  plików tworzy własny multiprocessing.Pool, a zadania basenu "prefork" są
+#  daemonami i nie mogą mieć dzieci.
+#
 # Plik .env:
 #   Jeśli istnieje w root repo, jest wczytywany przed każdą komendą (set -a,
 #   czyli zmienne trafiają do środowiska procesów potomnych: docker compose,
@@ -52,10 +62,27 @@ API_DIR="$ROOT_DIR"
 CONFIG_DIR="$ROOT_DIR/configs"
 VENV_DIR="$ROOT_DIR/.venv"
 PY_PREFERRED="python3.11"
-MILVUS_IMAGE="milvusdb/milvus:v2.3.0"
+MILVUS_IMAGE="milvusdb/milvus:v3.0.3"
 
 export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/sse_lib/src:${PYTHONPATH:-}"
 export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-sse_api.config.settings}"
+
+# Domyślne lokalne (loopback) wartości kolejki indeksacji; .env nadpisuje je.
+export RABBITMQ_USER="${RABBITMQ_USER:-sse}"
+export RABBITMQ_PASSWORD="${RABBITMQ_PASSWORD:-sse}"
+export RABBITMQ_BIND_HOST="${RABBITMQ_BIND_HOST:-127.0.0.1}"
+export RABBITMQ_HOST_PORT="${RABBITMQ_HOST_PORT:-5672}"
+export RABBITMQ_MGMT_HOST_PORT="${RABBITMQ_MGMT_HOST_PORT:-15672}"
+export ENV_CELERY_BROKER_URL="${ENV_CELERY_BROKER_URL:-amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@localhost:5672/}"
+# Basen workera: "solo", bo sam pipeline indeksacji czyta pliki własnym
+# basenem procesów (multiprocessing.Pool), a procesy basenu "prefork" są
+# daemonami i nie mogą mieć dzieci ("daemonic processes are not allowed to
+# have children").
+export CELERY_WORKER_POOL="${CELERY_WORKER_POOL:-solo}"
+
+# Worker Celery startowany przez ./run.sh start (ENV_USE_CELERY=1) jest
+# procesem w tle; jego PID i log mieszczą się tutaj.
+WORKER_PID_FILE="$ROOT_DIR/.celery-worker.pid"
 
 # ---------- logi ----------
 if [[ -t 1 ]]; then
@@ -86,6 +113,7 @@ while (( $# > 0 )); do
     --index)       shift; [[ $# -gt 0 ]] || { err "--index wymaga wartości (HNSW|IVF_FLAT)"; exit 1; }; COSINE_INDEX="$1" ;;
     -h|--help|help) CMD="help" ;;
     all|setup|infra|init|cosine|config|start|up|down|status) CMD="$1" ;;
+    worker) CMD="$1" ;;
     *) warn "Nieznana opcja: $1 (pokażę pomoc)"; CMD="help" ;;
   esac
   shift
@@ -106,6 +134,17 @@ load_env() {
   fi
 }
 
+# Po load_env: broker wskazuje na RabbitMQ startowany przez ./run.sh infra,
+# więc domyślnie działa bez żadnych dodatkowych konfigów na lokalhoście.
+apply_celery_defaults() {
+  # Pusty broker albo wciąż szablonowe CHANGE_ME i tak ma wskazywać na
+  # RabbitMQ z "./run.sh infra" — podstawiamy dane logowania i port z .env.
+  if [[ -z "${ENV_CELERY_BROKER_URL:-}" || "${ENV_CELERY_BROKER_URL}" == *CHANGE_ME* ]]; then
+    export ENV_CELERY_BROKER_URL="amqp://${RABBITMQ_USER:-sse}:${RABBITMQ_PASSWORD:-sse}@localhost:${RABBITMQ_HOST_PORT:-5672}/"
+    log "ENV_CELERY_BROKER_URL: podstawiam lokalnego brokera (RabbitMQ z ./run.sh infra)."
+  fi
+}
+
 activate_venv() {
   local candidates=(
     "${VENV_DIR:-}"
@@ -120,6 +159,14 @@ activate_venv() {
       return 0
     fi
   done
+}
+
+stop_worker() {
+  if [[ -f "$WORKER_PID_FILE" ]] && kill -0 "$(cat "$WORKER_PID_FILE")" 2>/dev/null; then
+    kill "$(cat "$WORKER_PID_FILE")" 2>/dev/null || true
+    log "Zatrzymano workera Celery (PID $(cat "$WORKER_PID_FILE"))."
+  fi
+  rm -f "$WORKER_PID_FILE"
 }
 pick_pip() {
   if [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/pip3" ]]; then
@@ -213,6 +260,8 @@ config() {
   warn "PRODUKCJA: zamień KAŻDĄ wartość CHANGE_ME na własny sekret:"
   warn "  .env → ENV_SECRET_KEY, ENV_DB_PASSWORD/POSTGRES_PASSWORD,"
   warn "  MINIO_ACCESS_KEY/MINIO_SECRET_KEY; dodatkowo ENV_DEBUG=0 i ENV_ALLOWED_HOSTS."
+  warn "RABBITMQ_USER/RABBITMQ_PASSWORD są celowo proste (sse/sse) — broker"
+  warn "nasłuchuje tylko na loopbacku; zamień je, jeśli wydajesz port dalej."
 }
 
 setup() {
@@ -248,9 +297,9 @@ setup() {
 }
 
 infra() {
-  step "Kroki 3-4: infrastruktura (PostgreSQL + Milvus)"
+  step "Kroki 3-4: infrastruktura (PostgreSQL + Milvus + RabbitMQ)"
   if [[ "$NO_INFRA" == "1" ]]; then
-    warn "Pomijam start PG/Milvus (--no-infra). Zakładam, że już działają."
+    warn "Pomijam start PG/Milvus/RabbitMQ (--no-infra). Zakładam, że już działają."
     return 0
   fi
   have docker || need docker
@@ -270,8 +319,11 @@ infra() {
 
   log "Milvus standalone (porty ${milvus_host}, ${milvus_metrics_host})"
   docker_cmd rm -f milvus-standalone >/dev/null 2>&1 || true
+  # Milvus >= 3.0 refuses to start with an embedded etcd unless the
+  # deployment mode is marked as standalone from the very beginning.
   docker_cmd run -d --name milvus-standalone \
     --security-opt seccomp:unconfined \
+    -e DEPLOY_MODE=STANDALONE \
     -e ETCD_USE_EMBED=true \
     -e ETCD_DATA_DIR=/var/lib/milvus/etcd \
     -e COMMON_STORAGETYPE=local \
@@ -282,7 +334,26 @@ infra() {
 
   log "Odczekuję na porty..."
   wait_port 5471  "PostgreSQL"
-  wait_port "$milvus_host" "Milvus"
+  # Milvus 3.0 needs noticeably more time to open its port than 2.x.
+  wait_port "$milvus_host" "Milvus" 60
+
+  local rabbit_bind="${RABBITMQ_BIND_HOST:-127.0.0.1}"
+  local rabbit_port="${RABBITMQ_HOST_PORT:-5672}"
+  local rabbit_mgmt="${RABBITMQ_MGMT_HOST_PORT:-15672}"
+  log "RabbitMQ (broker Celery; ${rabbit_bind}:${rabbit_port} → 5672, management http://${rabbit_bind}:${rabbit_mgmt}, user=${RABBITMQ_USER:-sse})"
+  docker_cmd rm -f rabbitmq-sse >/dev/null 2>&1 || true
+  docker_cmd volume create rabbitmq_data >/dev/null 2>&1 || true
+  docker_cmd run -d --name rabbitmq-sse \
+    -e RABBITMQ_DEFAULT_USER="${RABBITMQ_USER:-sse}" \
+    -e RABBITMQ_DEFAULT_PASS="${RABBITMQ_PASSWORD:-sse}" \
+    -v rabbitmq_data:/var/lib/rabbitmq \
+    -p "${rabbit_bind}:${rabbit_port}:5672" \
+    -p "${rabbit_bind}:${rabbit_mgmt}:15672" \
+    rabbitmq:3.13-management
+
+  log "Odczekuję na RabbitMQ..."
+  wait_port "$rabbit_port" "RabbitMQ (5672)"
+  wait_port "$rabbit_mgmt" "RabbitMQ management (15672)" 20
 }
 
 ensure_config() {
@@ -297,7 +368,8 @@ ensure_infra() {
   fi
   local p_pg=5471
   local p_milvus="${MILVUS_HOST_PORT:-19530}"
-  local pg_ready=0 milvus_ready=0
+  local p_rabbit="${RABBITMQ_HOST_PORT:-5672}"
+  local pg_ready=0 milvus_ready=0 rabbit_ready=0
 
   if (exec 3<>"/dev/tcp/127.0.0.1/${p_pg}") 2>/dev/null; then
     exec 3>&- 2>/dev/null || true
@@ -307,9 +379,28 @@ ensure_infra() {
     exec 3>&- 2>/dev/null || true
     milvus_ready=1
   fi
+  if (exec 3<>"/dev/tcp/127.0.0.1/${p_rabbit}") 2>/dev/null; then
+    exec 3>&- 2>/dev/null || true
+    rabbit_ready=1
+  fi
 
-  if [[ "$pg_ready" == "0" || "$milvus_ready" == "0" ]]; then
+  if [[ "$pg_ready" == "0" || "$milvus_ready" == "0" || "$rabbit_ready" == "0" ]]; then
     infra
+  fi
+}
+
+check_celery() {
+  if ! have celery; then
+    err "Brak polecenia 'celery' w środowisku pythona. Zainstaluj zależności: ./run.sh setup"
+  fi
+}
+
+# Argumenty workera Celery; "solo" nie przyjmuje --concurrency (i tak 1).
+celery_worker_args() {
+  local pool="${CELERY_WORKER_POOL:-solo}"
+  CELERY_WORKER_ARGS=(-A sse_api.config worker -Q indexing -l INFO --pool "$pool")
+  if [[ "$pool" != "solo" ]]; then
+    CELERY_WORKER_ARGS+=(--concurrency "${CELERY_CONCURRENCY:-1}")
   fi
 }
 
@@ -323,7 +414,7 @@ init() {
   ensure_config
   ensure_infra
   wait_port 5471 "PostgreSQL" 30
-  wait_port "${MILVUS_HOST_PORT:-19530}" "Milvus" 30
+  wait_port "${MILVUS_HOST_PORT:-19530}" "Milvus" 60
   [[ "$NO_VENV" == "1" ]] || activate_venv
   local py; py="$(pick_python)"
   ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" -m sse_api.manage makemigrations )
@@ -367,20 +458,55 @@ start() {
   step "Krok 7: start serwera API (foreground) → http://0.0.0.0:8271/api/"
   [[ -d "$API_DIR/src/sse_api" ]] || { err "Brak src/sse_api/"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
+
+  if [[ "${ENV_USE_CELERY:-0}" == "1" || "${ENV_USE_CELERY:-0}" == "true" ]]; then
+    check_celery
+    log "ENV_USE_CELERY=1 — odpalam workera Celery w tle (kolejka 'indexing')."
+    mkdir -p "$ROOT_DIR/logs"
+    local -a CELERY_WORKER_ARGS
+    celery_worker_args
+    ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" celery "${CELERY_WORKER_ARGS[@]}" \
+        >>"$ROOT_DIR/logs/celery-worker.log" 2>&1 &
+      echo $! >"$WORKER_PID_FILE" )
+    log "Log workera: logs/celery-worker.log (PID $(cat "$WORKER_PID_FILE" 2>/dev/null || echo '?'))"
+    wait_port "${RABBITMQ_HOST_PORT:-5672}" "RabbitMQ" 5
+    warn "Worker działa w tle — zatrzymasz go przez ./run.sh down (albo: kill $(cat "$WORKER_PID_FILE" 2>/dev/null || echo '?'))."
+  fi
+
   log "Login testowy: default_admin / password  (POST /api/login)"
   warn "W środowisku produkcyjnym natychmiast zmień hasło konta default_admin."
   ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" ./src/sse_api/run-api.sh )
 }
 
+worker() {
+  step "Worker Celery (kolejka indeksacji) → foreground"
+  [[ -d "$API_DIR/src/sse_api" ]] || { err "Brak src/sse_api/"; exit 1; }
+  [[ "$NO_VENV" == "1" ]] || activate_venv
+  check_celery
+  wait_port "${RABBITMQ_HOST_PORT:-5672}" "RabbitMQ" 30
+  local -a CELERY_WORKER_ARGS
+  celery_worker_args
+  log "Worker: pool=${CELERY_WORKER_POOL:-solo}, kolejka=indexing"
+  log "Login testowy: default_admin / password  (POST /api/login)"
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" celery "${CELERY_WORKER_ARGS[@]}" )
+}
+
 down() {
-  step "Stop: zatrzymuję i usuwam kontenery PG + Milvus"
+  step "Stop: zatrzymuję i usuwam kontenery PG + Milvus + RabbitMQ"
+  stop_worker
   have docker || need docker
   docker_cmd rm -f pg_sse_backend_engine >/dev/null 2>&1 || true
   docker_cmd rm -f milvus-standalone    >/dev/null 2>&1 || true
   docker_cmd rm -f milvus-minio-init    >/dev/null 2>&1 || true
   docker_cmd rm -f milvus-minio         >/dev/null 2>&1 || true
   docker_cmd rm -f milvus-etcd          >/dev/null 2>&1 || true
+  docker_cmd rm -f rabbitmq-sse         >/dev/null 2>&1 || true
   docker_cmd network rm sse-net         >/dev/null 2>&1 || true
+  # Wektory są odtwarzalne z PostgreSQL (źródło prawdy), więc wolumen Milvusa
+  # jest usuwany razem z kontenerami — tak jak ulotne dane PostgreSQL.
+  if docker_cmd volume rm milvus_data >/dev/null 2>&1; then
+    log "Usunięto wolumen 'milvus_data' (wektory); kolekcje odtworzysz przez ./run.sh init + re-indeksację"
+  fi
   log "Zatrzymano."
 }
 
@@ -389,13 +515,19 @@ status() {
   if have docker; then
     log "Kontenery:"
     docker_cmd ps -a --filter name=pg_sse_backend_engine --filter name=milvus-standalone \
+      --filter name=rabbitmq-sse \
       --format '  table {{.Names}}\t{{.Status}}\t{{.Ports}}' 2>/dev/null || true
   else
     warn "Docker niedostępny — pominąłem listę kontenerów."
   fi
+  if [[ -f "$WORKER_PID_FILE" ]] && kill -0 "$(cat "$WORKER_PID_FILE")" 2>/dev/null; then
+    log "Worker Celery: PID $(cat "$WORKER_PID_FILE") (log: logs/celery-worker.log)"
+  else
+    log "Worker Celery: nie działa"
+  fi
   log "Porty (127.0.0.1):"
   local p
-  for p in 5471 19530 19121 8271; do
+  for p in 5471 19530 19121 5672 8271; do
     if (exec 3<>"/dev/tcp/127.0.0.1/${p}") 2>/dev/null; then
       exec 3>&- 2>/dev/null || true
       log "  :$p OTWARTY"
@@ -411,6 +543,7 @@ help() {
 
 # ---------- dispatch ----------
 load_env
+apply_celery_defaults
 [[ "$NO_VENV" == "1" ]] || activate_venv
 case "$CMD" in
   all)
@@ -429,6 +562,7 @@ case "$CMD" in
   cosine) cosine ;;
   config) config ;;
   start|up) start ;;
+  worker) worker ;;
   down)   down ;;
   status) status ;;
   help)   help ;;

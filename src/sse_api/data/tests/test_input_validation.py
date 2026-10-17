@@ -5,7 +5,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from rest_framework.test import force_authenticate
 
-from sse_api.data.models import CollectionOfDocuments
+from sse_api.data.models import CollectionOfDocuments, IndexingJob
 from sse_api.data.api import (
     NewCollection,
     ListCategoriesFromCollection,
@@ -17,6 +17,13 @@ from sse_api.tests.input_support import EndpointInputMixin, INDEXING_OPTIONS
 
 
 class DataInputTests(EndpointInputMixin, TestCase):
+    def setUp(self):
+        super().setUp()
+        # The indexing needs a collection it can really write documents to.
+        CollectionOfDocuments.objects.create(
+            name="docs", display_name="Docs", created_by=self.profile
+        )
+
     def test_unknown_index_and_bad_types_before_creation(self):
         payload = {key: "test" for key in NewCollection.required_params}
         with (
@@ -137,7 +144,9 @@ class DataInputTests(EndpointInputMixin, TestCase):
         }
         with (
             patch("sse_api.data.api.RelationalDBController") as relational,
-            patch("sse_api.data.api.DBSemanticSearchController") as semantic,
+            patch(
+                "sse_api.data.indexing_pipeline.DBSemanticSearchController"
+            ) as semantic,
         ):
             for key, value in (
                 ("texts[]", []),
@@ -160,6 +169,8 @@ class DataInputTests(EndpointInputMixin, TestCase):
                     )
             relational.assert_not_called()
             semantic.assert_not_called()
+            # Nothing was written, not even a row of the indexing progress.
+            self.assertEqual(IndexingJob.objects.count(), 0)
 
     def test_text_dict_contract_passes_normalized_options(self):
         payload = {
@@ -174,30 +185,29 @@ class DataInputTests(EndpointInputMixin, TestCase):
             "collection_name": "docs",
             "indexing_options": INDEXING_OPTIONS,
         }
-        with patch("sse_api.data.api.RelationalDBController") as relational:
-            relational.return_value.add_documents_from_list_of_doc_as_dict.return_value = (
-                []
-            )
-            # A collection of its own: the chunking of the request is resolved
-            # against it, and an unsaved one is never written to.
-            relational.return_value.get_collection.return_value = (
-                CollectionOfDocuments(name="docs")
-            )
+        with (
+            patch(
+                "sse_api.engine.controllers.database.relational_db."
+                "RelationalDBController.add_documents_from_list_of_doc_as_dict",
+                return_value=[],
+            ) as add_documents,
+            patch("sse_api.data.indexing_pipeline.semantic_controller_for"),
+        ):
             for options in (INDEXING_OPTIONS, json.dumps(INDEXING_OPTIONS)):
                 with self.subTest(options=options):
-                    self.assertTrue(
-                        self.invoke(
-                            AddAndIndexTextsFromEP,
-                            {
-                                **payload,
-                                "indexing_options": options,
-                            },
-                        ).data["status"]
+                    response = self.invoke(
+                        AddAndIndexTextsFromEP,
+                        {
+                            **payload,
+                            "indexing_options": options,
+                        },
                     )
-                    add_documents = (
-                        relational.return_value.add_documents_from_list_of_doc_as_dict
-                    )
+                    self.assertTrue(response.data["status"])
                     self.assertEqual(
                         add_documents.call_args.kwargs["indexing_options"],
                         INDEXING_OPTIONS,
+                    )
+                    # Every indexing request reports its own progress.
+                    self.assertEqual(
+                        response.data["body"]["indexing_job"]["status"], "completed"
                     )

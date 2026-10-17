@@ -2,7 +2,7 @@ import os.path
 from pathlib import Path
 
 from sse_api.core.settings import system_handler
-from sse_api.core.constants import STATIC_DIR, CONFIG_DIR
+from sse_api.core.constants import STATIC_DIR, CONFIG_DIR, INDEXING_QUEUE
 
 # =============================================================================
 
@@ -136,8 +136,22 @@ else:
 
 
 if system_handler.use_celer_tasks:
-    INSTALLED_APPS.append("celery")
+    # Celery is configured through the CELERY_* namespace (see
+    # sse_api/config/celery.py); it is not a Django application.
     CELERY_BROKER_URL = system_handler.celery_broker_url()
+    # Results are not kept in the backend: the progress of the indexing lives
+    # in the relational database, which also survives a restart of a worker.
+    CELERY_RESULT_BACKEND = system_handler.celery_result_backend()
+    CELERY_TASK_DEFAULT_QUEUE = INDEXING_QUEUE
+    CELERY_TASK_SERIALIZER = "json"
+    CELERY_TASK_TRACK_STARTED = True
+    # One document at a time per process, and only acknowledge a task after it
+    # was really done: a worker killed while embedding does not lose documents.
+    CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+    CELERY_TASK_ACKS_LATE = True
+    CELERY_TASK_TIME_LIMIT = system_handler.celery_task_time_limit()
+    CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+    CELERY_BROKER_CONNECTION_MAX_RETRIES = None
 
 if system_handler.use_radlab_proxy():
     INSTALLED_APPS.append("proxy")

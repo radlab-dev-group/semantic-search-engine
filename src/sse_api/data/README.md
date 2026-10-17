@@ -74,11 +74,14 @@ of the user is reported as not found. Deleting a collection also removes the
 chats and the search history which reference it (protected foreign keys).
 
 Document visibility is performed by `data/controllers/visibility.py`
-(`ContentVisibilityController`): it only flips the `Document.use_in_search`
-flag in the relational db and reports the updated documents and the
-not‑found names/ids. Nothing is removed, so a deactivated document may be
-enabled again without any re‑indexing. While disabled, its chunks are not
-returned by the search (vector and full‑text sides alike).
+(`ContentVisibilityController`): it flips the `Document.use_in_search` flag
+in the relational db and deactivates (or activates) the matching vectors in
+Milvus (their `is_active` field), and reports the updated documents, the
+updated vectors and the not‑found names/ids. Nothing is removed, so a
+deactivated document may be enabled again without any re‑indexing, and the
+state is consistent for every consumer of the vector collection. While
+disabled, its chunks are not returned by the search (vector and full‑text
+sides alike).
 
 ### Chunking of a collection
 

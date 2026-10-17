@@ -26,3 +26,60 @@ DEFAULT_NUMBER_OF_OVERLAP_TOKENS = 0
 #: It only guards against typos such as ``500000``; a model which declares
 #: ``max_model_length`` in ``configs/embedders.json`` is always stricter.
 MAX_TOKENS_IN_CHUNK_LIMIT = 100000
+
+# ---------------------------------------------------------------------------
+# Statusy kolejki indeksacji.
+#
+# Wdrożenie może indeksować w wątku żądania (``use_celery=false``) albo przez
+# kolejkę Celery.  Niezależnie od trybu postęp jest opisywany tymi samymi
+# wartościami, tak aby jeden klient (UI) obsłużył oba tryby.
+# ---------------------------------------------------------------------------
+
+#: Rodzaje zgłoszenia indeksacji.
+INDEXING_JOB_FILES = "files"
+INDEXING_JOB_TEXTS = "texts"
+INDEXING_JOB_KINDS = (INDEXING_JOB_FILES, INDEXING_JOB_TEXTS)
+
+#: Stona, w których job nigdy się nie zmieni.
+JOB_STATUS_QUEUED = "queued"
+JOB_STATUS_PREPARING = "preparing"
+JOB_STATUS_INDEXING = "indexing"
+JOB_STATUS_COMPLETED = "completed"
+JOB_STATUS_PARTIAL = "partial"
+JOB_STATUS_FAILED = "failed"
+JOB_STATUSES = (
+    JOB_STATUS_QUEUED,
+    JOB_STATUS_PREPARING,
+    JOB_STATUS_INDEXING,
+    JOB_STATUS_COMPLETED,
+    JOB_STATUS_PARTIAL,
+    JOB_STATUS_FAILED,
+)
+JOB_TERMINAL_STATUSES = (JOB_STATUS_COMPLETED, JOB_STATUS_PARTIAL, JOB_STATUS_FAILED)
+
+#: Statusy pojedynczego dokumentu w trakcie indeksacji.
+DOCUMENT_STATUS_PENDING = "pending"
+DOCUMENT_STATUS_INDEXING = "indexing"
+DOCUMENT_STATUS_INDEXED = "indexed"
+DOCUMENT_STATUS_FAILED = "failed"
+DOCUMENT_STATUS_SKIPPED = "skipped"
+DOCUMENT_STATUSES = (
+    DOCUMENT_STATUS_PENDING,
+    DOCUMENT_STATUS_INDEXING,
+    DOCUMENT_STATUS_INDEXED,
+    DOCUMENT_STATUS_FAILED,
+    DOCUMENT_STATUS_SKIPPED,
+)
+
+#: Jobe i dokumenty starsze niż tyle minut, a wciąż w fazie czynnej, są
+#: traktowane jako porzucone (worker został zabity w połowie pracy).
+DEFAULT_INDEXING_STALE_MINUTES = 60
+
+#: Processes used to read the files of one upload into the relational database.
+DB_INDEXING_PROCESS_COUNT = 5
+
+#: Vector database configuration of the collections.
+MILVUS_CONFIG_PATH = "./configs/milvus_config.json"
+
+#: Documents of one indexing request reported by ``api/indexing_status``.
+MAX_STATUS_DOCUMENTS = 200
