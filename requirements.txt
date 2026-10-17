@@ -29,7 +29,7 @@ openai
 huggingface_hub
 
 # db
-pymilvus
+pymilvus>=3.0
 psycopg2-binary
 
 Levenshtein
