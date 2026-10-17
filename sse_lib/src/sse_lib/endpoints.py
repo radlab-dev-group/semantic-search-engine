@@ -52,6 +52,7 @@ SET_DOCUMENTS_USE_IN_SEARCH = "set_documents_use_in_search"
 SEARCH_WITH_OPTIONS = "search_with_options"
 SEARCH_HISTORY = "search_history"
 GET_SEARCH_HISTORY = "get_search_history"
+DELETE_SEARCH_HISTORY = "delete_search_history"
 GENERATIVE_ANSWER = "generative_answer"
 RATE_GENERATIVE_ANSWER = "rate_generative_answer"
 GENERATIVE_MODELS = "generative_models"
@@ -95,6 +96,7 @@ ALL_ENDPOINTS = frozenset(
         SEARCH_WITH_OPTIONS,
         SEARCH_HISTORY,
         GET_SEARCH_HISTORY,
+        DELETE_SEARCH_HISTORY,
         GENERATIVE_ANSWER,
         RATE_GENERATIVE_ANSWER,
         GENERATIVE_MODELS,

@@ -12,6 +12,7 @@ import unittest
 
 from sse_lib import SSEValueError, build_options
 from sse_lib.options import (
+    ChatOptions,
     GenerativeOptions,
     IndexingOptions,
     SearchOptions,
@@ -122,6 +123,36 @@ class GenerativeOptionsTest(unittest.TestCase):
         self.assertEqual(
             options.to_dict(),
             {"generative_model": "radlab/model", "percentage_rank_mass": 0.3},
+        )
+
+    def test_use_doc_names_in_response_is_sent_only_when_set(self):
+        unset = GenerativeOptions(
+            generative_model="m", percentage_rank_mass=40
+        ).to_dict()
+        self.assertNotIn("use_doc_names_in_response", unset)
+        set_ = GenerativeOptions(
+            generative_model="m",
+            percentage_rank_mass=40,
+            use_doc_names_in_response=True,
+        ).to_dict()
+        self.assertTrue(set_["use_doc_names_in_response"])
+
+
+class ChatOptionsTest(unittest.TestCase):
+    def test_unset_switches_are_dropped(self):
+        self.assertEqual(
+            ChatOptions(use_rag_supervisor=True).to_dict(),
+            {"use_rag_supervisor": True},
+        )
+
+    def test_extra_keys_are_merged(self):
+        options = ChatOptions(
+            query_instruction="Summarize",
+            extra={"future_switch": True},
+        )
+        self.assertEqual(
+            options.to_dict(),
+            {"query_instruction": "Summarize", "future_switch": True},
         )
 
 

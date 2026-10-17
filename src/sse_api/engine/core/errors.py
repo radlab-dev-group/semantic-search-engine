@@ -5,6 +5,8 @@ COLLECTION_ACCESS_DENIED = "COLLECTION_ACCESS_DENIED"
 RESPONSE_ACCESS_DENIED = "RESPONSE_ACCESS_DENIED"
 ANSWER_ACCESS_DENIED = "ANSWER_ACCESS_DENIED"
 GENERATION_FAILED = "GENERATION_FAILED"
+QUERY_NOT_FOUND = "QUERY_NOT_FOUND"
+DELETE_PROTECTED = "DELETE_PROTECTED"
 
 ENGINE_ERRORS = {
     COLLECTION_ACCESS_DENIED: {
@@ -33,6 +35,20 @@ ENGINE_ERRORS = {
         MSG: {
             MSG_PL: "Błąd modelu lub konfiguracji!",
             MSG_EN: "Model or configuration error occurred!",
+        },
+    },
+    QUERY_NOT_FOUND: {
+        ECODE: "engine_005",
+        MSG: {
+            MSG_PL: "Nie znaleziono zapytań o podanych identyfikatorach.",
+            MSG_EN: "Queries with the given ids were not found.",
+        },
+    },
+    DELETE_PROTECTED: {
+        ECODE: "engine_006",
+        MSG: {
+            MSG_PL: "Nie można usunąć: inne dane są powiązane z usuwanymi.",
+            MSG_EN: "Cannot delete: other data are related to the deleted ones.",
         },
     },
 }

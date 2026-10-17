@@ -35,6 +35,7 @@ from sse_lib.models import (
     ChatHistory,
     ChatReply,
     Collection,
+    DocumentRef,
     IndexingResult,
     SearchHistory,
     SearchHistoryAnswer,
@@ -407,14 +408,40 @@ class SSEClient:
         categories = body.get("categories") if isinstance(body, dict) else []
         return list(categories or [])
 
-    def list_documents(self, collection: CollectionLike) -> List[str]:
-        """Document names of a collection (``GET documents``)."""
-        body = self.get(endpoints.DOCUMENTS, {"collection_name": _name(collection)})
+    def list_documents(
+        self, collection: CollectionLike, with_disabled: bool = False
+    ) -> List[str]:
+        """Document names of a collection (``GET documents``).
+
+        The server lists the documents which take part in the search; set
+        ``with_disabled`` to get the deactivated ones in the answer too.
+        :meth:`list_document_details` returns the same documents together with
+        their identifiers and flags.
+        """
+        params: Dict[str, Any] = {"collection_name": _name(collection)}
+        if with_disabled:
+            params["with_disabled"] = "true"
+        body = self.get(endpoints.DOCUMENTS, params)
         documents = body.get("documents") if isinstance(body, dict) else []
         return [
             entry.get("name") if isinstance(entry, dict) else entry
             for entry in documents or []
         ]
+
+    def list_document_details(self, collection: CollectionLike) -> List[DocumentRef]:
+        """Documents with their ``id`` and ``use_in_search`` flag.
+
+        ``GET documents`` serves those two only in its ``with_disabled`` view,
+        which is also the only way to see documents that were excluded from the
+        search.  The identifiers go straight into ``document_ids[]`` of
+        :meth:`delete_documents` or :meth:`set_documents_use_in_search`.
+        """
+        body = self.get(
+            endpoints.DOCUMENTS,
+            {"collection_name": _name(collection), "with_disabled": "true"},
+        )
+        documents = body.get("documents") if isinstance(body, dict) else []
+        return [DocumentRef.from_api(entry) for entry in documents or []]
 
     def list_question_templates(self) -> Dict[str, List[Dict[str, Any]]]:
         """Query templates grouped by their template collection (``GET``)."""
@@ -744,15 +771,22 @@ class SSEClient:
         self.post(endpoints.RATE_GENERATIVE_ANSWER, payload)
 
     def list_search_history(
-        self, collection: Optional[CollectionLike] = None
+        self,
+        collection: Optional[CollectionLike] = None,
+        *,
+        query_response_id: Optional[int] = None,
     ) -> List[SearchHistory]:
         """Fetch search history of the authenticated user (``GET search_history``).
 
-        Optionally filtered by ``collection``.
+        Optionally filtered by ``collection``.  ``query_response_id`` asks the
+        server for one stored query, which is what :meth:`get_search_history`
+        does on a single entry; here the answer stays a list.
         """
         params: Dict[str, Any] = {}
         if collection is not None:
             params["collection_name"] = _name(collection)
+        if query_response_id is not None:
+            params["query_response_id"] = _as_identifier(query_response_id)
         body = self.get(endpoints.SEARCH_HISTORY, params or None)
         history = body.get("history") if isinstance(body, dict) else []
         return [SearchHistory.from_api(entry) for entry in history or []]
@@ -766,6 +800,39 @@ class SSEClient:
             {"query_response_id": int(query_response_id)},
         )
         return SearchHistory.from_api(body)
+
+    def delete_search_history(
+        self,
+        query_ids: Optional[Union[int, Sequence[int]]] = None,
+        query_response_ids: Optional[Union[int, Sequence[int]]] = None,
+    ) -> Dict[str, Any]:
+        """Delete stored queries of the user (``POST delete_search_history``).
+
+        Entries are addressed with the identifiers served by
+        :meth:`list_search_history` / :meth:`get_search_history`: either the
+        ``query_id`` of the query or the ``query_response_id`` of its response.
+        At least one of them has to be given, a single id or a list of ids.
+        The responses, the generated answers and the RAG states of the chats
+        which reference the queries are removed with them; nothing of the
+        collections themselves is touched.  The answer reports how many rows
+        disappeared (``deleted``) and which ids were not found (``not_found``).
+        """
+        ids = [_as_identifier(query_id) for query_id in _as_sequence(query_ids)]
+        response_ids = [
+            _as_identifier(query_response_id)
+            for query_response_id in _as_sequence(query_response_ids)
+        ]
+        if not ids and not response_ids:
+            raise SSEValueError(
+                "either query_ids or query_response_ids has to be given"
+            )
+        payload: Dict[str, Any] = {}
+        if ids:
+            payload["query_ids[]"] = ids
+        if response_ids:
+            payload["query_response_ids[]"] = response_ids
+        body = self.post(endpoints.DELETE_SEARCH_HISTORY, payload)
+        return dict(body or {})
 
     def list_generative_models(self) -> Dict[str, Any]:
         """Active generative models and their hosts (``GET generative_models``)."""
@@ -809,19 +876,25 @@ class SSEClient:
         self,
         collection: Optional[CollectionLike] = None,
         *,
-        options: Optional[Dict[str, Any]] = None,
+        options: Optional[OptionsLike] = None,
+        chat_options: Optional[OptionsLike] = None,
         search_options: Optional[OptionsLike] = None,
     ) -> Chat:
         """Open a new chat (``POST new_chat``).
 
-        ``options`` configures generation, ``search_options`` the retrieval
-        used to answer; both are sent as JSON objects (not strings here).
+        ``options`` configures generation, ``chat_options`` the switches of
+        :class:`sse_lib.options.ChatOptions`, ``search_options`` the retrieval
+        used to answer; all of them are sent as JSON objects (not strings
+        here).  The server reads generation settings and switches from a single
+        ``options`` dictionary, so the first two are merged into it.
         """
         payload: Dict[str, Any] = {}
         if collection is not None:
             payload["collection_name"] = _name(collection)
-        if options:
-            payload["options"] = dict(options)
+        combined = _plain_options(options)
+        combined.update(_plain_options(chat_options))
+        if combined:
+            payload["options"] = combined
         if search_options:
             payload["search_options"] = _search_options_dict(
                 search_options, self.default_search_options
@@ -835,6 +908,7 @@ class SSEClient:
         message: str,
         options: Optional[OptionsLike] = None,
         *,
+        chat_options: Optional[OptionsLike] = None,
         collection: Optional[CollectionLike] = None,
         search_options: Optional[OptionsLike] = None,
         system_prompt: Optional[str] = None,
@@ -844,6 +918,9 @@ class SSEClient:
 
         ``options`` holds the generation options; single values may be passed
         as keyword arguments (``GenerativeOptions`` semantics).
+        ``chat_options`` holds the switches of the chat pipeline
+        (:class:`sse_lib.options.ChatOptions`) and lands in the same
+        ``options`` dictionary as the generation settings.
         ``collection`` is required by the current server, even for a chat
         created with a collection.
         """
@@ -853,12 +930,14 @@ class SSEClient:
             raise SSEValueError("message cannot be empty")
         if collection is None:
             raise SSEValueError("collection is required to send a chat message")
+        combined = self._build_options(
+            GenerativeOptions, None, options, generation_kwargs
+        ).to_dict()
+        combined.update(_plain_options(chat_options))
         payload: Dict[str, Any] = {
             "chat_id": chat_id,
             "user_message": str(message),
-            "options": self._build_options(
-                GenerativeOptions, None, options, generation_kwargs
-            ).to_dict(),
+            "options": combined,
         }
         if collection is not None:
             payload["collection_name"] = _name(collection)
@@ -940,6 +1019,23 @@ def _search_options_dict(
     base = build_options(SearchOptions, defaults, None).to_dict()
     base.update(build_options(SearchOptions, options, None).to_dict())
     return base
+
+
+def _plain_options(options: Optional[OptionsLike]) -> Dict[str, Any]:
+    """Plain dictionary out of any option class or mapping.
+
+    Used where the backend is deliberately permissive (the ``options`` of the
+    chat endpoints) and a caller may legitimately mix keys of two option
+    classes, so no single class could validate the whole dictionary.
+    """
+    if options is None:
+        return {}
+    to_dict = getattr(options, "to_dict", None)
+    if callable(to_dict):
+        return dict(to_dict())
+    if isinstance(options, Mapping):
+        return dict(options)
+    raise SSEValueError(f"{options!r} is neither an options object nor a dictionary")
 
 
 def _as_timeout(value: Any) -> float:
