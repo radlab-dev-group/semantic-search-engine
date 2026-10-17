@@ -334,7 +334,8 @@ infra() {
 
   log "Odczekuję na porty..."
   wait_port 5471  "PostgreSQL"
-  wait_port "$milvus_host" "Milvus"
+  # Milvus 3.0 needs noticeably more time to open its port than 2.x.
+  wait_port "$milvus_host" "Milvus" 60
 
   local rabbit_bind="${RABBITMQ_BIND_HOST:-127.0.0.1}"
   local rabbit_port="${RABBITMQ_HOST_PORT:-5672}"
@@ -413,7 +414,7 @@ init() {
   ensure_config
   ensure_infra
   wait_port 5471 "PostgreSQL" 30
-  wait_port "${MILVUS_HOST_PORT:-19530}" "Milvus" 30
+  wait_port "${MILVUS_HOST_PORT:-19530}" "Milvus" 60
   [[ "$NO_VENV" == "1" ]] || activate_venv
   local py; py="$(pick_python)"
   ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" -m sse_api.manage makemigrations )
