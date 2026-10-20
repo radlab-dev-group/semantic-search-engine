@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import unittest
 
-from sse_lib import DocumentRef
+from sse_lib import DocumentPreview, DocumentRef, IndexingJobStatus
 
 from support import build_client, ok
 
@@ -90,6 +90,143 @@ class ListDocumentDetailsTest(unittest.TestCase):
 
         call = self.client.fake_session.calls[1]
         self.assertEqual(call.json["document_ids[]"], [1, 2])
+
+
+class DocumentContentTest(unittest.TestCase):
+    BODY = {
+        "document_id": 7,
+        "document_name": "a.pdf",
+        "relative_path": "/a.pdf",
+        "category": "kat",
+        "use_in_search": True,
+        "chunk_type": "clear_texts",
+        "chunk_types": ["clear_texts", "raw_text"],
+        "pages": [
+            {"page": 1, "content": "first\n\nsecond", "chunks": 2},
+            {"page": 2, "content": "third", "chunks": 1},
+        ],
+        "content": "first\n\nsecond\n\nthird",
+        "characters": 24,
+        "chunks": 3,
+        "from_page": 1,
+        "total_pages": 2,
+        "truncated": False,
+        "next_page": None,
+    }
+
+    def setUp(self):
+        self.client = build_client([ok(dict(self.BODY))])
+
+    def test_a_document_is_asked_for_by_its_name(self):
+        preview = self.client.document_content("docs", "a.pdf")
+
+        call = self.client.fake_session.calls[0]
+        self.assertEqual(call.method, "GET")
+        self.assertEqual(call.url, "http://sse.test:8271/api/document_content")
+        self.assertEqual(
+            call.params,
+            {"collection_name": "docs", "document_name": "a.pdf", "lang": "pl"},
+        )
+        self.assertEqual(preview.document_name, "a.pdf")
+        self.assertEqual(preview.content, "first\n\nsecond\n\nthird")
+
+    def test_an_identifier_and_a_window_of_pages_are_sent(self):
+        self.client.document_content(
+            "docs", 7, from_page=2, max_pages=5, chunk_type="raw_text"
+        )
+
+        call = self.client.fake_session.calls[0]
+        self.assertEqual(
+            call.params,
+            {
+                "collection_name": "docs",
+                "document_id": 7,
+                "from_page": 2,
+                "max_pages": 5,
+                "chunk_type": "raw_text",
+                "lang": "pl",
+            },
+        )
+
+    def test_the_pages_and_the_window_are_modelled(self):
+        preview = self.client.document_content("docs", "a.pdf")
+
+        self.assertIsInstance(preview, DocumentPreview)
+        self.assertEqual(preview.document_id, 7)
+        self.assertEqual(preview.chunk_type, "clear_texts")
+        self.assertEqual(preview.chunk_types, ["clear_texts", "raw_text"])
+        self.assertEqual(
+            [(page.page, page.content, page.chunks) for page in preview.pages],
+            [(1, "first\n\nsecond", 2), (2, "third", 1)],
+        )
+        self.assertEqual(preview.total_pages, 2)
+        self.assertFalse(preview.truncated)
+        self.assertIsNone(preview.next_page)
+
+    def test_a_truncated_answer_announces_the_next_window(self):
+        body = dict(self.BODY, truncated=True, next_page=3)
+        client = build_client([ok(body)])
+
+        preview = client.document_content("docs", "a.pdf", max_pages=2)
+
+        self.assertTrue(preview.truncated)
+        self.assertEqual(preview.next_page, 3)
+        self.assertEqual(preview.raw["total_pages"], 2)
+
+
+class IndexingStatusTest(unittest.TestCase):
+    """The progress of an indexing (``GET indexing_status``): a job by its id
+    or the newest job of a collection with its documents and statuses."""
+
+    BODY = {
+        "job": {
+            "id": 3,
+            "status": "running",
+            "total_documents": 3,
+            "documents_indexed": 1,
+            "documents_failed": 0,
+            "documents_pending": 2,
+            "current_document": "queue-2.pdf",
+        },
+        "documents": [
+            {"id": 1, "name": "queue-1.pdf", "indexing_status": "indexed"},
+            {"id": 2, "name": "queue-2.pdf", "indexing_status": "running"},
+        ],
+        "pending_documents": 1,
+    }
+
+    def setUp(self):
+        self.client = build_client([ok(dict(self.BODY))])
+
+    def test_a_job_is_asked_for_by_its_id(self):
+        status = self.client.indexing_status(job_id=3)
+
+        call = self.client.fake_session.calls[0]
+        self.assertEqual(call.method, "GET")
+        self.assertEqual(call.url, "http://sse.test:8271/api/indexing_status")
+        self.assertEqual(call.params, {"job_id": 3, "lang": "pl"})
+        self.assertEqual(status.job.job_id, 3)
+        self.assertEqual(status.job.status, "running")
+        self.assertEqual(status.job.documents_indexed, 1)
+        self.assertEqual(status.documents, self.BODY["documents"])
+        self.assertEqual(status.pending_documents, 1)
+
+    def test_a_collection_is_asked_for_by_its_name(self):
+        self.client.indexing_status("docs")
+
+        call = self.client.fake_session.calls[0]
+        self.assertEqual(call.params, {"collection_name": "docs", "lang": "pl"})
+
+    def test_a_collection_without_a_job_is_modelled_as_empty(self):
+        client = build_client(
+            [ok({"job": None, "documents": [], "pending_documents": 2})]
+        )
+
+        status = client.indexing_status("docs")
+
+        self.assertEqual(status.job, IndexingJobStatus())
+        self.assertEqual(status.documents, [])
+        self.assertEqual(status.pending_documents, 2)
 
 
 if __name__ == "__main__":
