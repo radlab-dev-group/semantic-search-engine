@@ -93,6 +93,82 @@ class DocumentRef:
 
 
 @dataclass
+class DocumentPreviewPage:
+    """One page of a document, as served by ``document_content``."""
+
+    page: Optional[int] = None
+    content: str = ""
+    chunks: int = 0
+    raw: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_api(cls, data: Any) -> "DocumentPreviewPage":
+        payload = _as_dict(data)
+        return cls(
+            page=payload.get("page"),
+            content=payload.get("content") or "",
+            chunks=payload.get("chunks") or 0,
+            raw=payload,
+        )
+
+
+@dataclass
+class DocumentPreview:
+    """Whole text of one document (``document_content``).
+
+    ``content`` is every chunk of ``chunk_type`` joined in reading order, which
+    is what a preview window shows; ``pages`` keeps the same text page by page
+    so the caller can show page numbers.  A document longer than the requested
+    window of pages answers ``truncated`` with the ``next_page`` to ask for.
+    """
+
+    document_id: Optional[int] = None
+    document_name: str = ""
+    relative_path: str = ""
+    category: str = ""
+    use_in_search: Optional[bool] = None
+    chunk_type: str = ""
+    chunk_types: List[str] = field(default_factory=list)
+    pages: List[DocumentPreviewPage] = field(default_factory=list)
+    content: str = ""
+    characters: int = 0
+    chunks: int = 0
+    from_page: int = 1
+    total_pages: int = 0
+    truncated: bool = False
+    next_page: Optional[int] = None
+    raw: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_api(cls, data: Any) -> "DocumentPreview":
+        payload = _as_dict(data)
+        use_in_search = payload.get("use_in_search")
+        return cls(
+            document_id=payload.get("document_id"),
+            document_name=payload.get("document_name") or "",
+            relative_path=payload.get("relative_path") or "",
+            category=payload.get("category") or "",
+            use_in_search=None if use_in_search is None else bool(use_in_search),
+            chunk_type=payload.get("chunk_type") or "",
+            chunk_types=[
+                entry for entry in _as_list(payload.get("chunk_types")) if entry
+            ],
+            pages=[
+                DocumentPreviewPage.from_api(entry)
+                for entry in _as_list(payload.get("pages"))
+            ],
+            content=payload.get("content") or "",
+            characters=payload.get("characters") or 0,
+            chunks=payload.get("chunks") or 0,
+            from_page=payload.get("from_page") or 1,
+            total_pages=payload.get("total_pages") or 0,
+            truncated=bool(payload.get("truncated")),
+            next_page=payload.get("next_page"),
+            raw=payload,
+        )
+
+
+@dataclass
 class SearchHit:
     """A single chunk returned inside ``results.detailed_results``."""
 
@@ -357,6 +433,68 @@ class IndexingResult:
         return cls(
             indexed_documents=int(payload.get("indexed_documents") or 0),
             indexed_chunks=int(payload.get("indexed_chunks") or 0),
+            raw=payload,
+        )
+
+
+@dataclass
+class IndexingJobStatus:
+    """One indexing job as reported by ``GET indexing_status``.
+
+    ``None`` when the collection has no indexing request yet (the server then
+    answers with the documents which are still waiting for their embeddings).
+    """
+
+    job_id: Optional[int] = None
+    status: Optional[str] = None
+    total_documents: int = 0
+    documents_indexed: int = 0
+    documents_failed: int = 0
+    documents_pending: int = 0
+    current_document: Optional[str] = None
+    raw: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_api(cls, data: Any) -> "IndexingJobStatus":
+        payload = _as_dict(data)
+        if not payload:
+            return cls()
+        return cls(
+            job_id=payload.get("id"),
+            status=payload.get("status"),
+            total_documents=payload.get("total_documents") or 0,
+            documents_indexed=payload.get("documents_indexed") or 0,
+            documents_failed=payload.get("documents_failed") or 0,
+            documents_pending=payload.get("documents_pending") or 0,
+            current_document=payload.get("current_document"),
+            raw=payload,
+        )
+
+
+@dataclass
+class IndexingStatus:
+    """Progress of an indexing job or of a whole collection.
+
+    The documents of the job are listed with their own ``indexing_status``, so
+    a client can show which document is already indexed and how many are left;
+    a collection without a job answers with the documents which are still
+    waiting for their embeddings.
+    """
+
+    job: Optional[IndexingJobStatus] = None
+    documents: List[Dict[str, Any]] = field(default_factory=list)
+    pending_documents: int = 0
+    raw: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_api(cls, data: Any) -> "IndexingStatus":
+        payload = _as_dict(data)
+        return cls(
+            job=IndexingJobStatus.from_api(payload.get("job")),
+            documents=[
+                entry for entry in _as_list(payload.get("documents")) if entry
+            ],
+            pending_documents=payload.get("pending_documents") or 0,
             raw=payload,
         )
 

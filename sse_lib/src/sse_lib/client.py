@@ -35,8 +35,10 @@ from sse_lib.models import (
     ChatHistory,
     ChatReply,
     Collection,
+    DocumentPreview,
     DocumentRef,
     IndexingResult,
+    IndexingStatus,
     SearchHistory,
     SearchHistoryAnswer,
     SearchResponse,
@@ -443,6 +445,39 @@ class SSEClient:
         documents = body.get("documents") if isinstance(body, dict) else []
         return [DocumentRef.from_api(entry) for entry in documents or []]
 
+    def document_content(
+        self,
+        collection: CollectionLike,
+        document: Union[int, str],
+        *,
+        from_page: Optional[int] = None,
+        max_pages: Optional[int] = None,
+        chunk_type: Optional[str] = None,
+    ) -> DocumentPreview:
+        """Whole text of one document (``GET document_content``).
+
+        ``document`` is the name of a document or its identifier; the text is
+        read from the chunks the document was indexed with, so neither the
+        original file nor the vector database is needed.  ``chunk_type`` asks
+        for a concrete form of the text (``clear_texts``, ``raw_text``, ...),
+        by default the newest one.  Long documents are served in a window of
+        pages: read :attr:`DocumentPreview.next_page` while
+        :attr:`DocumentPreview.truncated` is set.
+        """
+        params: Dict[str, Any] = {"collection_name": _name(collection)}
+        if isinstance(document, int):
+            params["document_id"] = document
+        else:
+            params["document_name"] = document
+        if from_page is not None:
+            params["from_page"] = from_page
+        if max_pages is not None:
+            params["max_pages"] = max_pages
+        if chunk_type is not None:
+            params["chunk_type"] = chunk_type
+        body = self.get(endpoints.DOCUMENT_CONTENT, params)
+        return DocumentPreview.from_api(body)
+
     def list_question_templates(self) -> Dict[str, List[Dict[str, Any]]]:
         """Query templates grouped by their template collection (``GET``)."""
         body = self.get(endpoints.QUESTION_TEMPLATES)
@@ -544,6 +579,38 @@ class SSEClient:
         }
         body = self.post(endpoints.ADD_AND_INDEX_TEXTS, payload)
         return IndexingResult.from_api(body)
+
+    def indexing_status(
+        self,
+        collection: Optional[CollectionLike] = None,
+        *,
+        job_id: Optional[int] = None,
+    ) -> IndexingStatus:
+        """Progress of an indexing job or of a collection (``GET``).
+
+        ``job_id`` reports one indexing request; ``collection`` the newest
+        request of the collection together with the documents which are still
+        waiting for their embeddings.  Exactly one of the two is needed;
+        ``sse_lib`` is the client of the ``sse_api`` backend, where the route
+        is registered in ``data/urls.py``.
+        """
+        """Progress of an indexing job or of a collection (``GET``).
+
+        ``job_id`` reports one indexing request; ``collection`` the newest
+        request of the collection together with the documents which are still
+        waiting for their embeddings.  Exactly one of the two is needed.
+        """
+        params: Dict[str, Any] = {}
+        if job_id is not None:
+            params["job_id"] = _as_identifier(job_id)
+        elif collection is not None:
+            params["collection_name"] = _name(collection)
+        else:
+            raise SSEValueError(
+                "indexing_status needs a job_id or a collection name"
+            )
+        body = self.get(endpoints.INDEXING_STATUS, params)
+        return IndexingStatus.from_api(body)
 
     # --- deleting content ----------------------------------------------------
     def delete_texts(
