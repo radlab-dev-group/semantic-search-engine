@@ -589,6 +589,7 @@ each app.
 | `GET`  | `/api/rerankers/`              | Configured rerankers: names and `models_info` (`max_model_length` of a pair).   |
 | `GET`  | `/api/categories/`             | List distinct categories present in a collection.                               |
 | `GET`  | `/api/documents/`              | List document names within a collection (used for UI selectors).                |
+| `GET`  | `/api/document_content/`       | Whole text of one document (preview), page by page (`truncated`, `next_page`).  |
 | `GET`  | `/api/indexing_status/`        | Progress of the indexing of a job (`job_id`) or of a collection.                |
 | `POST` | `/api/delete_texts/`           | Delete text chunks (`chunk_ids[]`) from PostgreSQL and their vectors from Milvus.|
 | `POST` | `/api/delete_documents/`       | Delete documents (`documents[]` names and/or `document_ids[]`) with their pages and chunks. |

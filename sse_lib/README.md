@@ -94,7 +94,9 @@ Python 3.9+, `requests` as the only runtime dependency.
 | `list_categories(collection)` | `GET categories` |
 | `list_documents(collection, with_disabled=False)`, `list_document_details(collection)` | `GET documents` |
 | `upload_files(collection, files, ...)` | `POST upload_and_index_files` |
+| `document_content(collection, document, from_page=None, max_pages=None, chunk_type=None)` | `GET document_content` |
 | `index_documents(collection, documents, ...)` | `POST add_and_index_texts` |
+| `indexing_status(collection=None, job_id=None)` | `GET indexing_status` |
 | `delete_texts(collection, chunk_ids)` | `POST delete_texts` |
 | `delete_documents(collection, documents=None, document_ids=None)` | `POST delete_documents` |
 | `delete_collection(collection)` | `POST delete_collection` |

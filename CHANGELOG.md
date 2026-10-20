@@ -4,11 +4,47 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
+| [0.1.5](#014) | Preview of a whole document: `GET document_content` (PostgreSQL only) and `sse_lib.SSEClient.document_content` / `indexing_status` |
 | [0.1.3](#013) | Indexing in a Celery + RabbitMQ queue, per-document indexing progress, `indexing_status` endpoint. Deactivation propagates to Milvus (`is_active` of the vectors); Milvus 3.0 |
 | [0.1.2](#012) | Deletion of the search history (`delete_search_history`), form-encoded `[]` list params |
 | [0.1.1](#0.1.1) | Deletion API (PostgreSQL + Milvus), document deactivation (`use_in_search`), normalized `[0, 1]` document ranking weights, collection-level chunking and `max_model_length` |
 | [0.1.0](#010) | Python client library, hybrid search, production deployment tooling, `src/` layout and CI |
 | [0.0.1](#001) | Initial version |
+
+
+## [0.1.4]
+
+### Added
+
+#### API — preview of a whole document
+- **`GET document_content`** — the whole text of one document of a collection,
+  which is what the preview opened from a row of the documents tab shows.
+  `collection_name` with `document_name` or `document_id`, optionally
+  `chunk_type` (which stored form of the text to read, e.g. `clear_texts` or
+  `raw_text`), `from_page` and `max_pages` (default `PREVIEW_MAX_PAGES` = 200,
+  at most `PREVIEW_MAX_PAGES_LIMIT` = 1000).  The answer carries the stitched
+  `content`, the same text page by page (`pages[]` with `page`, `content` and
+  `chunks`), the `chunk_type` which was read together with all the
+  `chunk_types` of the document, and the window of pages (`from_page`,
+  `total_pages`, `truncated`, `next_page`) so a client can walk through a
+  document longer than the window.
+- `ContentPreviewController` (`data/controllers/preview.py`) reads the preview
+  from PostgreSQL only — the pages of the document and the chunks of one
+  `text_chunk_type`, joined in reading order — so neither the source file nor
+  Milvus is needed.  A name which stands for more than one row is previewed by
+  its newest document, and an unknown `chunk_type` falls back to the newest
+  form the document was indexed with.  A document of another organisation is
+  `COLLECTION_NOT_FOUND`, a missing one `DOCUMENT_NOT_FOUND`.
+- `sse_lib.SSEClient.document_content(collection, document,`
+  `from_page=None, max_pages=None, chunk_type=None)` wraps the endpoint and
+  answers with `DocumentPreview` (one `DocumentPreviewPage` per page of the
+  document); `document` is a name or an identifier.
+- `sse_lib.SSEClient.indexing_status(collection=None, job_id=None)` wraps
+  `GET indexing_status` with `IndexingStatus` / `IndexingJobStatus`: the
+  documents of a job with their own `indexing_status`, the documents still
+  waiting for their embeddings and the counter of the job.  The route has been
+  registered by the backend since 0.1.3 and was the one the client library did
+  not know.
 
 
 ## [0.1.3]
