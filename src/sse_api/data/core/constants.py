@@ -83,3 +83,18 @@ MILVUS_CONFIG_PATH = "./configs/milvus_config.json"
 
 #: Documents of one indexing request reported by ``api/indexing_status``.
 MAX_STATUS_DOCUMENTS = 200
+
+# ---------------------------------------------------------------------------
+# Preview of a whole document (``api/document_content``).
+#
+# The text of a document is read page by page, so an answer about a huge
+# document is cut after a window of pages and the client may ask for the next
+# one (``from_page``) instead of receiving everything at once.
+# ---------------------------------------------------------------------------
+
+#: Pages of the document returned by one request, when the client asks for
+#: none (and the largest ``max_pages`` the server accepts).
+PREVIEW_MAX_PAGES = 200
+
+#: Hard ceiling of ``max_pages``; a client may ask for less, not for more.
+PREVIEW_MAX_PAGES_LIMIT = 1000

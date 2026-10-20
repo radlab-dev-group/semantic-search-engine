@@ -40,6 +40,7 @@ from sse_api.data.controllers.deletion import (
     ContentProtected,
 )
 from sse_api.data.controllers.visibility import ContentVisibilityController
+from sse_api.data.controllers.preview import ContentPreviewController
 from sse_api.data.core.errors import (
     UPLOAD_REJECTED,
     CHUNK_NOT_FOUND,
@@ -56,6 +57,7 @@ from sse_api.data.core.constants import (
     INDEXING_JOB_TEXTS,
     MAX_STATUS_DOCUMENTS,
     MILVUS_CONFIG_PATH,
+    PREVIEW_MAX_PAGES,
 )
 from sse_api.data.controllers.chunking import (
     ChunkingMismatch,
@@ -522,6 +524,78 @@ class ListDocumentsFromCollection(APIView):
             language=language,
             error_name=None,
             response_body={"documents": serialized},
+        )
+
+
+class GetDocumentContent(APIView):
+    """
+    Whole text of one document of a collection (``GET document_content``),
+    which is what the preview of a row of the documents tab shows.
+
+    The text is read from the relational database — the chunks the document
+    was indexed with, page by page — so neither the original file nor the
+    vector database is needed.  A document longer than the window of pages
+    (``max_pages``, default 200) is answered with ``truncated`` and the
+    ``next_page`` to ask for.
+    """
+
+    required_params = ["collection_name"]
+    optional_params = [
+        "document_name",
+        "document_id",
+        "chunk_type",
+        "from_page",
+        "max_pages",
+    ]
+    input_validators = {
+        "collection_name": required_text,
+        "document_name": optional_text,
+        "document_id": identifier,
+        "chunk_type": optional_text,
+        "from_page": identifier,
+        "max_pages": identifier,
+    }
+
+    @required_params_exists(
+        required_params=required_params, optional_params=optional_params
+    )
+    @get_organisation_user
+    @get_default_language
+    def get(self, language, organisation_user, request):
+        params = request_params(request)
+        collection = RelationalDBController.get_collection(
+            collection_name=params.get("collection_name"),
+            created_by=organisation_user,
+        )
+        if collection is None:
+            return response_with_status(
+                status=False, language=language, error_name=COLLECTION_NOT_FOUND
+            )
+
+        document_id = params.get("document_id")
+        document_name = params.get("document_name")
+        if document_id is None and not str(document_name or "").strip():
+            return error_response(INVALID_PARAMS, language)
+
+        controller = ContentPreviewController()
+        document = controller.find_document(
+            collection=collection,
+            document_id=document_id,
+            document_name=document_name,
+        )
+        if document is None:
+            return response_with_status(
+                status=False, language=language, error_name=DOCUMENT_NOT_FOUND
+            )
+
+        preview = controller.document_content(
+            document=document,
+            from_page=params.get("from_page") or 1,
+            max_pages=params.get("max_pages") or PREVIEW_MAX_PAGES,
+            chunk_type=params.get("chunk_type"),
+        )
+        return response_with_status(
+            status=True, language=language, response_body=preview.as_dict()
         )
 
 
