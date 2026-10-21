@@ -1,6 +1,6 @@
 # Semantic Search Engine (SSE) — Setup & Run Instructions
 
-> The `run.sh` script (Polish messages) is the one-command launcher described here.
+> The `run.sh` script is the one-command launcher described here.
 >
 > In sync with the current code (service in `src/sse_api/`). The top-level `README.md` describes the **old**
 > file layout — skip it.
