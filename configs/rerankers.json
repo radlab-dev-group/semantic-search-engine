@@ -5,9 +5,23 @@
       "path": "/mnt/data2/llms/models/radlab-open/rerankers/radlab_polish-cross-encoder",
       "max_model_length": 512,
       "device": "cpu"
+    },
+    {
+      "name": "qwen/Qwen3-Reranker-0.6",
+      "path": "/mnt/data2/llms/models/community/qwen/Qwen3-Reranker-0.6B",
+      "max_model_length": 32000,
+      "device": "cpu"
+    },
+    {
+      "name": "BAAI/bge-reranker-v2-m3",
+      "path": "/mnt/data2/llms/models/community/BAAI/bge-reranker-v2-m3",
+      "max_model_length": 8192,
+      "device": "cpu"
     }
   ],
   "active_models": [
-    "radlab/polish-cross-encoder"
+    "radlab/polish-cross-encoder",
+    "qwen/Qwen3-Reranker-0.6",
+    "BAAI/bge-reranker-v2-m3"
   ]
 }

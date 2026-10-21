@@ -6,9 +6,17 @@
       "vector_size": 768,
       "max_model_length": 2048,
       "device": "cpu"
+    },
+    {
+      "name": "google/embeddinggemma-2",
+      "path": "/mnt/data2/llms/models/community/google/embeddinggemma-2",
+      "vector_size": 768,
+      "max_model_length": 8192,
+      "device": "cpu"
     }
   ],
   "active_models": [
+    "google/embeddinggemma-2",
     "google/embeddinggemma-300m"
   ]
 }
