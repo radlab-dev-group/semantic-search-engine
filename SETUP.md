@@ -1,6 +1,6 @@
 # Semantic Search Engine (SSE) — Setup & Run Instructions
 
-> English counterpart of `URUCHOMIENIE.md` (script: `run-en.sh`). Polish originals: `URUCHOMIENIE.md` + `run.sh`.
+> English counterpart of `URUCHOMIENIE.md` (script: `run.sh`). Polish originals: `URUCHOMIENIE.md` + `run.sh`.
 >
 > In sync with the current code (service in `src/sse_api/`). The top-level `README.md` describes the **old**
 > file layout — skip it.
@@ -64,6 +64,17 @@ Container `pg_sse_backend_engine`, `localhost:5471 → 5432`, user `admin`, db `
 `SuperSecretPassword123` (1:1 with `configs/django-config.json`).
 > Alternative: your own PG with the same parameters, or `ENV_DB_NAME/HOST/PORT/USERNAME/PASSWORD`.
 
+The image is `postgres:latest` (`POSTGRES_IMAGE` in `.env`), and the data lives in the named volume
+`postgres_data` mounted at `/var/lib/postgresql`.  Postgres >= 18 keeps its clusters under
+`/var/lib/postgresql/<version>/docker and declares that directory as its volume, so mounting deeper, at
+`.../data`, makes the image refuse to start.
+
+The volume outlives `./run.sh down` and a container rebuild; re-running the script resumes the existing
+container instead of creating an empty database.  Only `./run.sh clean` (containers + volumes) or
+`docker volume rm postgres_data` deletes it.  A new PostgreSQL major version does not read the data
+directory of the previous one — then either `pg_upgrade`, or start from scratch and re-index, because
+PostgreSQL is the source of truth.
+
 ## 4. Start Milvus
 
 ```bash
@@ -86,8 +97,8 @@ Target: `localhost:19530`, db `sse_backend_engine`, `sse_user`/`sse_password` (`
 Upgrading from Milvus 2.x: the data of a 2.x collection is not carried over
 by the 3.0 server, and the old collections do not have the `is_active`
 field anyway.  PostgreSQL is the source of truth — drop the old volume
-(`docker volume rm milvus_data`) and re-create and re-index the collections
-after the upgrade.
+(`docker volume rm milvus_data`, or `./run.sh clean` for every volume at once)
+and re-create and re-index the collections after the upgrade.
 
 ## 5. (Optional) LLM router — RAG/chat only
 

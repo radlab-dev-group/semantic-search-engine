@@ -321,7 +321,7 @@ forgotten) on every indexing call.
 - **Production setup**: gunicorn configuration, `.env` template, Docker Compose, and supporting scripts.
 - **nginx reverse proxy** with TLS configuration and a README covering certificate setup.
 - **RAG evaluation tooling**: evaluator script for LLM-based RAG quality assessment plus `EVALUATE.md` documentation.
-- **`SETUP.md`**, English startup script `run-en.sh`, and `DEPENDENCIES.md` listing Python packages, infrastructure, ML models, and optional services.
+- **`SETUP.md`**, English startup script `run.sh`, and `DEPENDENCIES.md` listing Python packages, infrastructure, ML models, and optional services.
 
 #### Packaging, CI, and project layout (`feat/modularity`)
 - **`src/` layout with a single installable package**: `sse_rest_api` and `sse_tools` moved under `src/`, `engine_core` flattened into `engine.core`, and `pyproject.toml` extended with build metadata, package discovery, and pytest configuration.
