@@ -1,6 +1,6 @@
 # Semantic Search Engine (SSE) — Setup & Run Instructions
 
-> English counterpart of `URUCHOMIENIE.md` (script: `run.sh`). Polish originals: `URUCHOMIENIE.md` + `run.sh`.
+> The `run.sh` script (Polish messages) is the one-command launcher described here.
 >
 > In sync with the current code (service in `src/sse_api/`). The top-level `README.md` describes the **old**
 > file layout — skip it.
@@ -10,8 +10,8 @@
 
 ```bash
 cd semantic-search-engine
-./run-en.sh               # == all: venv + dependencies, PG + Milvus, initialization, start API
-./run-en.sh cosine        # (one-off) existing collections → COSINE metric, no re-embedding
+./run.sh               # == all: venv + dependencies, PG + Milvus, initialization, start API
+./run.sh cosine        # (one-off) existing collections → COSINE metric, no re-embedding
 # API: http://localhost:8271/api/   (login: default_admin / password)
 ```
 
@@ -208,10 +208,10 @@ DB — the script releases the index and creates a new one with COSINE):
 
 ```bash
 cd semantic-search-engine
-./run-en.sh cosine                          # all collections (index IVF_FLAT by default)
-./run-en.sh cosine --dry-run                # preview the operations (no changes)
-./run-en.sh cosine --collection my_coll     # only the given collection (repeatable)
-./run-en.sh cosine --index HNSW             # index type: HNSW | IVF_FLAT
+./run.sh cosine                          # all collections (index IVF_FLAT by default)
+./run.sh cosine --dry-run                # preview the operations (no changes)
+./run.sh cosine --collection my_coll     # only the given collection (repeatable)
+./run.sh cosine --index HNSW             # index type: HNSW | IVF_FLAT
 ```
 
 Equivalent direct invocation (requires a running Milvus):
@@ -228,5 +228,5 @@ Verification: `describe_index` for the collection must return `metric_type: COSI
 > requires Milvus to be reachable (port 19530).
 
 ---
-*Alternatively: `./run-en.sh all` performs steps 2–7 automatically (flags: `--no-venv/--no-infra/--no-init/--skip-server`);
-`./run-en.sh cosine` — COSINE metric for existing data.*
+*Alternatively: `./run.sh all` performs steps 2–7 automatically (flags: `--no-venv/--no-infra/--no-init/--skip-server`);
+`./run.sh cosine` — COSINE metric for existing data.*

@@ -1,76 +1,111 @@
 #!/usr/bin/env bash
 #
-# run-en.sh — Semantic Search Engine (SSE): one-command startup script (English edition).
-# English counterpart of run.sh: same behaviour, English comments and messages.
-# Combines the steps from SETUP.md: venv + dependencies (step 2), PG + Milvus (3-4),
-# (optionally LLM router, 5), initialization (6), start API (7).
-# Additionally: "cosine" — migrate existing Milvus collections to the COSINE metric
-# (without re-embedding) for search.
+# run.sh — Semantic Search Engine (SSE): jednonaczyniowy skrypt uruchomieniowy.
+# Łączy kroki z URUCHOMIENIE.md: venv+ zależności (krok 2), PG+Milvus (3-4),
+# (opcjonalnie LLM router, 5), inicjalizacja (6), start API (7).
+# Dodatkowo: "cosine" — migracja istniejących kolekcji Milvus na metrykę COSINE
+# (bez re-embedingu) dla wyszukiwania.
 #
-# Usage:
-#   ./run-en.sh                 # == all (full pipeline: setup+infra+init+start)
-#   ./run-en.sh all             # setup + infra + init + start
-#   ./run-en.sh setup           # venv + pip install + git dependencies (step 2)
-#   ./run-en.sh infra           # start PostgreSQL + Milvus in Docker (steps 3-4)
-#   ./run-en.sh init            # migrate + semantic + add_user + add_query_templates (step 6)
-#   ./run-en.sh cosine          # migrate existing collections to COSINE (defaults to --all)
-#   ./run-en.sh start|up        # run the API server in the foreground → http://0.0.0.0:8271/api/ (step 7)
-#   ./run-en.sh down            # stop and remove the PG + Milvus containers; DATA VOLUMES ARE KEPT
-#   ./run-en.sh clean           # like down, but also removes the volumes (postgres_data, milvus_data)
-#   ./run-en.sh status          # show the state of containers and ports (5471/19530/19121/8271)
+# Użycie:
+#   ./run.sh                 # == all (pełny pipeline: setup+infra+init+start)
+#   ./run.sh all             # setup + infra + init + start
+#   ./run.sh setup           # venv + pip install + zależności z git (krok 2)
+#   ./run.sh infra           # uruchom PostgreSQL + Milvus + RabbitMQ w Dockerze (kroki 3-4)
+#   ./run.sh init            # migrate + semantic + add_user + add_query_templates (krok 6)
+#   ./run.sh cosine          # migracja istniejących kolekcji na COSINE (domyślnie --all)
+#   ./run.sh start|up        # odpal serwer API w foreground → http://0.0.0.0:8271/api/ (krok 7)
+#   ./run.sh worker          # odpal workera Celery (kolejka indeksacji) w foreground
+#   ./run.sh down            # zatrzymaj i usuń kontenery (+ worker); DANE W WOLUMENACH ZOSTAJĄ
+#   ./run.sh clean           # jak down, ale usuwa też wolumeny (postgres_data, milvus_data, rabbitmq_data)
+#   ./run.sh status          # pokaż stan kontenerów i portów (5471/19530/19121/5672/8271)
+#   ./run.sh config          # utwórz .env i brakujące pliki configs/ z szablonów
 #
-# Flags:
-#   --no-venv        do not create/use a venv (use the system python/pip)
-#   --no-infra       skip starting PG/Milvus (assume they are already running)
-#   --no-init        skip migrations/initialization (step 6)
-#   --skip-server    in "all": do not start the server after setup (exit after initialization)
-#   -y|--yes         for "clean": do not ask for confirmation (for CI/scripts)
+# Flagi:
+#   --no-venv        nie twórz/wykorzystuj venv (użyj systemowego pythona/pipa)
+#   --no-infra       pomijaj start PG/Milvus/RabbitMQ (zakładaj, że już działają)
+#   --no-init        pomijaj migracje/inicjalizację (krok 6)
+#   --skip-server    w "all": nie startuj serwera po setupie (wyjdź po inicjalizacji)
+#   -y|--yes         przy "clean": nie pytaj o potwierdzenie (użycie w CI/skryptach)
 #
-#   # flags of the "cosine" command:
-#   --collection X collection to migrate (repeatable; without the flag: all/--all)
-#   --index TYPE   type of the new index: HNSW or IVF_FLAT (default: IVF_FLAT)
-#   --dry-run      only show the planned operations (no changes in the DB)
+#   # flagi komendy "cosine":
+#   --collection X kolekcja do migracji (powtarzalne; bez flagi: wszystkie/--all)
+#   --index TYPE   typ nowego indexu: HNSW lub IVF_FLAT (domyślnie: IVF_FLAT)
+#   --dry-run      tylko pokaż planowane operacje (bez zmian w DB)
 #
-# Volumes and data:
-#   Data lives in named Docker volumes (postgres_data, milvus_data) created by
-#   every "./run-en.sh infra".  "./run-en.sh down" stops and removes the
-#   containers but leaves the volumes alone, so the next start finds the very
-#   same database and vectors.  Only "./run-en.sh clean" deletes them
-#   (containers + volumes).  A PostgreSQL/Milvus mismatch (for instance after a
-#   crash in the middle of indexing) is fixed the same way: clean and re-index,
-#   because PostgreSQL is the source of truth.
+# Przykłady:
+#   ./run.sh all --no-infra                # PG+Milvus już lecą, reszta sama
+#   ./run.sh all --skip-server             # tylko setup, bez startu w foreground
+#   ./run.sh cosine --dry-run              # podgląd migracji COSINE (wszystkie kolekcje)
+#   ./run.sh cosine --collection my_coll   # tylko jedna kolekcja
+#   ./run.sh config                        # utwórz .env + configs/*.json z szablonów
+#   ./run.sh down                              # stop kontenerów; dane w wolumenach nienaruszone
+#   ./run.sh clean                             # usuń kontenery + wszystkie dane (pyta o potwierdzenie)
+#   ./run.sh clean --yes                       # to samo bez pytania
+#   ./run.sh status
 #
-# Examples:
-#   ./run-en.sh all --no-infra                # PG+Milvus already running, the rest is automated
-#   ./run-en.sh all --skip-server             # setup only, no foreground start
-#   ./run-en.sh cosine --dry-run              # preview of the COSINE migration (all collections)
-#   ./run-en.sh cosine --collection my_coll   # only one collection
-#   ./run-en.sh down                              # stop the containers; data in the volumes is intact
-#   ./run-en.sh clean                             # remove containers + all data (asks first)
-#   ./run-en.sh clean --yes                       # the same without asking
-#   ./run-en.sh status
+# Kolejka indeksacji (Celery + RabbitMQ):
+#   ./run.sh infra      # startuje też RabbitMQ (127.0.0.1:5672, user/hasło z .env)
+#   ./run.sh worker     # worker kolejki "indexing" (foreground)
+#   ./run.sh start      # startuje worker w tle, gdy ENV_USE_CELERY=1 w .env
+#   .env: ENV_USE_CELERY=1 — indeksacja przez kolejkę; status: GET /api/indexing_status
+#  Worker działa domyślnie na basenie "solo" (CELERY_WORKER_POOL) — odczyt
+#  plików tworzy własny multiprocessing.Pool, a zadania basenu "prefork" są
+#  daemonami i nie mogą mieć dzieci.
+#
+# Wolumeny i dane:
+#   Dane trafiają do nazwanych wolumenów Dockera (postgres_data, milvus_data,
+#   rabbitmq_data), tworzonych przy każdym "./run.sh infra".  "./run.sh down"
+#   zatrzymuje i usuwa kontenery, ale wolumenów NIE rusza — po następnym starcie
+#   bazy i wektory są dokładnie takie jak przedtem.  Całość kasuje wyłącznie
+#   "./run.sh clean" (kontenery + wolumeny).  Rozjazd danych PG i Milvusa (np.
+#   po awarii w trakcie indeksacji) też naprawia się przez "./run.sh clean" i
+#   re-indeksację, bo PostgreSQL jest źródłem prawdy.
+#
+# Plik .env:
+#   Jeśli istnieje w root repo, jest wczytywany przed każdą komendą (set -a,
+#   czyli zmienne trafiają do środowiska procesów potomnych: docker compose,
+#   initialize.sh, run-api.sh). Nigdy nie commituj .env — szablon to
+#   .env.example, a jego lokalną kopię tworzy komenda "./run.sh config".
 #
 set -euo pipefail
 
-# ---------- locations ----------
+# ---------- lokalizacja ----------
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd -P)"
 ROOT_DIR="$SCRIPT_DIR"
 API_DIR="$ROOT_DIR"
 CONFIG_DIR="$ROOT_DIR/configs"
 VENV_DIR="$ROOT_DIR/.venv"
 PY_PREFERRED="python3.11"
-
-# SSE containers and persistent volumes.  The volumes outlive "./run-en.sh down",
-# are created by "./run-en.sh infra" and are removed only by "./run-en.sh clean".
-# Note: "docker compose" prefixes them with the project name (sse_postgres_data,
-# ...), which is a different set managed by "docker compose down [-v]".
-SSE_CONTAINERS=(pg_sse_backend_engine milvus-standalone)
-SSE_VOLUMES=(postgres_data milvus_data)
+MILVUS_IMAGE="milvusdb/milvus:v3.0.3"
 
 export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/sse_lib/src:${PYTHONPATH:-}"
 export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-sse_api.config.settings}"
 
-# ---------- logging ----------
+# Domyślne lokalne (loopback) wartości kolejki indeksacji; .env nadpisuje je.
+export RABBITMQ_USER="${RABBITMQ_USER:-sse}"
+export RABBITMQ_PASSWORD="${RABBITMQ_PASSWORD:-sse}"
+export RABBITMQ_BIND_HOST="${RABBITMQ_BIND_HOST:-127.0.0.1}"
+export RABBITMQ_HOST_PORT="${RABBITMQ_HOST_PORT:-5672}"
+export RABBITMQ_MGMT_HOST_PORT="${RABBITMQ_MGMT_HOST_PORT:-15672}"
+export ENV_CELERY_BROKER_URL="${ENV_CELERY_BROKER_URL:-amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@localhost:5672/}"
+# Basen workera: "solo", bo sam pipeline indeksacji czyta pliki własnym
+# basenem procesów (multiprocessing.Pool), a procesy basenu "prefork" są
+# daemonami i nie mogą mieć dzieci ("daemonic processes are not allowed to
+# have children").
+export CELERY_WORKER_POOL="${CELERY_WORKER_POOL:-solo}"
+
+# Worker Celery startowany przez ./run.sh start (ENV_USE_CELERY=1) jest
+# procesem w tle; jego PID i log mieszczą się tutaj.
+WORKER_PID_FILE="$ROOT_DIR/.celery-worker.pid"
+
+# Kontenery i trwałe wolumeny SSE.  Wolumeny przeżywają "./run.sh down", są
+# tworzone przez "./run.sh infra" i usuwane wyłącznie przez "./run.sh clean".
+# Uwaga: "docker compose" dokleja przedrostek projektu (sse_postgres_data itd.) —
+# to inny zestaw wolumenów, zarządzany przez "docker compose down [-v]".
+SSE_CONTAINERS=(pg_sse_backend_engine milvus-standalone milvus-minio-init milvus-minio milvus-etcd rabbitmq-sse)
+SSE_VOLUMES=(postgres_data milvus_data rabbitmq_data)
+
+# ---------- logi ----------
 if [[ -t 1 ]]; then
   C_INFO=$'\e[32m'; C_WARN=$'\e[33m'; C_ERR=$'\e[31m'; C_DIM=$'\e[2m'; C_RST=$'\e[0m'
 else
@@ -81,7 +116,7 @@ warn() { printf '%s[WARN]%s %s\n' "$C_WARN" "$C_RST" "$*" >&2; }
 err()  { printf '%s[ERR ]%s %s\n' "$C_ERR" "$C_RST" "$*" >&2; }
 step() { printf '\n%s==> %s%s\n' "$C_DIM" "$*" "$C_RST"; }
 
-# ---------- parsing ----------
+# ---------- parsowanie ----------
 CMD="all"
 NO_VENV=0; NO_INFRA=0; NO_INIT=0; SKIP_SERVER=0
 ASSUME_YES=0
@@ -96,19 +131,42 @@ while (( $# > 0 )); do
     --no-init)     NO_INIT=1 ;;
     --skip-server) SKIP_SERVER=1 ;;
     --dry-run)     DRY_RUN=1 ;;
-    -y|--yes)        ASSUME_YES=1 ;;
-    --collection)  shift; [[ $# -gt 0 ]] || { err "--collection requires a collection name"; exit 1; }; COSINE_COLLECTIONS+=("$1") ;;
-    --index)       shift; [[ $# -gt 0 ]] || { err "--index requires a value (HNSW|IVF_FLAT)"; exit 1; }; COSINE_INDEX="$1" ;;
+    -y|--yes)       ASSUME_YES=1 ;;
+    --collection)  shift; [[ $# -gt 0 ]] || { err "--collection wymaga nazwy kolekcji"; exit 1; }; COSINE_COLLECTIONS+=("$1") ;;
+    --index)       shift; [[ $# -gt 0 ]] || { err "--index wymaga wartości (HNSW|IVF_FLAT)"; exit 1; }; COSINE_INDEX="$1" ;;
     -h|--help|help) CMD="help" ;;
-    all|setup|infra|init|cosine|start|up|down|clean|status) CMD="$1" ;;
-    *) warn "Unknown option: $1 (showing help)"; CMD="help" ;;
+    all|setup|infra|init|cosine|config|start|up|down|clean|status) CMD="$1" ;;
+    worker) CMD="$1" ;;
+    *) warn "Nieznana opcja: $1 (pokażę pomoc)"; CMD="help" ;;
   esac
   shift
 done
 
-# ---------- helpers ----------
+# ---------- pomocnicze ----------
 have() { command -v "$1" >/dev/null 2>&1; }
-need() { err "Missing: $1. Install/start it first."; exit 1; }
+need() { err "Brak: $1. Zainstaluj/uruchom wcześniej."; exit 1; }
+
+load_env() {
+  # .env w root repo (tworzony przez "./run.sh config") — wczytaj, jeżeli istnieje.
+  if [[ -f "$ROOT_DIR/.env" ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "$ROOT_DIR/.env"
+    set +a
+    log "Wczytano zmienne z $ROOT_DIR/.env"
+  fi
+}
+
+# Po load_env: broker wskazuje na RabbitMQ startowany przez ./run.sh infra,
+# więc domyślnie działa bez żadnych dodatkowych konfigów na lokalhoście.
+apply_celery_defaults() {
+  # Pusty broker albo wciąż szablonowe CHANGE_ME i tak ma wskazywać na
+  # RabbitMQ z "./run.sh infra" — podstawiamy dane logowania i port z .env.
+  if [[ -z "${ENV_CELERY_BROKER_URL:-}" || "${ENV_CELERY_BROKER_URL}" == *CHANGE_ME* ]]; then
+    export ENV_CELERY_BROKER_URL="amqp://${RABBITMQ_USER:-sse}:${RABBITMQ_PASSWORD:-sse}@localhost:${RABBITMQ_HOST_PORT:-5672}/"
+    log "ENV_CELERY_BROKER_URL: podstawiam lokalnego brokera (RabbitMQ z ./run.sh infra)."
+  fi
+}
 
 activate_venv() {
   local candidates=(
@@ -125,6 +183,14 @@ activate_venv() {
     fi
   done
 }
+
+stop_worker() {
+  if [[ -f "$WORKER_PID_FILE" ]] && kill -0 "$(cat "$WORKER_PID_FILE")" 2>/dev/null; then
+    kill "$(cat "$WORKER_PID_FILE")" 2>/dev/null || true
+    log "Zatrzymano workera Celery (PID $(cat "$WORKER_PID_FILE"))."
+  fi
+  rm -f "$WORKER_PID_FILE"
+}
 pick_pip() {
   if [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/pip3" ]]; then
     echo "${VIRTUAL_ENV}/bin/pip3"
@@ -139,7 +205,7 @@ pick_pip() {
   elif have pip; then
     echo "pip"
   else
-    err "Missing pip/pip3"; exit 1
+    err "Brak pip/pip3"; exit 1
   fi
 }
 pick_python() {
@@ -156,7 +222,7 @@ pick_python() {
   elif have python; then
     echo "python"
   else
-    err "Missing python/python3"; exit 1
+    err "Brak python/python3"; exit 1
   fi
 }
 docker_cmd() {
@@ -168,14 +234,14 @@ docker_cmd() {
     docker "$@"
   fi
 }
-# Is a container of this name running right now?  Used not to recreate a
-# container whose data already sits in a volume.
+# Kontener o danej nazwie działa teraz? (używane, żeby nie odtwarzać kontenera
+# z danymi, które i tak leżą w wolumenie).
 container_running() {
   [[ -n "$(docker_cmd ps -q --filter "name=^${1}\$" 2>/dev/null)" ]]
 }
 
-# Named volumes are created up front instead of as a side effect of 'docker run',
-# so their names stay predictable for 'clean' and 'status'.
+# Nazwane wolumeny tworzone są jawnie, a nie przy okazji 'docker run', dzięki
+# czemu ich nazwy są przewidywalne dla 'clean' i 'status'.
 ensure_volumes() {
   local volume
   for volume in "${SSE_VOLUMES[@]}"; do
@@ -195,26 +261,29 @@ wait_port() {
   for _ in $(seq 1 "$tries"); do
     if (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; then
       exec 3>&- 3<&- 2>/dev/null || true
-      log "$name is listening on port $port"
+      log "$name nasłuchuje na porcie $port"
       return 0
     fi
     sleep 1
   done
-  warn "$name: port $port still unavailable after ${tries}s — check it manually"
+  warn "$name: port $port wciąż niedostępny po ${tries}s — sprawdź ręcznie"
 }
 
-# ---------- commands ----------
+# ---------- komendy ----------
 config() {
-  step "Configuration: .env + config files from templates"
+  step "Konfiguracja: .env + pliki konfiguracyjne z szablonów"
   local created=0 skipped=0 example target name rel
 
   if [[ -f "$ROOT_DIR/.env" ]]; then
-    log "Skipped (exists): .env"
+    log "Pominięto (istnieje): .env"
     skipped=$((skipped + 1))
   elif [[ -f "$ROOT_DIR/.env.example" ]]; then
     cp "$ROOT_DIR/.env.example" "$ROOT_DIR/.env"
-    log "Created: .env"
+    log "Utworzono: .env"
     created=$((created + 1))
+  else
+    err "Brak szablonu .env.example — nie mogę utworzyć .env"
+    exit 1
   fi
 
   for example in "$CONFIG_DIR"/*.example.*; do
@@ -223,59 +292,59 @@ config() {
     target="$CONFIG_DIR/${name/.example./.}"
     rel="configs/${name/.example./.}"
     if [[ -f "$target" ]]; then
-      log "Skipped (exists): $rel"
+      log "Pominięto (istnieje): $rel"
       skipped=$((skipped + 1))
     else
       cp "$example" "$target"
-      log "Created: $rel"
+      log "Utworzono: $rel"
       created=$((created + 1))
     fi
   done
 
-  log "Created files: $created, skipped (already existed): $skipped"
-}
-
-ensure_config() {
-  if [[ ! -f "$CONFIG_DIR/django-config.json" ]]; then
-    config
-  fi
+  log "Utworzono plików: $created, pominięto (już istniały): $skipped"
+  warn "PRODUKCJA: zamień KAŻDĄ wartość CHANGE_ME na własny sekret:"
+  warn "  .env → ENV_SECRET_KEY, ENV_DB_PASSWORD/POSTGRES_PASSWORD,"
+  warn "  MINIO_ACCESS_KEY/MINIO_SECRET_KEY; dodatkowo ENV_DEBUG=0 i ENV_ALLOWED_HOSTS."
+  warn "RABBITMQ_USER/RABBITMQ_PASSWORD są celowo proste (sse/sse) — broker"
+  warn "nasłuchuje tylko na loopbacku; zamień je, jeśli wydajesz port dalej."
 }
 
 setup() {
-  step "Step 2: virtual environment + dependencies"
-  [[ -d "$API_DIR/src/sse_api" ]] || { err "Missing src/sse_api/ directory — are you inside the repo?"; exit 1; }
+  step "Krok 2: wirtualne środowisko + zależności"
+  [[ -d "$API_DIR/src/sse_api" ]] || { err "Brak katalogu src/sse_api/ — czy jesteś w repo?"; exit 1; }
 
   local py="$PY_PREFERRED"
-  have "$py" || { py="python3"; warn "$PY_PREFERRED not found, using python3"; }
+  have "$py" || { py="python3"; warn "$PY_PREFERRED nie znaleziony, używam python3"; }
   have "$py" || need python3
 
   if [[ "$NO_VENV" == "1" ]]; then
-    warn "Skipping venv (--no-venv); using the system python/pip."
+    warn "Pomijam venv (--no-venv); używam systemowego pythona/pipa."
   else
     if [[ ! -d "$VENV_DIR" ]]; then
-      log "Creating venv: $VENV_DIR"
+      log "Tworzę venv: $VENV_DIR"
       "$py" -m venv "$VENV_DIR"
     else
-      log "venv already exists: $VENV_DIR"
+      log "venv już istnieje: $VENV_DIR"
     fi
     activate_venv
-    log "Active python: $(command -v python3) ($(python3 --version 2>&1))"
+    log "Aktywny python: $(command -v python3) ($(python3 --version 2>&1))"
   fi
 
   local pip; pip="$(pick_pip)"
-  log "Installing dependencies: requirements.txt"
-  "$pip" install --upgrade pip >/dev/null
-  "$pip" install -r "$API_DIR/requirements.txt"
-  "$pip" install --no-deps -e "$API_DIR"
+  log "Instaluję zależności: requirements.txt"
+  "$pip" install --upgrade pip --break-system-packages >/dev/null
+  "$pip" install -r "$API_DIR/requirements.txt" --break-system-packages
 
-  log "Installing dependencies from git (radlab-data, llm-router)"
+  "$pip" install --no-deps -e "$API_DIR" --break-system-packages
+
+  log "Instaluję zależności z git (radlab-data, llm-router)"
   ( cd "$API_DIR/src/sse_api" && ./initialize.sh dep )
 }
 
 infra() {
-  step "Steps 3-4: infrastructure (PostgreSQL + Milvus)"
+  step "Kroki 3-4: infrastruktura (PostgreSQL + Milvus + RabbitMQ)"
   if [[ "$NO_INFRA" == "1" ]]; then
-    warn "Skipping PG/Milvus startup (--no-infra). Assuming they are already running."
+    warn "Pomijam start PG/Milvus/RabbitMQ (--no-infra). Zakładam, że już działają."
     return 0
   fi
   have docker || need docker
@@ -284,9 +353,19 @@ infra() {
   log "PostgreSQL: bash scripts/admin/postgres.sh"
   ( cd "$ROOT_DIR" && bash scripts/admin/postgres.sh )
 
-  log "Milvus standalone (ports 19530, 19121)"
+  local milvus_host="${MILVUS_HOST_PORT:-19530}"
+  local milvus_metrics_host="${MILVUS_METRICS_HOST_PORT:-19121}"
+  local milvus_bind="${MILVUS_BIND_HOST:-0.0.0.0}"
+  local port_args=()
+  if [[ -n "$milvus_bind" ]]; then
+    port_args+=(-p "${milvus_bind}:${milvus_host}:19530" -p "${milvus_bind}:${milvus_metrics_host}:19121")
+  else
+    port_args+=(-p "0.0.0.0:${milvus_host}:19530" -p "0.0.0.0:${milvus_metrics_host}:19121")
+  fi
+
+  log "Milvus standalone (porty ${milvus_host}, ${milvus_metrics_host})"
   if container_running milvus-standalone; then
-    log "Milvus is already running (data in the 'milvus_data' volume) — keeping the container."
+    log "Milvus już działa (dane w wolumenie 'milvus_data') — nie odtwarzam kontenera."
   else
     docker_cmd rm -f milvus-standalone >/dev/null 2>&1 || true
     # Milvus >= 3.0 refuses to start with an embedded etcd unless the
@@ -298,15 +377,42 @@ infra() {
       -e ETCD_DATA_DIR=/var/lib/milvus/etcd \
       -e COMMON_STORAGETYPE=local \
       -v milvus_data:/var/lib/milvus \
-      -p 0.0.0.0:19530:19530 -p 0.0.0.0:19121:19121 \
-      milvusdb/milvus:v3.0.3 \
+      "${port_args[@]}" \
+      "$MILVUS_IMAGE" \
       milvus run standalone
   fi
 
-  log "Waiting for ports..."
+  log "Odczekuję na porty..."
   wait_port 5471  "PostgreSQL"
   # Milvus 3.0 needs noticeably more time to open its port than 2.x.
-  wait_port 19530 "Milvus" 60
+  wait_port "$milvus_host" "Milvus" 60
+
+  local rabbit_bind="${RABBITMQ_BIND_HOST:-127.0.0.1}"
+  local rabbit_port="${RABBITMQ_HOST_PORT:-5672}"
+  local rabbit_mgmt="${RABBITMQ_MGMT_HOST_PORT:-15672}"
+  log "RabbitMQ (broker Celery; ${rabbit_bind}:${rabbit_port} → 5672, management http://${rabbit_bind}:${rabbit_mgmt}, user=${RABBITMQ_USER:-sse})"
+  if container_running rabbitmq-sse; then
+    log "RabbitMQ już działa (dane w wolumenie 'rabbitmq_data') — nie odtwarzam kontenera."
+  else
+    docker_cmd rm -f rabbitmq-sse >/dev/null 2>&1 || true
+    docker_cmd run -d --name rabbitmq-sse \
+      -e RABBITMQ_DEFAULT_USER="${RABBITMQ_USER:-sse}" \
+      -e RABBITMQ_DEFAULT_PASS="${RABBITMQ_PASSWORD:-sse}" \
+      -v rabbitmq_data:/var/lib/rabbitmq \
+      -p "${rabbit_bind}:${rabbit_port}:5672" \
+      -p "${rabbit_bind}:${rabbit_mgmt}:15672" \
+      rabbitmq:3.13-management
+  fi
+
+  log "Odczekuję na RabbitMQ..."
+  wait_port "$rabbit_port" "RabbitMQ (5672)"
+  wait_port "$rabbit_mgmt" "RabbitMQ management (15672)" 20
+}
+
+ensure_config() {
+  if [[ ! -f "$CONFIG_DIR/django-config.json" ]]; then
+    config
+  fi
 }
 
 ensure_infra() {
@@ -314,8 +420,9 @@ ensure_infra() {
     return 0
   fi
   local p_pg=5471
-  local p_milvus=19530
-  local pg_ready=0 milvus_ready=0
+  local p_milvus="${MILVUS_HOST_PORT:-19530}"
+  local p_rabbit="${RABBITMQ_HOST_PORT:-5672}"
+  local pg_ready=0 milvus_ready=0 rabbit_ready=0
 
   if (exec 3<>"/dev/tcp/127.0.0.1/${p_pg}") 2>/dev/null; then
     exec 3>&- 2>/dev/null || true
@@ -325,25 +432,45 @@ ensure_infra() {
     exec 3>&- 2>/dev/null || true
     milvus_ready=1
   fi
+  if (exec 3<>"/dev/tcp/127.0.0.1/${p_rabbit}") 2>/dev/null; then
+    exec 3>&- 2>/dev/null || true
+    rabbit_ready=1
+  fi
 
-  if [[ "$pg_ready" == "0" || "$milvus_ready" == "0" ]]; then
+  if [[ "$pg_ready" == "0" || "$milvus_ready" == "0" || "$rabbit_ready" == "0" ]]; then
     infra
   fi
 }
 
+check_celery() {
+  if ! have celery; then
+    err "Brak polecenia 'celery' w środowisku pythona. Zainstaluj zależności: ./run.sh setup"
+  fi
+}
+
+# Argumenty workera Celery; "solo" nie przyjmuje --concurrency (i tak 1).
+celery_worker_args() {
+  local pool="${CELERY_WORKER_POOL:-solo}"
+  CELERY_WORKER_ARGS=(-A sse_api.config worker -Q indexing -l INFO --pool "$pool")
+  if [[ "$pool" != "solo" ]]; then
+    CELERY_WORKER_ARGS+=(--concurrency "${CELERY_CONCURRENCY:-1}")
+  fi
+}
+
 init() {
-  step "Step 6: database + account + templates"
+  step "Krok 6: inicjalizacja bazy + konto + szablony"
   if [[ "$NO_INIT" == "1" ]]; then
-    warn "Skipping initialization (--no-init)."
+    warn "Pomijam inicjalizację (--no-init)."
     return 0
   fi
-  [[ -d "$API_DIR/src/sse_api" ]] || { err "Missing src/sse_api/"; exit 1; }
+  [[ -d "$API_DIR/src/sse_api" ]] || { err "Brak src/sse_api/"; exit 1; }
   ensure_config
   ensure_infra
   wait_port 5471 "PostgreSQL" 30
-  wait_port 19530 "Milvus" 60
+  wait_port "${MILVUS_HOST_PORT:-19530}" "Milvus" 60
   [[ "$NO_VENV" == "1" ]] || activate_venv
   local py; py="$(pick_python)"
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" -m sse_api.manage makemigrations )
   ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" -m sse_api.manage migrate )
   ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" src/sse_tools/admin/prepare_semantic_db.py )
   ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" "$py" src/sse_tools/admin/add_org_group_user.py -u configs/user-group-organisation.json )
@@ -351,11 +478,11 @@ init() {
 }
 
 cosine() {
-  step "COSINE: migrating indexes of existing collections (no re-embedding)"
+  step "COSINE: migracja indexów istniejących kolekcji (bez re-embedingu)"
   local script="$SCRIPT_DIR/scripts/admin/milvus_index_to_cosine.py"
   local cfg="$CONFIG_DIR/milvus_config.json"
-  [[ -f "$script" ]] || { err "Missing migration script: $script"; exit 1; }
-  [[ -f "$cfg" ]]    || { err "Missing Milvus config: $cfg"; exit 1; }
+  [[ -f "$script" ]] || { err "Brak skryptu migracji: $script"; exit 1; }
+  [[ -f "$cfg" ]]    || { err "Brak configu Milvus: $cfg"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
 
   local args=(--config "$cfg" --index "$COSINE_INDEX")
@@ -369,9 +496,9 @@ cosine() {
 
   local scope="ALL"
   if (( ${#COSINE_COLLECTIONS[@]} )); then scope="${COSINE_COLLECTIONS[*]}"; fi
-  log "COSINE migration: collections=$scope, index=$COSINE_INDEX, dry_run=$DRY_RUN"
+  log "Migracja COSINE: collections=$scope, index=$COSINE_INDEX, dry_run=$DRY_RUN"
 
-  # --all requires a connection (listing collections); --collection + --dry-run works offline
+  # --all wymaga połączenia (listowanie kolekcji); --collection + --dry-run działa offline
   if ! { (( DRY_RUN )) && (( ${#COSINE_COLLECTIONS[@]} )); }; then
     wait_port 19530 "Milvus" 5
   fi
@@ -381,52 +508,86 @@ cosine() {
 }
 
 start() {
-  step "Step 7: starting the API server (foreground) → http://0.0.0.0:8271/api/"
-  [[ -d "$API_DIR/src/sse_api" ]] || { err "Missing src/sse_api/"; exit 1; }
+  step "Krok 7: start serwera API (foreground) → http://0.0.0.0:8271/api/"
+  [[ -d "$API_DIR/src/sse_api" ]] || { err "Brak src/sse_api/"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
-  log "Test login: default_admin / password  (POST /api/login)"
+
+  if [[ "${ENV_USE_CELERY:-0}" == "1" || "${ENV_USE_CELERY:-0}" == "true" ]]; then
+    check_celery
+    log "ENV_USE_CELERY=1 — odpalam workera Celery w tle (kolejka 'indexing')."
+    mkdir -p "$ROOT_DIR/logs"
+    local -a CELERY_WORKER_ARGS
+    celery_worker_args
+    ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" celery "${CELERY_WORKER_ARGS[@]}" \
+        >>"$ROOT_DIR/logs/celery-worker.log" 2>&1 &
+      echo $! >"$WORKER_PID_FILE" )
+    log "Log workera: logs/celery-worker.log (PID $(cat "$WORKER_PID_FILE" 2>/dev/null || echo '?'))"
+    wait_port "${RABBITMQ_HOST_PORT:-5672}" "RabbitMQ" 5
+    warn "Worker działa w tle — zatrzymasz go przez ./run.sh down (albo: kill $(cat "$WORKER_PID_FILE" 2>/dev/null || echo '?'))."
+  fi
+
+  log "Login testowy: default_admin / password  (POST /api/login)"
+  warn "W środowisku produkcyjnym natychmiast zmień hasło konta default_admin."
   ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" ./src/sse_api/run-api.sh )
 }
 
-down() {
-  step "Stop: stopping and removing the PG + Milvus containers (volumes are kept)"
-  have docker || need docker
-  remove_sse_containers
-  log "Stopped. The data stayed in the volumes: ${SSE_VOLUMES[*]}."
-  log "Start it again with ./run-en.sh infra (or ./run-en.sh all)."
-  log "To begin from an empty database and empty vectors: ./run-en.sh clean"
+worker() {
+  step "Worker Celery (kolejka indeksacji) → foreground"
+  [[ -d "$API_DIR/src/sse_api" ]] || { err "Brak src/sse_api/"; exit 1; }
+  [[ "$NO_VENV" == "1" ]] || activate_venv
+  check_celery
+  wait_port "${RABBITMQ_HOST_PORT:-5672}" "RabbitMQ" 30
+  local -a CELERY_WORKER_ARGS
+  celery_worker_args
+  log "Worker: pool=${CELERY_WORKER_POOL:-solo}, kolejka=indexing"
+  log "Login testowy: default_admin / password  (POST /api/login)"
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" celery "${CELERY_WORKER_ARGS[@]}" )
 }
 
-# Full reset: containers + volumes.  The only command of this script that deletes data.
-clean() {
-  step "Clean: removing the containers AND the volumes — all SSE data is gone"
+down() {
+  step "Stop: zatrzymuję i usuwam kontenery PG + Milvus + RabbitMQ (wolumeny zostają)"
+  stop_worker
   have docker || need docker
-  log "Containers: ${SSE_CONTAINERS[*]}"
-  log "Volumes:    ${SSE_VOLUMES[*]}"
+  remove_sse_containers
+  docker_cmd network rm sse-net >/dev/null 2>&1 || true
+  log "Zatrzymano. Dane zostały w wolumenach: ${SSE_VOLUMES[*]}."
+  log "Wrócisz do nich przez ./run.sh infra (albo ./run.sh all)."
+  log "Chcesz zacząć od czystej bazy i czystych wektorów: ./run.sh clean"
+}
+
+# Pełny reset: kontenery + wolumeny.  Jako jedyna komenda skryptu usuwa dane.
+clean() {
+  step "Clean: usuwam kontenery ORAZ wolumeny — wszystkie dane SSE przepadną"
+  have docker || need docker
+  log "Kontenery: ${SSE_CONTAINERS[*]}"
+  log "Wolumeny:   ${SSE_VOLUMES[*]}"
   if [[ "$ASSUME_YES" != "1" ]]; then
     local answer=""
-    printf 'Remove the containers and the volumes (database, vectors)? [y/N]: '
+    printf 'Usunąć kontenery i wolumeny (baza danych, wektory, kolejka)? [tak/N]: '
     read -r answer || answer=""
     case "$answer" in
-      y|Y|yes|YES) ;;
-      *) log "Aborted — nothing was removed."; exit 0 ;;
+      tak|TAK|t|T|y|Y|yes|YES) ;;
+      *) log "Przerwano — nic nie usunięte."; exit 0 ;;
     esac
   fi
+  stop_worker
   remove_sse_containers
   local volume
   for volume in "${SSE_VOLUMES[@]}"; do
     if docker_cmd volume rm "$volume" >/dev/null 2>&1; then
-      log "Removed the '$volume' volume."
+      log "Usunięto wolumen '$volume'."
     fi
   done
-  log "Cleaned. From scratch: ./run-en.sh all (infra + init), then re-index the collections."
+  docker_cmd network rm sse-net >/dev/null 2>&1 || true
+  log "Wyczyszczono. Od zera: ./run.sh all (infra + init), potem re-indeksacja kolekcji."
 }
 
 status() {
   step "Status"
   if have docker; then
-    log "Containers:"
+    log "Kontenery:"
     docker_cmd ps -a --filter name=pg_sse_backend_engine --filter name=milvus-standalone \
+      --filter name=rabbitmq-sse \
       --format '  table {{.Names}}\t{{.Status}}\t{{.Ports}}' 2>/dev/null || true
     local wanted="${SSE_VOLUMES[0]}"
     local volume_name
@@ -434,24 +595,29 @@ status() {
     local existing
     existing="$(docker_cmd volume ls --format '{{.Name}}' 2>/dev/null | grep -E "^(${wanted})$" || true)"
     if [[ -n "$existing" ]]; then
-      log "Volumes with data (they outlive ./run-en.sh down):"
+      log "Wolumeny z danymi (przeżywają ./run.sh down):"
       while IFS= read -r volume_name; do
         [[ -n "$volume_name" ]] && log "  $volume_name"
       done <<< "$existing"
     else
-      log "Volumes: none (./run-en.sh infra creates them)"
+      log "Wolumeny: brak (utworzy je ./run.sh infra)"
     fi
   else
-    warn "Docker unavailable — skipped the container list."
+    warn "Docker niedostępny — pominąłem listę kontenerów."
   fi
-  log "Ports (127.0.0.1):"
+  if [[ -f "$WORKER_PID_FILE" ]] && kill -0 "$(cat "$WORKER_PID_FILE")" 2>/dev/null; then
+    log "Worker Celery: PID $(cat "$WORKER_PID_FILE") (log: logs/celery-worker.log)"
+  else
+    log "Worker Celery: nie działa"
+  fi
+  log "Porty (127.0.0.1):"
   local p
-  for p in 5471 19530 19121 8271; do
+  for p in 5471 19530 19121 5672 8271; do
     if (exec 3<>"/dev/tcp/127.0.0.1/${p}") 2>/dev/null; then
       exec 3>&- 2>/dev/null || true
-      log "  :$p OPEN"
+      log "  :$p OTWARTY"
     else
-      log "  :$p closed"
+      log "  :$p zamknięty"
     fi
   done
 }
@@ -461,6 +627,8 @@ help() {
 }
 
 # ---------- dispatch ----------
+load_env
+apply_celery_defaults
 [[ "$NO_VENV" == "1" ]] || activate_venv
 case "$CMD" in
   all)
@@ -468,17 +636,18 @@ case "$CMD" in
     infra
     init
     if [[ "$SKIP_SERVER" == "1" ]]; then
-      warn "--skip-server: skipping the server start (you can run it later: ./run-en.sh start)."
+      warn "--skip-server: pomijam start serwera (możesz odpalić: ./run.sh start)."
       exit 0
     fi
     start
     ;;
   setup)  setup ;;
-  config) config ;;
   infra)  infra ;;
   init)   init ;;
   cosine) cosine ;;
+  config) config ;;
   start|up) start ;;
+  worker) worker ;;
   down)   down ;;
   clean)  clean ;;
   status) status ;;
