@@ -153,8 +153,10 @@ class ApiContractTest(unittest.TestCase):
         )
 
     def test_indexing_options_match_the_server(self):
+        # The overlap of a chunk is read the same way as the other keys; black
+        # breaks its subscript over lines, so the pattern follows it.
         consumed = _consumed_keys(
-            r'indexing_options\["([a-z_]+)"\]',
+            r'indexing_options\[\s*"([a-z_]+)"\s*\]',
             only=(
                 "data/controllers/upload.py",
                 "engine/controllers/database/relational_db.py",

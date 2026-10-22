@@ -59,6 +59,7 @@ data/
 | **upload_and_index_files**                 | Accept multipart file upload, store files, run relational indexing, and optionally trigger Milvus indexing.        |
 | **add_and_index_texts**                    | Accept raw JSON‑encoded texts (already split into pages) and index them directly.                                  |
 | **categories**, **documents**              | Retrieve distinct categories or document names for a given collection.                                             |
+| **document_content**                   | Whole text of one document (`collection_name` with `document_name` or `document_id`), read page by page from the indexed chunks of one `text_chunk_type`; a document longer than `max_pages` answers `truncated` with `next_page`. |
 | **question_templates**, **filter_options** | Expose the available query templates and mock filter data (useful for UI prototypes).                              |
 | **delete_texts**                           | Delete text chunks of a collection (`chunk_ids[]`), from the relational db and Milvus.                             |
 | **delete_documents**                       | Delete documents (by `documents[]` names and/or `document_ids[]`) with their pages and chunks, from both databases.|

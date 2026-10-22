@@ -506,7 +506,8 @@ docker compose --profile indexing up -d     # api + worker + rabbitmq
 ./run.sh worker   # the indexing worker in the foreground
 ./run.sh start    # the API; with ENV_USE_CELERY=1 a worker starts with it
 ./run.sh status   # containers, worker, ports 5471/19530/19121/5672/8271
-./run.sh down     # stops the worker, removes the containers and the milvus_data volume
+./run.sh down     # stops the worker and removes the containers; the data volumes are kept
+./run.sh clean    # containers + volumes (postgres_data, milvus_data, rabbitmq_data) — deletes the data
 
 # ... or the worker by hand, with the dependencies of the API installed:
 celery -A sse_api.config worker -Q indexing -l INFO
@@ -589,6 +590,7 @@ each app.
 | `GET`  | `/api/rerankers/`              | Configured rerankers: names and `models_info` (`max_model_length` of a pair).   |
 | `GET`  | `/api/categories/`             | List distinct categories present in a collection.                               |
 | `GET`  | `/api/documents/`              | List document names within a collection (used for UI selectors).                |
+| `GET`  | `/api/document_content/`       | Whole text of one document (preview), page by page (`truncated`, `next_page`).  |
 | `GET`  | `/api/indexing_status/`        | Progress of the indexing of a job (`job_id`) or of a collection.                |
 | `POST` | `/api/delete_texts/`           | Delete text chunks (`chunk_ids[]`) from PostgreSQL and their vectors from Milvus.|
 | `POST` | `/api/delete_documents/`       | Delete documents (`documents[]` names and/or `document_ids[]`) with their pages and chunks. |

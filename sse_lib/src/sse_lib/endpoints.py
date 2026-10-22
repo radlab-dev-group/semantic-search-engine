@@ -35,7 +35,9 @@ NEW_COLLECTION = "new_collection"
 COLLECTIONS = "collections"
 CATEGORIES = "categories"
 DOCUMENTS = "documents"
+DOCUMENT_CONTENT = "document_content"
 UPLOAD_AND_INDEX_FILES = "upload_and_index_files"
+INDEXING_STATUS = "indexing_status"
 ADD_AND_INDEX_TEXTS = "add_and_index_texts"
 QUESTION_TEMPLATES = "question_templates"
 FILTER_OPTIONS = "filter_options"
@@ -85,8 +87,10 @@ ALL_ENDPOINTS = frozenset(
         COLLECTIONS,
         CATEGORIES,
         DOCUMENTS,
+        DOCUMENT_CONTENT,
         UPLOAD_AND_INDEX_FILES,
         ADD_AND_INDEX_TEXTS,
+        INDEXING_STATUS,
         QUESTION_TEMPLATES,
         FILTER_OPTIONS,
         DELETE_TEXTS,

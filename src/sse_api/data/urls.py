@@ -7,6 +7,7 @@ from sse_api.data.api import (
     ListCollections,
     ListCategoriesFromCollection,
     ListDocumentsFromCollection,
+    GetDocumentContent,
     ListQuestionTemplates,
     ListFilteringOptions,
     DeleteTextsFromCollection,
@@ -37,6 +38,11 @@ urlpatterns = [
         prepare_api_url("documents"),
         ListDocumentsFromCollection.as_view(),
         name="documents",
+    ),
+    path(
+        prepare_api_url("document_content"),
+        GetDocumentContent.as_view(),
+        name="document_content",
     ),
     path(
         prepare_api_url("upload_and_index_files"),
