@@ -5,6 +5,7 @@ import shutil
 import stat
 import tempfile
 import math
+import ntpath
 
 from pathlib import Path
 from typing import List
@@ -91,12 +92,13 @@ class UploadBudget:
             target.write(chunk)
 
 
-def contained_path(root, name):
+def contained_path(root, name, allow_colon=False):
     if (
         not isinstance(name, str)
         or not name
         or "\\" in name
-        or ":" in name
+        or (":" in name and not allow_colon)
+        or ntpath.splitdrive(name)[0]
         or "\x00" in name
     ):
         raise UploadRejected("Unsafe upload path")
@@ -447,7 +449,7 @@ class UploadDocumentsController:
         if file_to_save.name.lower().endswith(".zip"):
             return self.unzip_uploaded_zip_file(upload_dir, file_to_save, budget)
 
-        target = contained_path(upload_dir, file_to_save.name)
+        target = contained_path(upload_dir, file_to_save.name, allow_colon=True)
         if target.exists() or not target.parent.is_dir():
             raise UploadRejected("Upload path collision")
         created = False

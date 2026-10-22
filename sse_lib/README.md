@@ -85,6 +85,51 @@ Python 3.9+, `requests` as the only runtime dependency.
 
 `SSEClient` is a context manager; leaving the block closes the HTTP session.
 
+### Per-file upload metadata
+
+Upload one whole document per file; SSE performs chunking using the same values
+as `create_collection(..., chunking=...)`:
+
+```python
+name = "doc:20261022:abc123.txt"
+result = client.upload_files(
+    "my_docs",
+    [(name, "Whole document text".encode("utf-8"), "text/plain")],
+    indexing_options={"max_tokens_in_chunk": 400, "number_of_overlap_tokens": 60},
+    file_metadata={name: {
+        "category": "doc",
+        "options": {"source_file": "docs/guide.md", "scope": "project",
+                    "doc_type": "markdown"},
+    }},
+)
+```
+
+`file_metadata` is a separate multipart JSON string, not an indexing option.
+When supplied, it must cover every non-ZIP file exactly once. Each entry requires
+`category` (string, including an empty string) and `options` (JSON object); other
+entry fields are rejected. Exact names are preferred; unique basename aliases
+are accepted. Missing/unknown/ambiguous names, duplicate aliases or JSON keys,
+invalid shapes and non-finite numbers are rejected. ZIP archives may be included
+in the batch, but neither archives nor their members may have metadata entries.
+
+`category` is stored in `Document.category`; `options` is merged into
+`Document.metadata_json`, with supplied values winning over reader values.
+It is not stored under an extra `options` wrapper. Nested JSON values are
+preserved. Omit `file_metadata` (or pass `None`) for legacy behavior, including ZIP
+directory categories. The constructor and upload response are unchanged.
+
+Both the API and Celery workers must run the updated server code. No schema
+migration or new dependency is required: metadata is persisted in the existing
+`IndexingJob.request_payload` before dispatch. Update/reinstall `sse_lib` in client
+environments as well; an older server does not support this contract.
+
+For a no-server transport test, see
+`tests/test_client.py::IndexingTest.test_worker_upload_bytes_with_file_metadata`
+and `tests/support.py`: `build_client` constructs the real
+`SSEClient(host, token=..., transport=Transport(host, session=FakeSession(...)))`.
+The fake session returns real `requests.Response` objects with the envelope
+`{"status": true, "body": {"dir_hash": "h", "is_indexed": true}}`.
+
 ## API coverage
 
 | Client method | REST endpoint |

@@ -33,6 +33,7 @@ from sse_api.data.serializers import (
 )
 from sse_api.data import indexing_queue
 from sse_api.data.core import indexing_progress
+from sse_api.data.core.file_metadata import FileMetadataError, resolve_file_metadata
 from sse_api.data.controllers.upload import UploadDocumentsController, UploadRejected
 from sse_api.data import indexing_pipeline
 from sse_api.data.controllers.deletion import (
@@ -300,6 +301,13 @@ class UploadAndIndexFilesToCollection(APIView):
         if not files:
             return error_response(INVALID_PARAMS, language)
 
+        try:
+            file_metadata = resolve_file_metadata(
+                request.data.get("file_metadata"), [file.name for file in files]
+            )
+        except (TypeError, ValueError):
+            return error_response(UPLOAD_REJECTED, language)
+
         collection = RelationalDBController.get_collection(
             collection_name=collection_name, created_by=organisation_user
         )
@@ -325,6 +333,9 @@ class UploadAndIndexFilesToCollection(APIView):
             organisation_user=organisation_user,
             kind=INDEXING_JOB_FILES,
             indexing_options=indexing_options,
+            request_payload=(
+                {"file_metadata": file_metadata} if file_metadata is not None else None
+            ),
         )
 
         if indexing_queue.async_indexing():
@@ -361,7 +372,7 @@ class UploadAndIndexFilesToCollection(APIView):
                 semantic_config_path=MILVUS_CONFIG_PATH,
                 indexing_job=job,
             )
-        except UploadRejected:
+        except (UploadRejected, FileMetadataError):
             indexing_progress.fail_job(job, "upload rejected")
             return error_response(UPLOAD_REJECTED, language)
 

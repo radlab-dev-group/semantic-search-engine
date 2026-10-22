@@ -116,6 +116,34 @@ re-split, existing chunks require re-indexing.
 3. **Optional text‑only indexing** – Use `/api/<version>/add_and_index_texts/` when the client already has pre‑processed
    JSON text chunks.
 
+### Per-file metadata
+
+`upload_and_index_files` accepts an optional multipart `file_metadata` JSON object
+encoded as a string: `{"name.txt": {"category": "doc", "options": {"source_file": "docs/guide.md"}}}`.
+It is independent of `indexing_options`; send complete files and let SSE chunk
+them using the collection/request chunking configuration.
+
+If present, the mapping must cover all ordinary files exactly once. Names match
+exactly first, then by unique basename (including path-qualified metadata keys).
+Missing, unknown or ambiguous targets, duplicate JSON keys/aliases, invalid entry
+types, extra entry fields and non-finite JSON numbers return the existing
+`UPLOAD_REJECTED` (`000001_DATA`) envelope before storage or queue dispatch.
+Every entry requires a string `category` and a JSON object `options`.
+
+The normalized mapping is durably stored in `IndexingJob.request_payload` for both
+inline and Celery processing. Before document hashing and insertion, explicit
+`category` overrides the reader/directory category in `Document.category`, and
+`options` merges into `Document.metadata_json` (supplied keys win, nested values
+are preserved). A reader which drops or duplicates a mapped file fails preparation
+instead of silently losing metadata. No model schema change/migration is needed.
+
+Omitting the field keeps legacy behavior. ZIP archives and their members cannot
+be metadata targets; mixed batches may supply metadata only for ordinary files.
+Metadata is matched to the stored relative path, never to the basename of a ZIP
+member. Ordinary filenames such as `doc:20261022:digest.txt` are supported;
+drive paths and unsafe ZIP paths remain rejected. Deploy the updated API and
+workers together and update the Python client; no new dependency is introduced.
+
 ### Upload safety and limits
 
 `data/controllers/upload.py` copies uploads in 64 KiB chunks. ZIP archives are
