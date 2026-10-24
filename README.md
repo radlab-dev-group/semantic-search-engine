@@ -141,7 +141,7 @@ semantic-search-engine/
 ├── requirements-dev.txt          # Tests, linters, type checkers
 ├── pyproject.toml                # Build + tool configuration (black, mypy, bandit, pylint)
 ├── setup.cfg                     # flake8 options
-├── run.sh / run-en.sh            # One‑command local startup (PL / EN)
+├── run.sh                        # One‑command local startup
 ├── check-dev.sh                  # Local quality gate
 └── README.md                     # <-- you are reading this file!
 ```

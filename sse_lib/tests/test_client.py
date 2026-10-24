@@ -396,6 +396,52 @@ class CollectionsTest(unittest.TestCase):
 
 
 class IndexingTest(unittest.TestCase):
+    def test_worker_upload_bytes_with_file_metadata(self):
+        client = build_client([ok({"dir_hash": "h", "is_indexed": True})])
+        name = "doc:20261022:abc123.txt"
+        content = "Dokument zażółć".encode("utf-8")
+        metadata = {
+            name: {
+                "category": "doc",
+                "options": {
+                    "source_file": "docs/guide.md",
+                    "scope": "project",
+                    "doc_type": "markdown",
+                    "nested": {"tags": ["żółć"]},
+                },
+            }
+        }
+        result = client.upload_files(
+            "docs",
+            [(name, content, "text/plain")],
+            indexing_options={
+                "max_tokens_in_chunk": 400,
+                "number_of_overlap_tokens": 60,
+            },
+            file_metadata=metadata,
+        )
+        call = client.fake_session.calls[0]
+        self.assertEqual(call.files, [("files[]", (name, content, "text/plain"))])
+        self.assertEqual(json.loads(call.data["file_metadata"]), metadata)
+        options = json.loads(call.data["indexing_options"])
+        self.assertEqual(options["max_tokens_in_chunk"], 400)
+        self.assertEqual(options["number_of_overlap_tokens"], 60)
+        self.assertNotIn("file_metadata", options)
+        self.assertTrue(result.is_indexed)
+
+    def test_upload_rejects_non_json_metadata_before_transport(self):
+        for metadata in ([], {"x": {"options": {"v": float("nan")}}}, {"x": object()}):
+            with self.subTest(metadata=metadata):
+                client = build_client([])
+                with self.assertRaises(SSEValueError):
+                    client.upload_files(
+                        "docs",
+                        [("x", b"text", "text/plain")],
+                        file_metadata=metadata,
+                        **INDEXING,
+                    )
+                self.assertEqual(client.fake_session.calls, [])
+
     def test_upload_files_builds_a_multipart_request(self):
         client = build_client([ok({"dir_hash": "h", "is_indexed": True})])
         result = client.upload_files(
@@ -416,6 +462,7 @@ class IndexingTest(unittest.TestCase):
             json.loads(call.data["indexing_options"])["max_tokens_in_chunk"], 200
         )
         self.assertEqual(call.data["lang"], "pl")
+        self.assertNotIn("file_metadata", call.data)
         field_name, (uploaded_name, uploaded, content_type) = call.files[0]
         self.assertEqual(field_name, "files[]")
         self.assertEqual(uploaded_name, "file.txt")

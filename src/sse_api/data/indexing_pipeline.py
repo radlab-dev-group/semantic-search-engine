@@ -119,6 +119,7 @@ def run_prepare(
             check_text_language=options.get("check_text_lang", True),
             number_of_process=reading_processes(number_of_process),
             indexing_job=job,
+            file_metadata=(job.request_payload or {}).get("file_metadata"),
         )
     elif job.kind == INDEXING_JOB_TEXTS:
         relational.add_documents_from_list_of_doc_as_dict(

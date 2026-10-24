@@ -21,6 +21,7 @@ from sse_api.data.models import (
 )
 from sse_api.data.controllers.denoiser import DenoiserController
 from sse_api.data.core.constants import DOCUMENT_STATUS_PENDING
+from sse_api.data.core.file_metadata import apply_file_metadata
 from sse_api.engine.controllers.models_logic.embedders_rerankers import (
     EmbeddingModelsConfig,
 )
@@ -80,6 +81,7 @@ class RelationalDBController:
         check_text_language: bool = True,
         number_of_process: int = 1,
         indexing_job=None,
+        file_metadata=None,
     ) -> (UploadedDocuments, list):
         """
         Adds previously uploaded files to database.
@@ -98,6 +100,7 @@ class RelationalDBController:
         :param number_of_process: Number of processes to use (default is 1)
         :param indexing_job: IndexingJob the new documents belong to; when given,
             every new document starts in status ``pending`` (default is None)
+        :param file_metadata: Validated per-file category and metadata options
         :return: UploadedDocuments
         """
         self.dir_reader = DirectoryFileReader(
@@ -116,6 +119,11 @@ class RelationalDBController:
             check_text_language=check_text_language,
         )
 
+        documents = apply_file_metadata(
+            [doc.as_dict for doc in self.dir_reader.documents],
+            file_metadata,
+            uploaded_document.dir_path,
+        )
         collection = self.get_add_collection(
             collection_name=collection_name,
             created_by=organisation_user,
@@ -132,8 +140,7 @@ class RelationalDBController:
         with tqdm.tqdm(
             total=len(self.dir_reader.documents), desc="Adding documents to database"
         ) as pbar:
-            for doc in self.dir_reader.documents:
-                doc_as_dict = doc.as_dict
+            for doc_as_dict, explicit_category in documents:
                 if self.exists_document_in_db(
                     doc_as_dict=doc_as_dict, collection=collection
                 ):
@@ -148,6 +155,7 @@ class RelationalDBController:
                     upload_process=uploaded_document,
                     use_text_denoiser=use_text_denoiser,
                     indexing_job=indexing_job,
+                    preserve_category=explicit_category,
                 )
                 added_document_chunks.extend(document_pages_chunks)
                 pbar.update()
@@ -224,6 +232,7 @@ class RelationalDBController:
         upload_process: UploadedDocuments = None,
         use_text_denoiser: bool = False,
         indexing_job=None,
+        preserve_category: bool = False,
     ) -> (Document, list):
         """
         Adds a document from dictionary to collection of documents.
@@ -234,6 +243,7 @@ class RelationalDBController:
         :param upload_process: If given then document will be connected with upload proces
         :param use_text_denoiser: Text will be denoised if true
         :param indexing_job: IndexingJob to remember on a newly created document
+        :param preserve_category: Keep an explicit upload category, even if empty
         :return: Document
         """
         metadata = document_dict["options"]
@@ -268,7 +278,7 @@ class RelationalDBController:
                 ),
             )
 
-        if cr and document.upload_process is not None:
+        if cr and document.upload_process is not None and not preserve_category:
             document.category = self._prepare_document_category(document)
             document.save()
 

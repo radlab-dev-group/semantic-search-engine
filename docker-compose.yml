@@ -2,7 +2,7 @@
 # Semantic Search Engine — production compose stack (API + PostgreSQL + Milvus
 # + nginx, plus an optional Celery worker + RabbitMQ under --profile indexing).  Read SETUP.md ("Production deployment") before the first start.
 #
-#   cp .env.example .env      # or: ./run-en.sh config
+#   cp .env.example .env      # or: ./run.sh config
 #   $EDITOR .env              # every CHANGE_ME has to disappear
 #   docker compose --profile tools run --rm tools python -m sse_api.manage migrate --noinput
 #   docker compose up -d
@@ -208,7 +208,7 @@ services:
     ports:
       # Bound to loopback by default; the SDK and the metrics port are only
       # needed on the host for administration. `MILVUS_BIND_HOST` matches
-      # `POSTGRES_BIND_HOST` and the `run.sh`/`run-en.sh` defaults.
+      # `POSTGRES_BIND_HOST` and the `run.sh` defaults.
       - "${MILVUS_BIND_HOST:-127.0.0.1}:${MILVUS_HOST_PORT:-19530}:19530"
       - "${MILVUS_BIND_HOST:-127.0.0.1}:${MILVUS_METRICS_HOST_PORT:-19121}:19121"
     depends_on:

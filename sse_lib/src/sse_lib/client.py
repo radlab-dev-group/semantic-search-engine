@@ -13,6 +13,7 @@ sent as a JSON string by ``search_with_options``).
 
 from __future__ import annotations
 
+import json
 import mimetypes
 import os
 from typing import (
@@ -496,6 +497,7 @@ class SSEClient:
         files: Union[FileLike, Sequence[FileLike]],
         *,
         indexing_options: Optional[OptionsLike] = None,
+        file_metadata: Optional[Mapping[str, Mapping[str, Any]]] = None,
         **indexing_kwargs: Any,
     ) -> UploadResult:
         """Upload and index files (``POST upload_and_index_files``).
@@ -505,6 +507,9 @@ class SSEClient:
         the server.  Chunking/cleaning is configured with
         :class:`sse_lib.options.IndexingOptions` (or plain keyword arguments);
         chunk size and overlap left out are taken from the collection.
+        ``file_metadata`` maps each ordinary file name to ``category`` (string)
+        and ``options`` (document metadata object). ZIP contents are not mapped.
+        Omit it to keep the legacy reader metadata and directory categories.
         """
         options = self._build_options(
             IndexingOptions,
@@ -515,16 +520,24 @@ class SSEClient:
         # Checked before any file handle is opened: the server refuses these
         # two as null, so there is nothing to upload until they are set.
         validate_indexing(options, endpoint=endpoints.UPLOAD_AND_INDEX_FILES)
+        data = {
+            "collection_name": _name(collection),
+            "indexing_options": options.to_json(),
+            "lang": self.language,
+        }
+        if file_metadata is not None:
+            if not isinstance(file_metadata, Mapping):
+                raise SSEValueError("file_metadata must be a mapping")
+            try:
+                data["file_metadata"] = json.dumps(dict(file_metadata), allow_nan=False)
+            except (TypeError, ValueError) as exc:
+                raise SSEValueError("file_metadata must contain JSON values") from exc
         prepared, opened = _prepare_files(files)
         try:
             body = self.request(
                 "POST",
                 endpoints.UPLOAD_AND_INDEX_FILES,
-                data={
-                    "collection_name": _name(collection),
-                    "indexing_options": options.to_json(),
-                    "lang": self.language,
-                },
+                data=data,
                 files=prepared,
             )
         finally:

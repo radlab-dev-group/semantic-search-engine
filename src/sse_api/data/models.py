@@ -227,7 +227,7 @@ class IndexingJob(models.Model):
     # Options the documents have to be indexed with; the task may not read the
     # request of the upload anymore.
     indexing_options = models.JSONField(null=True)
-    # Body of the request for the kinds which need it: the pasted ``texts``.
+    # Request data needed by workers: pasted ``texts`` or upload ``file_metadata``.
     request_payload = models.JSONField(null=True)
 
     total_documents = models.IntegerField(null=True)

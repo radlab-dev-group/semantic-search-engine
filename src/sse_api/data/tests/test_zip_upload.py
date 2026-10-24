@@ -66,9 +66,24 @@ class ZipUploadTests(SimpleTestCase):
             "a\\escape",
             "a/./b",
             "a//b",
+            "doc:20261022:abc.txt",
         ):
             with self.subTest(name=name):
                 self.rejected(archive([("good.txt", b"ok"), (name, b"bad")]))
+
+    def test_regular_worker_name_and_drive_path_rejection(self):
+        controller = UploadDocumentsController(store_to_db=False)
+        name = "doc:20261022:abc.txt"
+        paths = controller._store_single_file_to_upload_dir(
+            self.root, SimpleUploadedFile(name, b"content")
+        )
+        self.assertEqual(paths, [str(self.root / name)])
+        self.assertEqual((self.root / name).read_bytes(), b"content")
+        for name in ("C:escape.txt", "../escape.txt", "a\\escape.txt"):
+            with self.subTest(name=name), self.assertRaises(UploadRejected):
+                controller._store_single_file_to_upload_dir(
+                    self.root, SimpleNamespace(name=name)
+                )
 
     def test_symlink_and_special_file(self):
         for mode in (stat.S_IFLNK, stat.S_IFIFO):

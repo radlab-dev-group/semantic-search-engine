@@ -16,7 +16,7 @@
     }
   ],
   "active_models": [
-    "google/embeddinggemma-2",
-    "google/embeddinggemma-300m"
+    "google/embeddinggemma-300m",
+    "google/embeddinggemma-2"
   ]
 }
