@@ -60,6 +60,30 @@ class SSEHealthCheck(APIView):
         )
 
 
+class SSEMetrics(APIView):
+    """
+    Prometheus scrape endpoint (``GET /api/metrics``).
+
+    Public like ``healthz``: a scraper has no token to present, and the body
+    carries no data of the collections -- only request counts, latencies and
+    the status codes the API returned.  It opts out of authentication and of
+    the throttles, because a scraper that gets told to back off would look
+    exactly like an unhealthy instance.
+    """
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = []
+
+    def get(self, request):
+        from sse_api.core import metrics
+
+        return Response(
+            metrics.render(),
+            content_type="text/plain; version=0.0.4; charset=utf-8",
+        )
+
+
 class OrganisationLogin(ObtainAuthToken):
     """
     Main endpoint to organisation login

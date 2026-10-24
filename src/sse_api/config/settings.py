@@ -57,6 +57,9 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Counts every request for the /api/metrics endpoint; it never touches
+    # the response, so a failure of the accounting cannot break a request.
+    "sse_api.core.metrics.MetricsMiddleware",
 ]
 
 # =============================================================================

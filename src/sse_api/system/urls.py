@@ -1,6 +1,6 @@
 from django.urls import path
 
-from sse_api.system.api import OrganisationLogin, SSEHealthCheck
+from sse_api.system.api import OrganisationLogin, SSEHealthCheck, SSEMetrics
 from sse_api.core.constants import prepare_api_url
 
 urlpatterns = [
@@ -20,4 +20,10 @@ urlpatterns = [
         name="healthz",
     ),
     path("healthz", SSEHealthCheck.as_view(), name="healthz_bare"),
+    # Prometheus scrape endpoint; public and unthrottled like the probe.
+    path(
+        prepare_api_url("metrics"),
+        SSEMetrics.as_view(),
+        name="metrics",
+    ),
 ]

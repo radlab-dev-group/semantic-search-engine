@@ -18,6 +18,7 @@ The module is used by the web application to answer user questions
 against a collection of documents.
 """
 
+import concurrent.futures
 import tqdm
 import json
 import pandas as pd
@@ -789,18 +790,45 @@ class DBSemanticSearchController:
         if hybrid_search and do_rerank:
             milvus_max_results = rerank_max_results
 
-        milvus_results = self.search(
-            search_text=question_str,
-            max_results=milvus_max_results,
-            rerank_results=do_rerank if not hybrid_search else False,
-            language=lang_str,
-            return_with_factored_fields=bool(
-                search_params.get("return_with_factored_fields", False)
-            ),
-            search_in_documents=docs_to_search,
-            relative_paths=relative_paths,
-            min_similarity=min_similarity,
-        )[0]
+        def _vector_search():
+            return self.search(
+                search_text=question_str,
+                max_results=milvus_max_results,
+                rerank_results=do_rerank if not hybrid_search else False,
+                language=lang_str,
+                return_with_factored_fields=bool(
+                    search_params.get("return_with_factored_fields", False)
+                ),
+                search_in_documents=docs_to_search,
+                relative_paths=relative_paths,
+                min_similarity=min_similarity,
+            )[0]
+
+        def _fulltext_search():
+            return textual_controller.search_texts(
+                query_str=question_str,
+                collection=collection,
+                max_results=max_results,
+                filters={
+                    "document_names": docs_to_search,
+                    "relative_paths": relative_paths,
+                    "language": lang_str,
+                },
+                language=lang_str,
+            )
+
+        # The two retrievals are independent: the vector search and the
+        # full-text search read from different databases, so they run in
+        # parallel and the RRF merge waits for both.
+        if hybrid_search:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                milvus_future = pool.submit(_vector_search)
+                postgres_future = pool.submit(_fulltext_search)
+                milvus_results = milvus_future.result()
+                postgres_results = postgres_future.result()
+        else:
+            milvus_results = _vector_search()
+            postgres_results = None
 
         # Prepare results to presents for user
         texts_ids = []
@@ -816,17 +844,6 @@ class DBSemanticSearchController:
         texts_similarity = None
 
         if hybrid_search:
-            postgres_results = textual_controller.search_texts(
-                query_str=question_str,
-                collection=collection,
-                max_results=max_results,
-                filters={
-                    "document_names": docs_to_search,
-                    "relative_paths": relative_paths,
-                    "language": lang_str,
-                },
-                language=lang_str,
-            )
             texts_ids, texts_scores = self._rrf_merge(
                 milvus_results=milvus_results,
                 postgres_results=postgres_results,

@@ -524,6 +524,10 @@ start() {
     log "Worker log: logs/celery-worker.log (PID $(cat "$WORKER_PID_FILE" 2>/dev/null || echo '?'))"
     wait_port "${RABBITMQ_HOST_PORT:-5672}" "RabbitMQ" 5
     warn "The worker runs in the background — stop it with ./run.sh down (or: kill $(cat "$WORKER_PID_FILE" 2>/dev/null || echo '?'))."
+  else
+    warn "ENV_USE_CELERY is off — every upload is indexed inside the request that sent it."
+    warn "Large uploads can outlive GUNICORN_TIMEOUT (300s) and block a worker for minutes."
+    warn "For a production deployment set ENV_USE_CELERY=1 and keep the worker running."
   fi
 
   log "Test login: default_admin / password  (POST /api/login)"

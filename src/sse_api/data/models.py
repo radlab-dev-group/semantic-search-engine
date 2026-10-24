@@ -22,7 +22,7 @@ class CollectionOfDocuments(models.Model):
 
     # pk: auto id
 
-    name = models.TextField(null=False)
+    name = models.TextField(null=False, db_index=True)
     display_name = models.TextField(null=False)
 
     description = models.TextField(null=True)
@@ -153,10 +153,10 @@ class UploadedDocuments(models.Model):
 
 class Document(models.Model):
     # pk: auto-id
-    name = models.TextField(null=False)
+    name = models.TextField(null=False, db_index=True)
 
     collection = models.ForeignKey(
-        CollectionOfDocuments, on_delete=models.PROTECT, null=False
+        CollectionOfDocuments, on_delete=models.PROTECT, null=False, db_index=True
     )
 
     # Path to file is unique, in case when file comes from same path
@@ -285,7 +285,7 @@ class DocumentPageText(models.Model):
     text_str_clear = models.TextField(null=True)
     text_hash = models.TextField(null=False)
     text_chunk_type = models.TextField(null=False)
-    language = models.TextField(null=False)
+    language = models.TextField(null=False, db_index=True)
 
     metadata_json = models.JSONField(null=True)
 
