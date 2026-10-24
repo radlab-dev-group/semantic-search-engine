@@ -109,7 +109,66 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 10,
     # 'DATETIME_FORMAT': '%s000',
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    # Throttling.  Anonymous clients are budgeted per IP (an anonymous
+    # request cannot burn the embedding/LLM budget of the deployment),
+    # authenticated users per user, and the login endpoints carry a
+    # dedicated, tighter throttle (see StrictAuthThrottle) so a script
+    # cannot brute-force a password.  The rates are the burst budgets;
+    # raise them per deployment through the environment if needed.
+    "DEFAULT_THROTTLE_CLASSES": [
+        "sse_api.core.throttles.BurstAnonRateThrottle",
+        "sse_api.core.throttles.BurstUserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": os.environ.get("SSE_THROTTLE_ANON", "60/minute"),
+        "user": os.environ.get("SSE_THROTTLE_USER", "300/minute"),
+        "auth": os.environ.get("SSE_THROTTLE_AUTH", "10/minute"),
+    },
 }
+
+# SimpleRateThrottle counts hits in the cache; without a CACHES entry
+# Django falls back to its own LocMemCache definition.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "sse-throttles",
+    }
+}
+
+
+def _production_security_settings():
+    """
+    Django security settings applied whenever ``DEBUG`` is off.
+
+    nginx (``nginx/sse.conf``) already terminates TLS and sends
+    ``X-Forwarded-Proto: https``; the settings below are what Django needs
+    on the other side of that proxy.  With ``DEBUG`` on the SSL redirect is
+    dropped so a local ``http://localhost`` dev server keeps working.
+    """
+    return {
+        "SECURE_PROXY_SSL_HEADER": ("HTTP_X_FORWARDED_PROTO", "https"),
+        "SECURE_SSL_REDIRECT": not DEBUG,
+        "SECURE_CONTENT_TYPE_NOSNIFF": True,
+        "X_FRAME_OPTIONS": "DENY",
+        "SECURE_HSTS_SECONDS": 31536000,
+        "SECURE_HSTS_INCLUDE_SUBDOMAINS": True,
+        "SECURE_HSTS_PRELOAD": True,
+        "SESSION_COOKIE_SECURE": not DEBUG,
+        "SESSION_COOKIE_HTTPONLY": True,
+        "CSRF_COOKIE_SECURE": not DEBUG,
+    }
+
+
+for _name, _value in _production_security_settings().items():
+    globals()[_name] = _value
+
+_env_csrf_origins = os.environ.get("ENV_CSRF_TRUSTED_ORIGINS", "").strip()
+if _env_csrf_origins:
+    CSRF_TRUSTED_ORIGINS = [
+        origin.strip()
+        for origin in _env_csrf_origins.split(",")
+        if origin.strip()
+    ]
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = int(
     os.environ.get("DATA_UPLOAD_MAX_MEMORY_SIZE", 5242880)

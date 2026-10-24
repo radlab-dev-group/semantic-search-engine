@@ -3,6 +3,10 @@ from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 from rest_framework.authtoken.models import Token
 from rest_framework.authtoken.views import ObtainAuthToken
+from rest_framework.settings import api_settings
+
+from sse_api.core.throttles import StrictAuthThrottle
+
 
 from sse_api.core.errors import error_response
 from sse_api.core.errors_list import NO_LOGIN_PARAMS
@@ -34,6 +38,9 @@ class SSEHealthCheck(APIView):
 
     authentication_classes = []
     permission_classes = [AllowAny]
+    # A load-balancer probe has no token and must never be told to back off,
+    # or an unhealthy-but-throttled instance would look worse than a down one.
+    throttle_classes = []
 
     def get(self, request):
         try:
@@ -60,9 +67,14 @@ class OrganisationLogin(ObtainAuthToken):
       "username": "user",
       "password": "User0123",
     }```
+
+    Carries :class:`StrictAuthThrottle` on top of the default throttles:
+    the login budget is per IP and deliberately tight, which is what keeps a
+    script from brute-forcing a password.
     """
 
     required_params = ["username", "password"]
+    throttle_classes = [*api_settings.DEFAULT_THROTTLE_CLASSES, StrictAuthThrottle]
 
     @required_params_exists(required_params=required_params)
     def post(self, request, *args, **kwargs):

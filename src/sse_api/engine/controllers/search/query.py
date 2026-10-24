@@ -9,7 +9,51 @@ from sse_api.engine.models import (
     UserQueryResponse,
     UserQueryResponseAnswer,
 )
+import os
+
+from sse_api.core.constants import CONFIG_DIR
+
 from sse_api.engine.controllers.search.semantic import DBSemanticSearchController
+
+
+#: (collection pk, index type, embedder, reranker, config path) -> controller.
+#: One controller per process: the embedder and the tokenizer of the model
+#: are loaded once, and every search of the same collection reuses them
+#: instead of re-running ``AutoTokenizer.from_pretrained`` per request.
+_SEARCH_CONTROLLERS: dict = {}
+
+
+def clear_search_controller_cache() -> None:
+    """Forget the cached controllers (tests, or the model of a collection changed)."""
+    _SEARCH_CONTROLLERS.clear()
+
+
+def controller_for_collection(
+    collection, jsonl_config_path: str = None
+) -> DBSemanticSearchController:
+    """
+    The cached ``DBSemanticSearchController`` of ``collection``.
+
+    Mirrors ``indexing_pipeline.semantic_controller_for``: one controller per
+    worker process and collection, so the heavy model load happens once and
+    every subsequent search of the collection reuses it.
+    """
+    if jsonl_config_path is None:
+        jsonl_config_path = os.path.join(CONFIG_DIR, "milvus_config.json")
+    key = (
+        collection.pk,
+        collection.embedder_index_type,
+        collection.model_embedder,
+        collection.model_reranker,
+        jsonl_config_path,
+    )
+    controller = _SEARCH_CONTROLLERS.get(key)
+    if controller is None:
+        controller = DBSemanticSearchController.prepare_controller_for_collection(
+            collection=collection, sse_engin_config_path=jsonl_config_path
+        )
+        _SEARCH_CONTROLLERS[key] = controller
+    return controller
 
 
 class SearchQueryController:
@@ -68,10 +112,9 @@ class SearchQueryController:
             query_options=search_options_dict,
         )
 
-        sem_db_controller = (
-            DBSemanticSearchController.prepare_controller_for_collection(
-                collection=collection, sse_engin_config_path=sse_engin_config_path
-            )
+        sem_db_controller = controller_for_collection(
+            collection=collection,
+            jsonl_config_path=sse_engin_config_path,
         )
 
         # template_prompts
