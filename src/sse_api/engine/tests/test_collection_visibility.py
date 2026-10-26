@@ -92,6 +92,68 @@ class EndpointVisibilityMixin:
                         self.visible_ids(user),
                     )
 
+    def test_list_endpoint_carries_the_document_counters(self):
+        from sse_api.data.api import ListCollections
+        from sse_api.data.models import Document
+
+        # Private: two active documents, one disabled one
+        Document.objects.create(
+            name="p1",
+            collection=self.private,
+            added_by=self.owner,
+            path="/p1",
+            relative_path="p1",
+            document_hash="p1",
+        )
+        Document.objects.create(
+            name="p2",
+            collection=self.private,
+            added_by=self.owner,
+            path="/p2",
+            relative_path="p2",
+            document_hash="p2",
+        )
+        Document.objects.create(
+            name="p3",
+            collection=self.private,
+            added_by=self.owner,
+            use_in_search=False,
+            path="/p3",
+            relative_path="p3",
+            document_hash="p3",
+        )
+        # Shared: one active document
+        Document.objects.create(
+            name="s1",
+            collection=self.shared,
+            added_by=self.owner,
+            path="/s1",
+            relative_path="s1",
+            document_hash="s1",
+        )
+
+        names = list(CollectionOfDocuments.objects.values_list("name", flat=True))
+        with patch("sse_api.data.api.SemanticDBController") as semantic:
+            semantic.return_value.collections.return_value = names
+            response = self.request_view(ListCollections, self.owner)
+
+        self.assertTrue(response.data["status"])
+        by_name = {row["name"]: row for row in response.data["body"]["collections"]}
+        self.assertEqual(
+            (
+                by_name["Private"]["document_count"],
+                by_name["Private"]["active_document_count"],
+            ),
+            (3, 2),
+        )
+        self.assertEqual(
+            (
+                by_name["Shared"]["document_count"],
+                by_name["Shared"]["active_document_count"],
+            ),
+            (1, 1),
+        )
+
     def test_search_rejects_nonmember_before_query_execution(self):
         from sse_api.engine.api import SearchWithOptions
 
