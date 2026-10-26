@@ -4,7 +4,9 @@ deletion.py
 
 Deletion of the content of a collection in both databases of the engine:
 the relational one (documents, pages and text chunks) and the vector one
-(embeddings of the removed texts).
+(embeddings of the removed texts).  The files which the documents were
+indexed from are removed too, as the last step of every deletion, so that a
+document which is still in the databases never loses its file.
 
 Rows are always removed first and vectors afterwards, so that removed rows
 are never indexed again. Every method reports what was removed::
@@ -21,6 +23,12 @@ from typing import List
 
 from django.db.models.deletion import ProtectedError  # type: ignore[import-untyped]
 
+from sse_api.data.controllers.file_cleanup import (
+    FileCleanupResult,
+    collection_paths,
+    document_paths,
+    remove_paths,
+)
 from sse_api.data.models import CollectionOfDocuments
 
 from sse_api.engine.controllers.database.relational_db import RelationalDBController
@@ -44,6 +52,11 @@ class DeletionResult:
     deleted_vectors: int = 0
     dropped_collection: bool = False
     not_found: List[str] = field(default_factory=list)
+    #: Files of the uploads which disappeared from the disk, and the files
+    #: which could not be removed (a read-only mount, a file deleted by hand).
+    #: A problem with the disk never fails the deletion of the databases.
+    deleted_files: int = 0
+    file_errors: List[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         """
@@ -56,6 +69,8 @@ class DeletionResult:
             "deleted_vectors": self.deleted_vectors,
             "dropped_collection": self.dropped_collection,
             "not_found": self.not_found,
+            "deleted_files": self.deleted_files,
+            "file_errors": self.file_errors,
         }
 
 
@@ -135,6 +150,7 @@ class ContentDeletionController:
             )
         documents = self.__unique_documents(documents)
         document_ids = [document.pk for document in documents]
+        paths = document_paths(documents)
 
         deleted = self.__safe_delete(
             lambda: RelationalDBController.delete_documents(documents=documents)
@@ -144,6 +160,9 @@ class ContentDeletionController:
             deleted_vectors = self.__semantic_db_controller().delete_documents(
                 collection_name=collection.name, external_ids=document_ids
             )
+        # The files of the uploads go last: nothing may lose the file of a
+        # document which is still in the databases.
+        files = remove_paths(paths) if len(paths) else FileCleanupResult()
         not_found = sorted(
             set(wanted_names) - {document.name for document in documents}
         )
@@ -154,6 +173,8 @@ class ContentDeletionController:
             deleted=deleted,
             deleted_vectors=deleted_vectors,
             not_found=not_found,
+            deleted_files=files.deleted,
+            file_errors=files.errors,
         )
 
     def delete_collection(self, collection: CollectionOfDocuments) -> DeletionResult:
@@ -163,6 +184,9 @@ class ContentDeletionController:
         :return: DeletionResult
         """
         collection_name = collection.name
+        # The paths of the files have to be read before the rows of the
+        # documents are gone, as the databases are where they are kept.
+        paths = collection_paths(collection)
         deleted = self.__safe_delete(
             lambda: RelationalDBController.delete_collection(collection=collection)
         )
@@ -170,7 +194,13 @@ class ContentDeletionController:
         dropped = semantic_db_controller.drop_collection(
             collection_name=collection_name
         )
-        return DeletionResult(deleted=deleted, dropped_collection=dropped)
+        files = remove_paths(paths) if len(paths) else FileCleanupResult()
+        return DeletionResult(
+            deleted=deleted,
+            dropped_collection=dropped,
+            deleted_files=files.deleted,
+            file_errors=files.errors,
+        )
 
     # ------------------------------------------------------------------
     # internals

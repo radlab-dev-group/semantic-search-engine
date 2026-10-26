@@ -4,6 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
+| [0.1.7](#017) | Files of the uploads on the disk: `delete_documents` / `delete_collection` remove them with the rows (`deleted_files`, `file_errors`), and the new `delete_files_after_indexing` option of an indexing call removes the file of every document once it is indexed |
 | [0.1.6](#016) | Date of a search in the history (`UserQuery.created_on`, `created_on` in `search_history` / `get_search_history`); `sse_lib.SearchHistory.created_on` |
 | [0.1.5](#015) | Counters of the documents in `GET collections` (`document_count`, `active_document_count`), one query for the whole answer; `sse_lib.Collection` exposes both |
 | [0.1.4](#014) | Preview of a whole document: `GET document_content` (PostgreSQL only) and `sse_lib.SSEClient.document_content` / `indexing_status` |
@@ -13,6 +14,32 @@ All notable changes to the Semantic Search Engine are documented in this file.
 | [0.1.0](#010) | Python client library, hybrid search, production deployment tooling, `src/` layout and CI |
 | [0.0.1](#001) | Initial version |
 
+
+## [0.1.7]
+
+### Added
+
+#### Files of the uploads
+- **`delete_documents` and `delete_collection` remove the files of the uploads
+  from the disk** as the last step of the deletion, after the rows and the
+  vectors, so a document which is still in the databases never loses its
+  file.  The answer reports how many of them went away (`deleted_files`) and
+  which ones could not be removed (`file_errors`); a problem with the disk
+  never fails a deletion.  `delete_texts` touches no file — the rest of the
+  document is still in the databases.
+- A new module, `data/controllers/file_cleanup.py`, owns that removal: only
+  the paths inside the upload directory may be removed, and a directory
+  disappears only when its last file is gone, so a directory of another
+  collection is never touched.
+- **`delete_files_after_indexing`**, a new option of `indexing_options`
+  (`upload_and_index_files`, `add_and_index_texts`): the file of every
+  document disappears from the disk once its embeddings are stored.  It is
+  saved on `IndexingJob.indexing_options`, which is how a worker of the queue
+  learns about it.  `indexed` and `skipped` remove the file, `failed` keeps it
+  — the file of a document whose embeddings are missing is the only thing a
+  retry can still work on.  The option is optional, unlike the five cleaning
+  switches, so a client which does not know it keeps working.
+- `sse_lib.IndexingOptions.delete_files_after_indexing`.
 
 ## [0.1.6]
 

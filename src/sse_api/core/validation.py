@@ -203,6 +203,12 @@ def indexing_options(value):
         "check_text_lang",
     ):
         value[key] = boolean(value.get(key))
+    # Optional, unlike the switches above: a client which does not know it
+    # yet simply keeps the files of its uploads on the disk.
+    if "delete_files_after_indexing" in value:
+        value["delete_files_after_indexing"] = boolean(
+            value["delete_files_after_indexing"]
+        )
     # The size of a chunk belongs to the collection and may be declared there
     # once, so both keys are optional here. When they are given, they still
     # have to describe a consistent split.

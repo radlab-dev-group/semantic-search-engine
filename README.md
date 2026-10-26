@@ -528,6 +528,35 @@ can hold its own model.  A worker killed for good leaves its job running;
 `python -m sse_api.manage reset_stale_indexing_jobs` closes everything which is
 still running after an hour (`--minutes`, `--dry-run`).
 
+### Files of the uploads
+
+The files which the documents were indexed from live below the upload
+directory of the engine (`upload_sse/<organisation>/<user>/<collection>/<upload>`),
+and their paths are the `Document.path` columns.  An upload may ask for them
+back as soon as their embeddings are safely stored, with one option:
+
+```json
+{"clear_text": true, "check_text_lang": true, "...": "...",
+ "delete_files_after_indexing": true}
+```
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `delete_files_after_indexing` | absent (the files stay) | The file of every document of the call disappears from the disk once its document is through with indexing |
+
+* The option is written into `IndexingJob.indexing_options` together with the
+  rest of the options of the call, which is how a worker of the queue — which
+  knows nothing about the request — learns about it.
+* **`indexed` and `skipped` remove the file**, **`failed` keeps it**: the file
+  of a document whose embeddings are not in the vector database is the only
+  thing a retry can still work on.
+* The removal happens per document, in `run_index_document`, in both modes
+  (inside the request and in the queue), and a directory is removed only when
+  its last file is gone.
+* A problem with the disk is written into the log and never fails the job.
+* `delete_files_after_indexing` is optional in `indexing_options`, unlike the
+  five cleaning switches, so a client which does not know it keeps working.
+
 ---  
 
 ## Semantic Indexing (Milvus)
@@ -610,13 +639,13 @@ All endpoints require an **Authorization** header (`Token <jwt>`), unless `ENV_P
 
 The three deletion endpoints accept `POST` and always touch **both** databases:
 the relational rows are removed first, the embeddings of the removed texts
-afterwards.
+afterwards, and the files which the documents were indexed from last.
 
 | Endpoint | Parameters | Removed |
 |----------|------------|---------|
 | `/api/delete_texts/` | `collection_name`, `chunk_ids[]` | Text chunks (and the pages left without any chunk) |
-| `/api/delete_documents/` | `collection_name` and `documents[]` and/or `document_ids[]` | Documents with their pages and text chunks |
-| `/api/delete_collection/` | `collection_name` | Collection, its documents, pages, text chunks and the Milvus collection |
+| `/api/delete_documents/` | `collection_name` and `documents[]` and/or `document_ids[]` | Documents with their pages, text chunks and files |
+| `/api/delete_collection/` | `collection_name` | Collection, its documents, pages, text chunks and files, and the Milvus collection |
 
 Answers look like:
 
@@ -627,7 +656,9 @@ Answers look like:
     "deleted": {"texts": 128, "pages": 12, "documents": 3},
     "deleted_vectors": 128,
     "dropped_collection": false,
-    "not_found": ["missing.pdf"]
+    "not_found": ["missing.pdf"],
+    "deleted_files": 3,
+    "file_errors": []
   }
 }
 ```
@@ -641,6 +672,13 @@ Answers look like:
 * Content which other rows still reference is refused with `DELETE_PROTECTED`, and identifiers
   which match nothing with `DOCUMENT_NOT_FOUND` / `CHUNK_NOT_FOUND`. Names or ids which do not
   exist are additionally listed in `not_found`.
+* **The files of the uploads** (`Document.path`, below the upload directory of the engine) go
+  with them: `deleted_documents` and `delete_collection` report how many disappeared in
+  `deleted_files`, and a file which could not be removed (a read-only mount, a file deleted by
+  hand) is only listed in `file_errors` — a problem with the disk never fails a deletion.
+  Only the paths inside the upload directory may be removed, and a directory disappears only
+  when its last file is gone, so nothing of another collection is ever touched. Removing chunks
+  (`delete_texts`) never removes a file: the rest of the document is still in the databases.
 
 ### Deleting the search history
 

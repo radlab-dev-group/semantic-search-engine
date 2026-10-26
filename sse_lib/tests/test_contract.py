@@ -162,6 +162,12 @@ class ApiContractTest(unittest.TestCase):
                 "engine/controllers/database/relational_db.py",
             ),
         )
+        # ``delete_files_after_indexing`` is read where the files are removed,
+        # which is the indexing pipeline rather than the storing controllers.
+        consumed |= _consumed_keys(
+            r'indexing_options\.get\(\s*"([a-z_]+)"',
+            only=("data/indexing_pipeline.py",),
+        )
         self.assertEqual(
             _option_fields(IndexingOptions),
             consumed,

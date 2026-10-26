@@ -90,7 +90,8 @@ class IndexingOptions:
     :meth:`to_dict` always emits them.  The two chunking keys belong to the
     collection (see :meth:`SSEClient.create_collection`): left out here, the
     settings of the collection are used, and only :meth:`to_dict` emits a key
-    once it has been set.
+    once it has been set -- the same rule as for
+    ``delete_files_after_indexing``, which an older engine may not know.
     """
 
     prepare_proper_pages: bool = True
@@ -100,6 +101,9 @@ class IndexingOptions:
     max_tokens_in_chunk: Optional[int] = None
     number_of_overlap_tokens: Optional[int] = None
     check_text_lang: bool = True
+    #: Remove the file of a document from the disk of the engine once its
+    #: embeddings are stored; ``failed`` documents keep their file.
+    delete_files_after_indexing: Optional[bool] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Option dictionary; unset chunk keys are omitted on purpose."""
@@ -114,6 +118,8 @@ class IndexingOptions:
             payload["max_tokens_in_chunk"] = self.max_tokens_in_chunk
         if self.number_of_overlap_tokens is not None:
             payload["number_of_overlap_tokens"] = self.number_of_overlap_tokens
+        if self.delete_files_after_indexing is not None:
+            payload["delete_files_after_indexing"] = self.delete_files_after_indexing
         return payload
 
     def to_json(self) -> str:

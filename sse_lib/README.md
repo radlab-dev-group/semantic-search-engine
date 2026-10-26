@@ -190,7 +190,7 @@ provided empty prefix overrides `SSE_API_PREFIX`.
 | Class | Used by | Notes |
 |-------|---------|-------|
 | `SearchOptions` | `search()` | Only the fields that are set are sent; `extra` merges unknown keys |
-| `IndexingOptions` | `upload_files()`, `index_documents()` | Serialises the five cleaning keys the server reads with `options["..."]`; the two chunk keys appear only when set, so the collection decides |
+| `IndexingOptions` | `upload_files()`, `index_documents()` | Serialises the five cleaning keys the server reads with `options["..."]`; the two chunk keys and `delete_files_after_indexing` appear only when set, so the collection and the engine decide |
 | `GenerativeOptions` | `generate_answer()`, `send_chat_message()` | `None` fields are dropped; carries `use_doc_names_in_response`, the flag the generator reads from the same `query_options` |
 | `ChatOptions` | `new_chat()`, `send_chat_message()` (`chat_options=`) | The four pipeline switches (`use_rag_supervisor`, `use_content_supervisor`, `use_intelligent_query_rewrite`, `query_instruction`) merged into the single `options` object the chat endpoints read |
 
