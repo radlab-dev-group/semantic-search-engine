@@ -75,7 +75,7 @@ from sse_lib.options import (
 )
 from sse_lib.transport import DEFAULT_TIMEOUT, DEFAULT_TOKEN_TYPE, Transport
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "DEFAULT_INDEX_TYPE",
