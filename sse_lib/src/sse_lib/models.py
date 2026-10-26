@@ -334,6 +334,7 @@ class SearchHistory:
     query_id: Optional[int] = None
     query_response_id: Optional[int] = None
     query: str = ""
+    created_on: Optional[str] = None
     collection_id: Optional[int] = None
     collection_name: Optional[str] = None
     query_options: Dict[str, Any] = field(default_factory=dict)
@@ -382,6 +383,7 @@ class SearchHistory:
                 or payload.get("query_str")
                 or results.get("query", "")
             ),
+            created_on=payload.get("created_on"),
             collection_id=payload.get("collection_id"),
             collection_name=payload.get("collection_name"),
             query_options=_as_dict(payload.get("query_options")),

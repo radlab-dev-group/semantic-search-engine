@@ -596,7 +596,7 @@ each app.
 | `POST` | `/api/delete_documents/`       | Delete documents (`documents[]` names and/or `document_ids[]`) with their pages and chunks. |
 | `POST` | `/api/delete_collection/`      | Delete the whole collection with all of its content from both databases.        |
 | `POST` | `/api/set_documents_use_in_search/` | Enable/disable documents in the search (`use_in_search` flag).              |
-| `GET`  | `/api/search_history/`           | Search history of the authenticated user (optionally one query by id).      |
+| `GET`  | `/api/search_history/`           | Search history of the authenticated user (optionally one query by id), each entry with its `created_on`. |
 | `GET`  | `/api/get_search_history/`       | A single search history entry by its id.                                    |
 | `POST` | `/api/delete_search_history/`    | Delete stored queries (`query_ids[]` and/or `query_response_ids[]`) with their responses, answers and RAG states. |
 | `GET`  | `/api/chats/`                  | Retrieve all chats for the current user.                                        |

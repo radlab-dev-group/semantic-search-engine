@@ -4,6 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
+| [0.1.6](#016) | Date of a search in the history (`UserQuery.created_on`, `created_on` in `search_history` / `get_search_history`); `sse_lib.SearchHistory.created_on` |
 | [0.1.5](#015) | Counters of the documents in `GET collections` (`document_count`, `active_document_count`), one query for the whole answer; `sse_lib.Collection` exposes both |
 | [0.1.4](#014) | Preview of a whole document: `GET document_content` (PostgreSQL only) and `sse_lib.SSEClient.document_content` / `indexing_status` |
 | [0.1.3](#013) | Indexing in a Celery + RabbitMQ queue, per-document indexing progress, `indexing_status` endpoint. Deactivation propagates to Milvus (`is_active` of the vectors); Milvus 3.0 |
@@ -12,6 +13,20 @@ All notable changes to the Semantic Search Engine are documented in this file.
 | [0.1.0](#010) | Python client library, hybrid search, production deployment tooling, `src/` layout and CI |
 | [0.0.1](#001) | Initial version |
 
+
+## [0.1.6]
+
+### Added
+
+#### API — the date of a search
+- `UserQuery` remembers **when the search was made** (`created_on`, migration
+  `0002_userquery_created_on`), so the history of the searches can show the
+  date next to the question instead of only the order of the entries.
+- `search_history` and `get_search_history` add `created_on` to every entry,
+  as an ISO 8601 string in UTC (the same shape as the other timestamps of the
+  API); the ordering of the history does not change.
+- `sse_lib.SearchHistory.created_on` exposes it, `None` for an answer of an
+  engine which does not know the field yet.
 
 ## [0.1.5]
 

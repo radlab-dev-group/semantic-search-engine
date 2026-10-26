@@ -9,6 +9,7 @@ to the core data models such as ``OrganisationUser`` and
 ``CollectionOfDocuments``.
 """
 
+import django
 from django.db import models
 
 from sse_api.data.models import (
@@ -35,6 +36,8 @@ class UserQuery(models.Model):
         JSON‑serialisable options that influence the search (filters,
         ranking flags, etc.).
     query_templates : ManyToMany[QueryTemplate]
+    created_on : datetime
+        When the query was submitted, shown by the history of the searches.
         Templates selected for this query – used for structured responses.
     """
 
@@ -49,6 +52,9 @@ class UserQuery(models.Model):
 
     query_str_prompt = models.TextField(null=False, blank=False)
     query_options = models.JSONField(null=True, blank=False)
+    # When the search was made; the history of the searches shows it next to
+    # the question, so that two searches of the same text can be told apart.
+    created_on = models.DateTimeField(default=django.utils.timezone.now, null=False)
 
     query_templates = models.ManyToManyField(QueryTemplate)
 

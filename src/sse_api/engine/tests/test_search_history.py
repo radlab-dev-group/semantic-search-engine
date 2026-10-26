@@ -121,6 +121,12 @@ class SearchHistoryApiTests(TestCase):
         self.assertEqual(first["collection_name"], "col2")
         self.assertEqual(first["answers"], [])
         self.assertIsNone(first["generated_answer"])
+        # the date of the search, so a client can show when it was made
+        self.assertIsNotNone(first["created_on"])
+        self.assertEqual(
+            datetime.datetime.fromisoformat(first["created_on"]).tzinfo,
+            datetime.timezone.utc,
+        )
 
         second = history[1]
         self.assertEqual(second["query_response_id"], self.response1.pk)
