@@ -4,6 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
+| [0.1.5](#015) | Counters of the documents in `GET collections` (`document_count`, `active_document_count`), one query for the whole answer; `sse_lib.Collection` exposes both |
 | [0.1.4](#014) | Preview of a whole document: `GET document_content` (PostgreSQL only) and `sse_lib.SSEClient.document_content` / `indexing_status` |
 | [0.1.3](#013) | Indexing in a Celery + RabbitMQ queue, per-document indexing progress, `indexing_status` endpoint. Deactivation propagates to Milvus (`is_active` of the vectors); Milvus 3.0 |
 | [0.1.2](#012) | Deletion of the search history (`delete_search_history`), form-encoded `[]` list params |
@@ -11,6 +12,37 @@ All notable changes to the Semantic Search Engine are documented in this file.
 | [0.1.0](#010) | Python client library, hybrid search, production deployment tooling, `src/` layout and CI |
 | [0.0.1](#001) | Initial version |
 
+
+## [0.1.5]
+
+### Added
+
+#### API — counters of the documents of a collection
+- **`GET collections`** answers with two numbers for every collection, so a
+  client listing them does not have to call `GET documents` once per
+  collection: `document_count` (every document of the collection, the ones
+  deactivated in the search included) and `active_document_count` (the
+  documents with `use_in_search=True`, i.e. what `GET documents` lists by
+  default).
+- `RelationalDBController.with_document_counts` annotates a queryset of
+  collections with both counters in **one query**, and `ListCollections` uses
+  it for the collections of the user and for the organisational ones before
+  merging them — the number of queries does not grow with the number of
+  collections.
+- `CollectionOfDocumentsSerializer` reads the annotations and counts a
+  collection on its own when they are missing, so any other place which
+  serializes a collection gets correct numbers instead of zeros.
+
+### Changed
+
+#### Client library
+- `sse_lib.Collection` carries `document_count` and `active_document_count`
+  (`None` when the server did not send them, e.g. an engine older than this
+  release), with `document_count_or_zero` / `active_document_count_or_zero`
+  for callers which prefer a plain number.
+
+- README: the REST endpoints table and a new "Counters of a collection"
+  section describe the two fields (`README-pl.md` in Polish).
 
 ## [0.1.4]
 

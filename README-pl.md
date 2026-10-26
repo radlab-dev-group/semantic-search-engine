@@ -370,6 +370,22 @@ client.embedders_info()   # vector_size, device, max_model_length
 a `Collection.chunking` / `Collection.strict_chunking` odczytują ustawienia
 kolekcji z `metadata_json`.
 
+### Liczniki dokumentów kolekcji
+
+`GET collections` zwraca przy każdej kolekcji dwie liczby, dzięki czemu klient
+nie musi wołać `GET documents` raz na kolekcję:
+
+| Pole | Co liczy |
+------|----------|
+| `document_count` | Wszystkie dokumenty kolekcji, również wyłączone z wyszukiwania |
+| `active_document_count` | Dokumenty bierzące udział w wyszukiwaniu (`use_in_search=True`) |
+
+Oba liczniki powstają **w bazie** -- jedno zapytanie na całą odpowiedź
+(`RelationalDBController.with_document_counts`) -- i dotyczą kolekcji widocznych
+dla użytkownika. Różnica `document_count - active_document_count` to dokumenty
+wyłączone, a `active_document_count` to dokładnie tyle, ile domyślnie
+przelicza `GET documents`.
+
 ---
 
 ## Kolejka indeksacji (Celery + RabbitMQ)

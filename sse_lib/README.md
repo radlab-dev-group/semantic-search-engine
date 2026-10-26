@@ -164,6 +164,13 @@ Collections may be passed as a name, a `Collection` returned by
 A `Collection` also carries the settings of the collection: `metadata_json`,
 `chunking` (`{}` when none was declared) and `strict_chunking`.
 
+The answer of `GET collections` also carries the counters of the collection:
+`document_count` (every document of the collection) and
+`active_document_count` (the documents which take part in the search,
+`use_in_search=True`).  A `Collection` exposes both — `None` when the server
+did not send them — and `document_count_or_zero` / `active_document_count_or_zero`
+turn the missing counters into `0`.
+
 `GET documents` has two views.  The default one lists the names of the
 documents which take part in the search (`list_documents()`); with
 `with_disabled=True` — and always in `list_document_details()` — the server

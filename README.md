@@ -580,7 +580,7 @@ each app.
 | Method | URL (example)                  | Description                                                                     |
 |--------|--------------------------------|---------------------------------------------------------------------------------|
 | `POST` | `/api/new_collection/`         | Create a new document collection (embedder, reranker, index type, chunking).    |
-| `GET`  | `/api/collections/`            | List all collections visible to the authenticated user.                         |
+| `GET`  | `/api/collections/`            | List collections visible to the user, with the counters of their documents.      |
 | `POST` | `/api/upload_and_index_files/` | Upload files (multipart) and trigger indexing.                                  |
 | `POST` | `/api/search_with_options/`    | Perform a **Hybrid Search** (vector + text) with rich filtering options.        |
 | `POST` | `/api/generative_answer/`      | Generate a RAG answer for a previously stored query response.                   |
@@ -704,6 +704,43 @@ in Milvus follows the relational one, so the state is consistent for **every
 consumer** of the vector collection, not only for the search of this engine.
 While disabled, its chunks are not returned by `search_with_options` —
 neither from the vector search nor from the full-text side.
+
+### Counters of a collection
+
+`GET collections` answers with every collection and how many documents it
+holds, so a client does not have to call `GET documents` once per collection:
+
+```json
+{
+  "status": true,
+  "body": {
+    "collections": [
+      {
+        "id": 12,
+        "name": "Regulations",
+        "display_name": "Company regulations",
+        "description": "...",
+        "created_on": "2026-10-24T18:28:11.402Z",
+        "metadata_json": {"chunking": {"max_tokens_in_chunk": 500, "number_of_overlap_tokens": 0}},
+        "document_count": 128,
+        "active_document_count": 120
+      }
+    ]
+  }
+}
+```
+
+| Field | What it counts |
+|-------|----------------|
+| `document_count` | Every document of the collection, deactivated ones included |
+| `active_document_count` | The documents which take part in the search (`use_in_search=True`) |
+
+Both counters are calculated **in the database**, one query for the whole
+answer (`RelationalDBController.with_document_counts`), and they follow the
+visibility of the collection: a document is counted for every user who may see
+its collection.  `document_count - active_document_count` is what a UI can show
+as deactivated, and `active_document_count` is what `GET documents` lists by
+default.
 
 ### Chunking of a collection
 
