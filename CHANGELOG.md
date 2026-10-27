@@ -4,10 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
-| [0.1.7](#017) | Files of the uploads on the disk: `delete_documents` / `delete_collection` remove them with the rows (`deleted_files`, `file_errors`), and the new `delete_files_after_indexing` option of an indexing call removes the file of every document once it is indexed |
-| [0.1.6](#016) | Date of a search in the history (`UserQuery.created_on`, `created_on` in `search_history` / `get_search_history`); `sse_lib.SearchHistory.created_on` |
-| [0.1.5](#015) | Counters of the documents in `GET collections` (`document_count`, `active_document_count`), one query for the whole answer; `sse_lib.Collection` exposes both |
-| [0.1.4](#014) | Preview of a whole document: `GET document_content` (PostgreSQL only) and `sse_lib.SSEClient.document_content` / `indexing_status` |
+| [0.1.4](#014) | Preview of a whole document: `GET document_content` (PostgreSQL only) and `sse_lib.SSEClient.document_content` / `indexing_status`. Counters of the documents in `GET collections` (`document_count`, `active_document_count`), one query for the whole answer; `sse_lib.Collection` exposes both. Date of a search in the history (`UserQuery.created_on`, `created_on` in `search_history` / `get_search_history`); `sse_lib.SearchHistory.created_on`. Files of the uploads on the disk: `delete_documents` / `delete_collection` remove them with the rows (`deleted_files`, `file_errors`), and the new `delete_files_after_indexing` option of an indexing call removes the file of every document once it is indexed. Documents of an upload are deduplicated by name **and** the path they were read from, so a zip with files of the same name in different subdirectories indexes every one of them |
 | [0.1.3](#013) | Indexing in a Celery + RabbitMQ queue, per-document indexing progress, `indexing_status` endpoint. Deactivation propagates to Milvus (`is_active` of the vectors); Milvus 3.0 |
 | [0.1.2](#012) | Deletion of the search history (`delete_search_history`), form-encoded `[]` list params |
 | [0.1.1](#0.1.1) | Deletion API (PostgreSQL + Milvus), document deactivation (`use_in_search`), normalized `[0, 1]` document ranking weights, collection-level chunking and `max_model_length` |
@@ -15,7 +12,20 @@ All notable changes to the Semantic Search Engine are documented in this file.
 | [0.0.1](#001) | Initial version |
 
 
-## [0.1.7]
+## [0.1.4]
+
+### Fixed
+
+#### Indexing of files with the same name in different subdirectories
+- A zip (or a directory upload) may hold several files of the same name in
+  different subdirectories.  The name of a document is not its identity —
+  the same name in two different directories is two different documents —
+  and `exists_document_in_db` used the name alone when deciding that a
+  document was already in the database, so only the first of the files was
+  indexed and the rest were silently skipped.  The check now compares the
+  name **and** the path the file was read from, which is also the identity
+  the storage step (`add_document_from_dict`) already uses, so a retried
+  job of one upload still skips what it already stored.
 
 ### Added
 
@@ -41,10 +51,6 @@ All notable changes to the Semantic Search Engine are documented in this file.
   switches, so a client which does not know it keeps working.
 - `sse_lib.IndexingOptions.delete_files_after_indexing`.
 
-## [0.1.6]
-
-### Added
-
 #### API — the date of a search
 - `UserQuery` remembers **when the search was made** (`created_on`, migration
   `0002_userquery_created_on`), so the history of the searches can show the
@@ -54,10 +60,6 @@ All notable changes to the Semantic Search Engine are documented in this file.
   API); the ordering of the history does not change.
 - `sse_lib.SearchHistory.created_on` exposes it, `None` for an answer of an
   engine which does not know the field yet.
-
-## [0.1.5]
-
-### Added
 
 #### API — counters of the documents of a collection
 - **`GET collections`** answers with two numbers for every collection, so a
@@ -74,21 +76,6 @@ All notable changes to the Semantic Search Engine are documented in this file.
 - `CollectionOfDocumentsSerializer` reads the annotations and counts a
   collection on its own when they are missing, so any other place which
   serializes a collection gets correct numbers instead of zeros.
-
-### Changed
-
-#### Client library
-- `sse_lib.Collection` carries `document_count` and `active_document_count`
-  (`None` when the server did not send them, e.g. an engine older than this
-  release), with `document_count_or_zero` / `active_document_count_or_zero`
-  for callers which prefer a plain number.
-
-- README: the REST endpoints table and a new "Counters of a collection"
-  section describe the two fields (`README-pl.md` in Polish).
-
-## [0.1.4]
-
-### Added
 
 #### API — preview of a whole document
 - **`GET document_content`** — the whole text of one document of a collection,
@@ -120,6 +107,16 @@ All notable changes to the Semantic Search Engine are documented in this file.
   registered by the backend since 0.1.3 and was the one the client library did
   not know.
 
+### Changed
+
+#### Client library
+- `sse_lib.Collection` carries `document_count` and `active_document_count`
+  (`None` when the server did not send them, e.g. an engine older than this
+  release), with `document_count_or_zero` / `active_document_count_or_zero`
+  for callers which prefer a plain number.
+
+- README: the REST endpoints table and a new "Counters of a collection"
+  section describe the two fields (`README-pl.md` in Polish).
 
 ## [0.1.3]
 

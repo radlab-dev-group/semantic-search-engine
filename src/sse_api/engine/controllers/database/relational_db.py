@@ -556,7 +556,10 @@ class RelationalDBController:
         name = doc_as_dict.get("name", None)
         if name is None:
             name = os.path.basename(doc_as_dict["filepath"])
-        return Document.objects.filter(collection=collection, name=name).exists()
+        path = doc_as_dict["filepath"]
+        return Document.objects.filter(
+            collection=collection, name=name, path=path
+        ).exists()
 
     # ------------------------------------------------------------------
     # Deleting collection content
