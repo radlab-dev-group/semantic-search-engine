@@ -24,6 +24,16 @@ def _as_list(value: Any) -> List[Any]:
     return value if isinstance(value, list) else []
 
 
+def _as_count(value: Any) -> Optional[int]:
+    """A document counter of the server; ``None`` when it was not sent."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass
 class Collection:
     """A ``CollectionOfDocuments`` as returned by ``collections``."""
@@ -33,6 +43,8 @@ class Collection:
     display_name: str = ""
     description: str = ""
     created_on: Optional[str] = None
+    document_count: Optional[int] = None
+    active_document_count: Optional[int] = None
     metadata_json: Dict[str, Any] = field(default_factory=dict)
     raw: Dict[str, Any] = field(default_factory=dict)
 
@@ -48,9 +60,21 @@ class Collection:
             display_name=merged.get("display_name", ""),
             description=merged.get("description", ""),
             created_on=merged.get("created_on"),
+            document_count=_as_count(merged.get("document_count")),
+            active_document_count=_as_count(merged.get("active_document_count")),
             metadata_json=metadata if isinstance(metadata, dict) else {},
             raw=payload,
         )
+
+    @property
+    def document_count_or_zero(self) -> int:
+        """``document_count`` as a number; ``0`` when the server did not send it."""
+        return self.document_count or 0
+
+    @property
+    def active_document_count_or_zero(self) -> int:
+        """``active_document_count`` as a number; ``0`` when the server did not send it."""
+        return self.active_document_count or 0
 
     @property
     def chunking(self) -> Dict[str, Any]:
@@ -310,6 +334,7 @@ class SearchHistory:
     query_id: Optional[int] = None
     query_response_id: Optional[int] = None
     query: str = ""
+    created_on: Optional[str] = None
     collection_id: Optional[int] = None
     collection_name: Optional[str] = None
     query_options: Dict[str, Any] = field(default_factory=dict)
@@ -358,6 +383,7 @@ class SearchHistory:
                 or payload.get("query_str")
                 or results.get("query", "")
             ),
+            created_on=payload.get("created_on"),
             collection_id=payload.get("collection_id"),
             collection_name=payload.get("collection_name"),
             query_options=_as_dict(payload.get("query_options")),

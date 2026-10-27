@@ -213,6 +213,13 @@ class SearchQueryController:
             "query_response_id": user_response.pk,
             "query": user_query.query_str_prompt,
             "query_str": user_query.query_str_prompt,
+            # when the search was made; a client which listed the history
+            # before this field existed treats it as an unknown date
+            "created_on": (
+                user_query.created_on.isoformat()
+                if user_query.created_on is not None
+                else None
+            ),
             "collection_id": (
                 user_query.collection.pk if user_query.collection else None
             ),

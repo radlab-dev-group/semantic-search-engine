@@ -13,7 +13,9 @@ Two steps, both safe to call from a Celery task, from a request (when
 ``run_index_document(job, document)``
     Calculate the embeddings of one document and put them into the vector
     database.  One document is the unit of work of the queue: it can be
-    retried on its own and its status is what a client sees.
+    retried on its own and its status is what a client sees.  A job created
+    with ``delete_files_after_indexing`` loses the file of the document here,
+    once its embeddings are safely stored (a failed document keeps its file).
 
 The controller of the vector database keeps the embedder model in memory, so
 one instance per worker process and collection is cached instead of being
@@ -23,6 +25,7 @@ loaded for every document.
 import logging
 import multiprocessing
 
+from sse_api.data.controllers import file_cleanup
 from sse_api.data.core import indexing_progress
 from sse_api.data.core.constants import (
     DB_INDEXING_PROCESS_COUNT,
@@ -150,6 +153,37 @@ def index_chunks(
     controller.index_texts_from_list(all_texts=chunks, collection=collection)
 
 
+def deletes_files_after_indexing(job: IndexingJob) -> bool:
+    """
+    Whether the job asks for the files of its uploads to disappear from the
+    disk once their documents are indexed.
+
+    The answer comes from ``job.indexing_options``, where the request which
+    started the indexing left it: a worker of the queue knows nothing else
+    about that call.
+    """
+    indexing_options = job.indexing_options or {}
+    return bool(indexing_options.get("delete_files_after_indexing"))
+
+
+def remove_document_file(job: IndexingJob, document: Document) -> None:
+    """
+    Remove the file of one document when the job asked for it.
+
+    Called for a document which is through with indexing, never for a failed
+    one: the file of a document whose embeddings are not in the vector
+    database is the only thing a retry can still work on.  A problem with the
+    disk is written into the log and never interrupts the job.
+    """
+    if not deletes_files_after_indexing(job):
+        return
+    result = file_cleanup.delete_document_file(document)
+    for error in result.errors:
+        MAIN_LOGGER.warning(
+            "Could not remove the file of %s: %s", document.name, error
+        )
+
+
 def is_indexed_already(document) -> bool:
     """Whether a message about ``document`` may be skipped as a duplicate."""
     return document.indexing_status in (
@@ -175,6 +209,9 @@ def run_index_document(
     )
     if not chunks.exists():
         indexing_progress.finish_document(job, document, DOCUMENT_STATUS_SKIPPED)
+        # A document without text has nothing left to wait for: what the job
+        # asked for happens here too.
+        remove_document_file(job, document)
         return DOCUMENT_STATUS_SKIPPED
 
     controller = semantic_controller_for(document.collection, jsonl_config_path)
@@ -183,6 +220,9 @@ def run_index_document(
     )
 
     indexing_progress.finish_document(job, document, DOCUMENT_STATUS_INDEXED)
+    # The embeddings are in the vector database, so the file from which they
+    # were made is not needed anymore.
+    remove_document_file(job, document)
     return DOCUMENT_STATUS_INDEXED
 
 

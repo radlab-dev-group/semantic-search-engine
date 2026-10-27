@@ -76,6 +76,15 @@ class IndexingOptionsTest(unittest.TestCase):
         payload = IndexingOptions().to_json()
         self.assertEqual(set(json.loads(payload)), INDEXING_KEYS)
 
+    def test_deleting_files_is_sent_only_when_set(self):
+        # An engine which does not know the option must not be surprised by a
+        # key it has to validate, so it travels only when it was asked for.
+        self.assertNotIn("delete_files_after_indexing", IndexingOptions().to_dict())
+        payload = IndexingOptions(delete_files_after_indexing=True).to_dict()
+        self.assertIs(payload["delete_files_after_indexing"], True)
+        payload = IndexingOptions(delete_files_after_indexing=False).to_dict()
+        self.assertIs(payload["delete_files_after_indexing"], False)
+
 
 class ChunkingPayloadTest(unittest.TestCase):
     def test_complete_chunking_is_normalized(self):

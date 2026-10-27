@@ -260,6 +260,8 @@ class CollectionsTest(unittest.TestCase):
                             {
                                 "id": 1,
                                 "name": "a",
+                                "document_count": 12,
+                                "active_document_count": 9,
                                 "metadata_json": {
                                     "chunking": {
                                         "max_tokens_in_chunk": 512,
@@ -274,6 +276,8 @@ class CollectionsTest(unittest.TestCase):
             ]
         )
         collection = client.list_collections()[0]
+        self.assertEqual(collection.document_count, 12)
+        self.assertEqual(collection.active_document_count, 9)
         self.assertEqual(collection.chunking["max_tokens_in_chunk"], 512)
         self.assertEqual(collection.chunking["number_of_overlap_tokens"], 32)
         self.assertTrue(collection.strict_chunking)
@@ -281,6 +285,10 @@ class CollectionsTest(unittest.TestCase):
     def test_list_collections_without_metadata_json(self):
         client = build_client([ok({"collections": [{"id": 1, "name": "a"}]})])
         collection = client.list_collections()[0]
+        self.assertIsNone(collection.document_count)
+        self.assertIsNone(collection.active_document_count)
+        self.assertEqual(collection.document_count_or_zero, 0)
+        self.assertEqual(collection.active_document_count_or_zero, 0)
         self.assertEqual(collection.chunking, {})
         self.assertFalse(collection.strict_chunking)
 

@@ -370,6 +370,22 @@ client.embedders_info()   # vector_size, device, max_model_length
 a `Collection.chunking` / `Collection.strict_chunking` odczytują ustawienia
 kolekcji z `metadata_json`.
 
+### Liczniki dokumentów kolekcji
+
+`GET collections` zwraca przy każdej kolekcji dwie liczby, dzięki czemu klient
+nie musi wołać `GET documents` raz na kolekcję:
+
+| Pole | Co liczy |
+------|----------|
+| `document_count` | Wszystkie dokumenty kolekcji, również wyłączone z wyszukiwania |
+| `active_document_count` | Dokumenty bierzące udział w wyszukiwaniu (`use_in_search=True`) |
+
+Oba liczniki powstają **w bazie** -- jedno zapytanie na całą odpowiedź
+(`RelationalDBController.with_document_counts`) -- i dotyczą kolekcji widocznych
+dla użytkownika. Różnica `document_count - active_document_count` to dokumenty
+wyłączone, a `active_document_count` to dokładnie tyle, ile domyślnie
+przelicza `GET documents`.
+
 ---
 
 ## Kolejka indeksacji (Celery + RabbitMQ)
@@ -448,3 +464,50 @@ to pytanie o pamięć; zostaw go na 1, o ile każdy proces nie uniesie własnego
 modelu. Worker zabity na zawsze zostawia zadanie jako uruchomione --
 `python -m sse_api.manage reset_stale_indexing_jobs` domyka wszystko, co wciąż
 się "wykonuje" po godzinie (`--minutes`, `--dry-run`).
+
+
+## Pliki wgranych dokumentów
+
+Pliki, z których powstały dokumenty, leżą pod katalogiem uploadu
+(`upload_sse/<organizacja>/<user>/<kolekcja>/<wgranie>`), a ich ścieżki to
+kolumny `Document.path`.  Wgranie może poprosić o nie z powrotem, skoro ich
+wektory są już zapisane -- wystarczy jedna opcja `indexing_options`:
+
+```json
+{"clear_text": true, "check_text_lang": true, "...": "...",
+ "delete_files_after_indexing": true}
+```
+
+| Opcja | Domyślnie | Co robi |
+|-------|-----------|---------|
+| `delete_files_after_indexing` | brak (pliki zostają) | Plik każdego dokumentu tego wywołania znika z dysku, gdy jego dokument skończy się indeksować |
+
+* Opcja trafia do `IndexingJob.indexing_options` razem z resztą opcji
+  wywołania -- stąd dowiaduje się o niej worker kolejki, który o żądaniu nie
+  wie nic.
+* **`indexed` i `skipped` usuwają plik**, **`failed` go zostawia**: plik
+  dokumentu, którego wektorów nie ma w bazie, to jedyna rzecz, na której da
+  się jeszcze coś zrobić przy ponowieniu.
+* Usunięcie dzieje się per dokument, w `run_index_document`, w obu trybach
+  (w żądaniu i w kolejce), a katalog znika dopiero wtedy, gdy nie ma w nim
+  już żadnego pliku.
+* Problem z dyskiem idzie do loga i przerywa najwyżej usuwanie tego jednego
+  pliku -- nigdy całej indeksacji.
+* W przeciwieństwie do pięciu przełączników czyszczenia tekstu
+  `delete_files_after_indexing` jest w `indexing_options` opcjonalna, więc
+  klient, który jej nie zna, działa dalej.
+
+## Usuwanie treści a dysk
+
+`delete_documents` i `delete_collection` usuwają razem z wierszami i wektorami
+także pliki z dysku (pliki jako ostatnie, żeby dokument, który wciąż jest w
+bazach, nigdy nie stracił swojego pliku).  Odpowiedź mówi, ile plików
+poszło, w polu `deleted_files`, a pliku, którego usunąć się nie dało (np.
+tylko do odczytu), po prostu nie udaje się usunąć -- jest wypisany w
+`file_errors`.  Problem z dyskiem nie powoduje błędu całego usuwania.
+
+* Usuwane są wyłącznie ścieżki z katalogu uploadu -- ścieżki spoza niego
+  nigdy nie są dotykane, więc wpis do bazy nie wyłączy niczego obok.
+* Katalog znika tylko wtedy, gdy jest już pusty, więc katalog innej kolekcji
+  nigdy nie ucierpi.
+* `delete_texts` plików nie usuwa: reszta dokumentu wciąż siedzi w bazach.

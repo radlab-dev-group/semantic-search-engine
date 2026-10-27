@@ -119,6 +119,50 @@ class UploadMetadataTests(EndpointInputMixin, TestCase):
                 self.assertFalse(IndexingJob.objects.exists())
                 self.assertEqual(list(Path(self.temp.name).iterdir()), [])
 
+    def test_same_basename_in_different_subdirectories_is_not_deduplicated(self):
+        # A zip may hold two files of the same name in different sub
+        # directories; the name is not the identity of a document, so both
+        # of them have to reach the database.
+        paths = [
+            Path(self.temp.name) / "nested" / "report.txt",
+            Path(self.temp.name) / "other" / "report.txt",
+        ]
+        reader = SimpleNamespace(
+            load=lambda **options: None,
+            documents=[
+                SimpleNamespace(
+                    as_dict={
+                        "filepath": str(path),
+                        "relative_filepath": "nested/report.txt"
+                        if path.parent.name == "nested"
+                        else "other/report.txt",
+                        "category": "",
+                        "options": {},
+                        "pages": [],
+                    }
+                )
+                for path in paths
+            ],
+        )
+        with patch(
+            "sse_api.engine.controllers.database.relational_db.DirectoryFileReader",
+            return_value=reader,
+        ):
+            response, dispatch = self.upload(None, False)
+        self.assertTrue(response.data["status"], response.data)
+        job = IndexingJob.objects.latest("pk")
+        documents = sorted(
+            Document.objects.filter(indexing_job=job),
+            key=lambda document: document.relative_path,
+        )
+        self.assertEqual(
+            [document.relative_path for document in documents],
+            ["nested/report.txt", "other/report.txt"],
+        )
+        self.assertEqual(
+            [document.path for document in documents], [str(path) for path in paths]
+        )
+
     def test_reader_omission_rejects_inline_job_instead_of_losing_metadata(self):
         reader = SimpleNamespace(load=lambda **options: None, documents=[])
         with patch(

@@ -164,6 +164,13 @@ Collections may be passed as a name, a `Collection` returned by
 A `Collection` also carries the settings of the collection: `metadata_json`,
 `chunking` (`{}` when none was declared) and `strict_chunking`.
 
+The answer of `GET collections` also carries the counters of the collection:
+`document_count` (every document of the collection) and
+`active_document_count` (the documents which take part in the search,
+`use_in_search=True`).  A `Collection` exposes both — `None` when the server
+did not send them — and `document_count_or_zero` / `active_document_count_or_zero`
+turn the missing counters into `0`.
+
 `GET documents` has two views.  The default one lists the names of the
 documents which take part in the search (`list_documents()`); with
 `with_disabled=True` — and always in `list_document_details()` — the server
@@ -183,7 +190,7 @@ provided empty prefix overrides `SSE_API_PREFIX`.
 | Class | Used by | Notes |
 |-------|---------|-------|
 | `SearchOptions` | `search()` | Only the fields that are set are sent; `extra` merges unknown keys |
-| `IndexingOptions` | `upload_files()`, `index_documents()` | Serialises the five cleaning keys the server reads with `options["..."]`; the two chunk keys appear only when set, so the collection decides |
+| `IndexingOptions` | `upload_files()`, `index_documents()` | Serialises the five cleaning keys the server reads with `options["..."]`; the two chunk keys and `delete_files_after_indexing` appear only when set, so the collection and the engine decide |
 | `GenerativeOptions` | `generate_answer()`, `send_chat_message()` | `None` fields are dropped; carries `use_doc_names_in_response`, the flag the generator reads from the same `query_options` |
 | `ChatOptions` | `new_chat()`, `send_chat_message()` (`chat_options=`) | The four pipeline switches (`use_rag_supervisor`, `use_content_supervisor`, `use_intelligent_query_rewrite`, `query_instruction`) merged into the single `options` object the chat endpoints read |
 

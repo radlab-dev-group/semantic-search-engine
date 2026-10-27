@@ -242,8 +242,13 @@ class ListCollections(APIView):
             organisation_user, semantic_collections=sem_collections
         )
 
+        # Both counters of the documents are annotated on the querysets, one
+        # query for each list, before they are merged into a plain list.
+        collections = db_controller.with_document_counts(user_collections)
+        org_collections = db_controller.with_document_counts(org_collections)
+
         collections = self.__merge_collections(
-            collections_lists=[user_collections, org_collections],
+            collections_lists=[collections, org_collections],
         )
 
         s_col = CollectionOfDocumentsSerializer(collections, many=True)

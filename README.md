@@ -528,6 +528,35 @@ can hold its own model.  A worker killed for good leaves its job running;
 `python -m sse_api.manage reset_stale_indexing_jobs` closes everything which is
 still running after an hour (`--minutes`, `--dry-run`).
 
+### Files of the uploads
+
+The files which the documents were indexed from live below the upload
+directory of the engine (`upload_sse/<organisation>/<user>/<collection>/<upload>`),
+and their paths are the `Document.path` columns.  An upload may ask for them
+back as soon as their embeddings are safely stored, with one option:
+
+```json
+{"clear_text": true, "check_text_lang": true, "...": "...",
+ "delete_files_after_indexing": true}
+```
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `delete_files_after_indexing` | absent (the files stay) | The file of every document of the call disappears from the disk once its document is through with indexing |
+
+* The option is written into `IndexingJob.indexing_options` together with the
+  rest of the options of the call, which is how a worker of the queue — which
+  knows nothing about the request — learns about it.
+* **`indexed` and `skipped` remove the file**, **`failed` keeps it**: the file
+  of a document whose embeddings are not in the vector database is the only
+  thing a retry can still work on.
+* The removal happens per document, in `run_index_document`, in both modes
+  (inside the request and in the queue), and a directory is removed only when
+  its last file is gone.
+* A problem with the disk is written into the log and never fails the job.
+* `delete_files_after_indexing` is optional in `indexing_options`, unlike the
+  five cleaning switches, so a client which does not know it keeps working.
+
 ---  
 
 ## Semantic Indexing (Milvus)
@@ -580,7 +609,7 @@ each app.
 | Method | URL (example)                  | Description                                                                     |
 |--------|--------------------------------|---------------------------------------------------------------------------------|
 | `POST` | `/api/new_collection/`         | Create a new document collection (embedder, reranker, index type, chunking).    |
-| `GET`  | `/api/collections/`            | List all collections visible to the authenticated user.                         |
+| `GET`  | `/api/collections/`            | List collections visible to the user, with the counters of their documents.      |
 | `POST` | `/api/upload_and_index_files/` | Upload files (multipart) and trigger indexing.                                  |
 | `POST` | `/api/search_with_options/`    | Perform a **Hybrid Search** (vector + text) with rich filtering options.        |
 | `POST` | `/api/generative_answer/`      | Generate a RAG answer for a previously stored query response.                   |
@@ -596,7 +625,7 @@ each app.
 | `POST` | `/api/delete_documents/`       | Delete documents (`documents[]` names and/or `document_ids[]`) with their pages and chunks. |
 | `POST` | `/api/delete_collection/`      | Delete the whole collection with all of its content from both databases.        |
 | `POST` | `/api/set_documents_use_in_search/` | Enable/disable documents in the search (`use_in_search` flag).              |
-| `GET`  | `/api/search_history/`           | Search history of the authenticated user (optionally one query by id).      |
+| `GET`  | `/api/search_history/`           | Search history of the authenticated user (optionally one query by id), each entry with its `created_on`. |
 | `GET`  | `/api/get_search_history/`       | A single search history entry by its id.                                    |
 | `POST` | `/api/delete_search_history/`    | Delete stored queries (`query_ids[]` and/or `query_response_ids[]`) with their responses, answers and RAG states. |
 | `GET`  | `/api/chats/`                  | Retrieve all chats for the current user.                                        |
@@ -610,13 +639,13 @@ All endpoints require an **Authorization** header (`Token <jwt>`), unless `ENV_P
 
 The three deletion endpoints accept `POST` and always touch **both** databases:
 the relational rows are removed first, the embeddings of the removed texts
-afterwards.
+afterwards, and the files which the documents were indexed from last.
 
 | Endpoint | Parameters | Removed |
 |----------|------------|---------|
 | `/api/delete_texts/` | `collection_name`, `chunk_ids[]` | Text chunks (and the pages left without any chunk) |
-| `/api/delete_documents/` | `collection_name` and `documents[]` and/or `document_ids[]` | Documents with their pages and text chunks |
-| `/api/delete_collection/` | `collection_name` | Collection, its documents, pages, text chunks and the Milvus collection |
+| `/api/delete_documents/` | `collection_name` and `documents[]` and/or `document_ids[]` | Documents with their pages, text chunks and files |
+| `/api/delete_collection/` | `collection_name` | Collection, its documents, pages, text chunks and files, and the Milvus collection |
 
 Answers look like:
 
@@ -627,7 +656,9 @@ Answers look like:
     "deleted": {"texts": 128, "pages": 12, "documents": 3},
     "deleted_vectors": 128,
     "dropped_collection": false,
-    "not_found": ["missing.pdf"]
+    "not_found": ["missing.pdf"],
+    "deleted_files": 3,
+    "file_errors": []
   }
 }
 ```
@@ -641,6 +672,13 @@ Answers look like:
 * Content which other rows still reference is refused with `DELETE_PROTECTED`, and identifiers
   which match nothing with `DOCUMENT_NOT_FOUND` / `CHUNK_NOT_FOUND`. Names or ids which do not
   exist are additionally listed in `not_found`.
+* **The files of the uploads** (`Document.path`, below the upload directory of the engine) go
+  with them: `deleted_documents` and `delete_collection` report how many disappeared in
+  `deleted_files`, and a file which could not be removed (a read-only mount, a file deleted by
+  hand) is only listed in `file_errors` — a problem with the disk never fails a deletion.
+  Only the paths inside the upload directory may be removed, and a directory disappears only
+  when its last file is gone, so nothing of another collection is ever touched. Removing chunks
+  (`delete_texts`) never removes a file: the rest of the document is still in the databases.
 
 ### Deleting the search history
 
@@ -704,6 +742,43 @@ in Milvus follows the relational one, so the state is consistent for **every
 consumer** of the vector collection, not only for the search of this engine.
 While disabled, its chunks are not returned by `search_with_options` —
 neither from the vector search nor from the full-text side.
+
+### Counters of a collection
+
+`GET collections` answers with every collection and how many documents it
+holds, so a client does not have to call `GET documents` once per collection:
+
+```json
+{
+  "status": true,
+  "body": {
+    "collections": [
+      {
+        "id": 12,
+        "name": "Regulations",
+        "display_name": "Company regulations",
+        "description": "...",
+        "created_on": "2026-10-24T18:28:11.402Z",
+        "metadata_json": {"chunking": {"max_tokens_in_chunk": 500, "number_of_overlap_tokens": 0}},
+        "document_count": 128,
+        "active_document_count": 120
+      }
+    ]
+  }
+}
+```
+
+| Field | What it counts |
+|-------|----------------|
+| `document_count` | Every document of the collection, deactivated ones included |
+| `active_document_count` | The documents which take part in the search (`use_in_search=True`) |
+
+Both counters are calculated **in the database**, one query for the whole
+answer (`RelationalDBController.with_document_counts`), and they follow the
+visibility of the collection: a document is counted for every user who may see
+its collection.  `document_count - active_document_count` is what a UI can show
+as deactivated, and `active_document_count` is what `GET documents` lists by
+default.
 
 ### Chunking of a collection
 

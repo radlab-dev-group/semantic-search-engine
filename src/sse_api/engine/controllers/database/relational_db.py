@@ -3,7 +3,7 @@ import json
 import tqdm
 
 from typing import List, Dict, Any
-from django.db.models import Q, QuerySet
+from django.db.models import Count, Q, QuerySet
 from django.apps import apps
 from django.db import transaction
 
@@ -65,6 +65,34 @@ class RelationalDBController:
     ):
         return RelationalDBController.get_visible_collections(user).filter(
             name__in=semantic_collections
+        )
+
+    @staticmethod
+    def with_document_counts(queryset):
+        """
+        Add the number of the documents of every collection to it.
+
+        Two annotations are added to the queryset:
+
+        - ``document_count``: every document of the collection,
+        - ``active_document_count``: the documents which take part in the
+          search (``Document.use_in_search=True``).
+
+        Both counters come from one query, so a list of collections does not
+        cost a query per collection.  ``distinct`` keeps them honest when the
+        queryset joins another relation, as the collections visible through a
+        group of the user do.
+
+        :param queryset: QuerySet of CollectionOfDocuments
+        :return: The same QuerySet with the two counters annotated
+        """
+        return queryset.annotate(
+            document_count=Count("document", distinct=True),
+            active_document_count=Count(
+                "document",
+                filter=Q(document__use_in_search=True),
+                distinct=True,
+            ),
         )
 
     def add_uploaded_documents_to_db(
@@ -528,7 +556,10 @@ class RelationalDBController:
         name = doc_as_dict.get("name", None)
         if name is None:
             name = os.path.basename(doc_as_dict["filepath"])
-        return Document.objects.filter(collection=collection, name=name).exists()
+        path = doc_as_dict["filepath"]
+        return Document.objects.filter(
+            collection=collection, name=name, path=path
+        ).exists()
 
     # ------------------------------------------------------------------
     # Deleting collection content
