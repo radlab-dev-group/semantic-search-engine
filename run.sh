@@ -15,7 +15,8 @@
 #   ./run.sh cosine          # migrate the indexes of existing collections to COSINE (defaults to --all)
 #   ./run.sh start|up        # run the API server in the foreground → http://0.0.0.0:8271/api/ (step 7)
 #   ./run.sh worker          # run the Celery worker (indexing queue) in the foreground
-#   ./run.sh down            # stop and remove the containers (+ the worker); THE DATA VOLUMES ARE KEPT
+#   ./run.sh down            # stop ALL the SSE processes (worker, API) and remove the containers;
+#                            # THE DATA VOLUMES ARE KEPT
 #   ./run.sh clean           # like down, but it also removes the volumes (postgres_data, milvus_data, rabbitmq_data)
 #   ./run.sh status          # show the state of the containers and ports (5471/19530/19121/5672/8271)
 #   ./run.sh config          # create .env and the missing configs/ files from the templates
@@ -76,7 +77,7 @@ API_DIR="$ROOT_DIR"
 CONFIG_DIR="$ROOT_DIR/configs"
 VENV_DIR="$ROOT_DIR/.venv"
 PY_PREFERRED="python3.11"
-MILVUS_IMAGE="milvusdb/milvus:v3.0.3"
+MILVUS_IMAGE="milvusdb/milvus:v3.0.5"
 
 export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/sse_lib/src:${PYTHONPATH:-}"
 export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-sse_api.config.settings}"
@@ -184,12 +185,92 @@ activate_venv() {
   done
 }
 
+# The processes of the SSE: the worker of the indexing queue and the API server.
+# Several checkouts of the project share one broker and one database whenever
+# their .env points at the same hosts (which is the default), so a worker
+# started from another checkout consumes the tasks of the same queue, with the
+# code it was started with.  "down" has therefore stop them all, not only the
+# one of this checkout's PID file.
+SSE_PROCESS_PATTERNS=(
+  "celery -A sse_api.config"
+  "sse_api.manage runserver"
+  "sse_api/manage.py runserver"
+  "sse_api/run-api.sh"
+)
+
+# PIDs of every SSE process, one per line; the script itself is never listed.
+sse_processes() {
+  local pattern pid pids=""
+  for pattern in "${SSE_PROCESS_PATTERNS[@]}"; do
+    while IFS= read -r pid; do
+      if [[ "$pid" =~ ^[0-9]+$ ]] && [[ "$pid" != "$$" ]] && [[ "$pid" != "$PPID" ]]; then
+        pids+="$pid"$'\n'
+      fi
+    done < <(pgrep -f -- "$pattern" 2>/dev/null || true)
+  done
+  printf '%s' "$pids" | sort -u -n || true
+}
+
+# Of the PIDs given as one argument, the ones which are still alive.
+alive_pids() {
+  local pid alive=""
+  for pid in $1; do
+    if kill -0 "$pid" 2>/dev/null; then
+      alive+="$pid"$'\n'
+    fi
+  done
+  printf '%s' "$alive"
+}
+
+# Stop every SSE process: the worker of the indexing queue and the API server,
+# whatever checkout they were started from.  A worker left alive keeps eating
+# the tasks of the queue and rewrites the progress of an indexing job with the
+# code of yesterday, which looks afterwards like documents silently skipped.
 stop_worker() {
-  if [[ -f "$WORKER_PID_FILE" ]] && kill -0 "$(cat "$WORKER_PID_FILE")" 2>/dev/null; then
-    kill "$(cat "$WORKER_PID_FILE")" 2>/dev/null || true
-    log "Stopped the Celery worker (PID $(cat "$WORKER_PID_FILE"))."
+  local pid pids="" tries
+  while IFS= read -r pid; do
+    if [[ "$pid" =~ ^[0-9]+$ ]]; then
+      pids+="$pid"$'\n'
+    fi
+  done < <(sse_processes)
+
+  if [[ -f "$WORKER_PID_FILE" ]]; then
+    while IFS= read -r pid; do
+      if [[ "$pid" =~ ^[0-9]+$ ]]; then
+        pids+="$pid"$'\n'
+      fi
+    done < <(cat "$WORKER_PID_FILE" 2>/dev/null; echo)
+    rm -f "$WORKER_PID_FILE"
   fi
-  rm -f "$WORKER_PID_FILE"
+
+  if [[ -z "$pids" ]]; then
+    log "No SSE process to stop."
+    return 0
+  fi
+  pids="$(printf '%s' "$pids" | sort -u -n || true)"
+  log "Stopping the SSE processes: $(echo "$pids" | tr '\n' ' ')"
+
+  for pid in $pids; do
+    kill "$pid" 2>/dev/null || true
+  done
+
+  tries=0
+  while (( tries < 10 )); do
+    pids="$(alive_pids "$pids")"
+    if [[ -z "$pids" ]]; then
+      break
+    fi
+    sleep 1
+    tries=$(( tries + 1 ))
+  done
+
+  if [[ -n "$pids" ]]; then
+    warn "Still alive after 10s, sending SIGKILL: $(echo "$pids" | tr '\n' ' ')"
+    for pid in $pids; do
+      kill -9 "$pid" 2>/dev/null || true
+    done
+  fi
+  log "Stopped the Celery worker(s) and the API server."
 }
 pick_pip() {
   if [[ -n "${VIRTUAL_ENV:-}" && -x "${VIRTUAL_ENV}/bin/pip3" ]]; then
@@ -605,10 +686,13 @@ status() {
   else
     warn "Docker unavailable — skipped the container list."
   fi
-  if [[ -f "$WORKER_PID_FILE" ]] && kill -0 "$(cat "$WORKER_PID_FILE")" 2>/dev/null; then
-    log "Celery worker: PID $(cat "$WORKER_PID_FILE") (log: logs/celery-worker.log)"
+  local sse_pids; sse_pids="$(sse_processes)"
+  if [[ -n "$sse_pids" ]]; then
+    log "SSE processes (worker / API server): $(echo "$sse_pids" | tr '\n' ' ')"
+    pgrep -f -- "celery -A sse_api.config" >/dev/null 2>&1 &&
+      log "  the log of the worker of ./run.sh start: logs/celery-worker.log"
   else
-    log "Celery worker: not running"
+    log "SSE processes (worker / API server): none"
   fi
   log "Ports (127.0.0.1):"
   local p

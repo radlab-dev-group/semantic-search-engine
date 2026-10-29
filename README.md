@@ -506,7 +506,8 @@ docker compose --profile indexing up -d     # api + worker + rabbitmq
 ./run.sh worker   # the indexing worker in the foreground
 ./run.sh start    # the API; with ENV_USE_CELERY=1 a worker starts with it
 ./run.sh status   # containers, worker, ports 5471/19530/19121/5672/8271
-./run.sh down     # stops the worker and removes the containers; the data volumes are kept
+./run.sh down     # stops EVERY SSE process (worker, API server) and removes the containers;
+                    # the data volumes are kept
 ./run.sh clean    # containers + volumes (postgres_data, milvus_data, rabbitmq_data) — deletes the data
 
 # ... or the worker by hand, with the dependencies of the API installed:

@@ -4,7 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
-| [0.1.4](#014) | Preview of a whole document: `GET document_content` (PostgreSQL only) and `sse_lib.SSEClient.document_content` / `indexing_status`. Counters of the documents in `GET collections` (`document_count`, `active_document_count`), one query for the whole answer; `sse_lib.Collection` exposes both. Date of a search in the history (`UserQuery.created_on`, `created_on` in `search_history` / `get_search_history`); `sse_lib.SearchHistory.created_on`. Files of the uploads on the disk: `delete_documents` / `delete_collection` remove them with the rows (`deleted_files`, `file_errors`), and the new `delete_files_after_indexing` option of an indexing call removes the file of every document once it is indexed. Documents of an upload are deduplicated by name **and** the path they were read from, so a zip with files of the same name in different subdirectories indexes every one of them |
+| [0.1.4](#014) | Preview of a whole document: `GET document_content` (PostgreSQL only) and `sse_lib.SSEClient.document_content` / `indexing_status`. Counters of the documents in `GET collections` (`document_count`, `active_document_count`), one query for the whole answer; `sse_lib.Collection` exposes both. Date of a search in the history (`UserQuery.created_on`, `created_on` in `search_history` / `get_search_history`); `sse_lib.SearchHistory.created_on`. Files of the uploads on the disk: `delete_documents` / `delete_collection` remove them with the rows (`deleted_files`, `file_errors`), and the new `delete_files_after_indexing` option of an indexing call removes the file of every document once it is indexed. Documents of an upload are deduplicated by name **and** the path they were read from, so a zip with files of the same name in different subdirectories indexes every one of them. `./run.sh down` stops every SSE process (worker, API), `./run.sh status` lists them |
 | [0.1.3](#013) | Indexing in a Celery + RabbitMQ queue, per-document indexing progress, `indexing_status` endpoint. Deactivation propagates to Milvus (`is_active` of the vectors); Milvus 3.0 |
 | [0.1.2](#012) | Deletion of the search history (`delete_search_history`), form-encoded `[]` list params |
 | [0.1.1](#0.1.1) | Deletion API (PostgreSQL + Milvus), document deactivation (`use_in_search`), normalized `[0, 1]` document ranking weights, collection-level chunking and `max_model_length` |
@@ -117,6 +117,20 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 - README: the REST endpoints table and a new "Counters of a collection"
   section describe the two fields (`README-pl.md` in Polish).
+
+#### Stopping the processes of the SSE by `run.sh`
+- `./run.sh down` (and `clean`) stop **every** process of the SSE — the worker
+  of the indexing queue and the API server — and no longer only the PID written
+  to `.celery-worker.pid`.  Several checkouts of the project work on one broker
+  and one database whenever their `.env` points at the same hosts, and a worker
+  left behind by an earlier start keeps consuming the tasks of the `indexing`
+  queue with the code it was started with: an indexing job then behaves like an
+  older build — documents silently skipped — however many times the current
+  checkout is restarted.  A process which ignores `SIGTERM` is sent `SIGKILL`
+  after 10 seconds.
+- `./run.sh status` lists the SSE processes it finds, so a second worker, or a
+  server of another checkout sharing the broker, is visible before it can
+  mislead anyone.
 
 ## [0.1.3]
 
