@@ -14,6 +14,14 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 ## [0.1.4]
 
+### Added
+
+#### API server under gunicorn
+- A new launcher, `src/sse_api/run-rest-api-gunicorn.sh`, starts the REST API on
+  gunicorn (the same environment and the same port `8271` as `run-api.sh`, but
+  without the development server). `./run.sh start` now uses it; `./run.sh down`
+  stops the gunicorn processes too. Flags: `--port`, `--bind`, `--workers`.
+
 ### Fixed
 
 #### Indexing of files with the same name in different subdirectories

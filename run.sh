@@ -13,7 +13,8 @@
 #   ./run.sh infra           # start PostgreSQL + Milvus + RabbitMQ in Docker (steps 3-4)
 #   ./run.sh init            # migrate + semantic + add_user + add_query_templates (step 6)
 #   ./run.sh cosine          # migrate the indexes of existing collections to COSINE (defaults to --all)
-#   ./run.sh start|up        # run the API server in the foreground → http://0.0.0.0:8271/api/ (step 7)
+#   ./run.sh start|up        # run the API server (gunicorn, src/sse_api/run-rest-api-gunicorn.sh)
+#                            # in the foreground → http://0.0.0.0:8271/api/ (step 7)
 #   ./run.sh worker          # run the Celery worker (indexing queue) in the foreground
 #   ./run.sh down            # stop ALL the SSE processes (worker, API) and remove the containers;
 #                            # THE DATA VOLUMES ARE KEPT
@@ -196,6 +197,8 @@ SSE_PROCESS_PATTERNS=(
   "sse_api.manage runserver"
   "sse_api/manage.py runserver"
   "sse_api/run-api.sh"
+  "sse_api/run-rest-api-gunicorn.sh"
+  "gunicorn sse_api.config.wsgi"
 )
 
 # PIDs of every SSE process, one per line; the script itself is never listed.
@@ -589,7 +592,7 @@ cosine() {
 }
 
 start() {
-  step "Step 7: starting the API server (foreground) → http://0.0.0.0:8271/api/"
+  step "Step 7: starting the API server under gunicorn (foreground) → http://0.0.0.0:8271/api/"
   [[ -d "$API_DIR/src/sse_api" ]] || { err "Missing src/sse_api/"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
 
@@ -609,7 +612,7 @@ start() {
 
   log "Test login: default_admin / password  (POST /api/login)"
   warn "In a production environment change the password of default_admin immediately."
-  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" ./src/sse_api/run-api.sh )
+  ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" ./src/sse_api/run-rest-api-gunicorn.sh )
 }
 
 worker() {

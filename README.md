@@ -504,7 +504,7 @@ docker compose --profile indexing up -d     # api + worker + rabbitmq
 # ... or locally with run.sh, which needs no extra configuration on localhost:
 ./run.sh infra    # PostgreSQL + Milvus + RabbitMQ (127.0.0.1:5672, UI 15672)
 ./run.sh worker   # the indexing worker in the foreground
-./run.sh start    # the API; with ENV_USE_CELERY=1 a worker starts with it
+./run.sh start    # the API (gunicorn); with ENV_USE_CELERY=1 a worker starts with it
 ./run.sh status   # containers, worker, ports 5471/19530/19121/5672/8271
 ./run.sh down     # stops EVERY SSE process (worker, API server) and removes the containers;
                     # the data volumes are kept
@@ -1068,6 +1068,7 @@ Additional project‑specific commands are provided by the `sse_tools` scripts:
 | Command                                   | Description                                                                                    |
 |-------------------------------------------|------------------------------------------------------------------------------------------------|
 | `python -m sse_api.manage runserver 0.0.0.0:8271` | Starts the development server (default port 8271 in `run-api.sh`).                             |
+| `./run-rest-api-gunicorn.sh`                       | Starts the API on gunicorn on the same port (8271); used by `./run.sh start`.                   |
 | `python -m sse_api.manage migrate`                | Applies database migrations (including the generated migration files under `chat/migrations`). |
 | `python -m sse_api.manage createsuperuser`        | Creates a Django superuser for the admin UI (if `ENV_SHOW_ADMIN_WINDOW` is true).              |
 | `python -m sse_api.manage reset_stale_indexing_jobs` | Closes indexing jobs and documents which were left running by a killed worker (`--minutes 60`, `--dry-run`). |
@@ -1080,6 +1081,9 @@ Additional project‑specific commands are provided by the `sse_tools` scripts:
   templates.
 - **`run-api.sh`** – Convenience wrapper that sets common environment variables (CUDA device, data upload limits, API
   keys) and starts the Django dev server.
+- **`run-rest-api-gunicorn.sh`** – the same environment as `run-api.sh`, but starts the API on gunicorn
+  (`gunicorn.conf.py`) on port 8271; this is what `./run.sh start` runs now. Accepts `--port`, `--bind` and
+  `--workers`.
 - **`index_to_milvus.sh`** & **`index_to_postgresql.sh`** – Quick wrappers around the Python indexing scripts for ad‑hoc
   runs.
 

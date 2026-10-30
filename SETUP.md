@@ -127,7 +127,8 @@ or everything at once: `./initialize.sh all`.
 
 ```bash
 cd semantic-search-engine
-./run-api.sh     # python3 manage.py runserver 0.0.0.0:8271
+./run.sh start   # the API on gunicorn (src/sse_api/run-rest-api-gunicorn.sh), port 8271
+./run-api.sh     # the same, but the Django dev server (manage.py runserver 0.0.0.0:8271)
 ```
 
 **API: `http://localhost:8271/api/...`**
