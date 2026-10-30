@@ -283,7 +283,7 @@ wywołania indeksowania:
 1. Wartości z zapytania wygrywają (kolekcja nie jest nadpisywana).
 2. Brak wartości w zapytaniu -- używane są ustawienia kolekcji.
 3. Gdy ani zapytanie, ani kolekcja nic nie deklarują -- używane są wartości
-   domyślne (500 tokenów, brak nakładki) **i są zapamiętywane na kolekcji**,
+   domyślne (400 tokenów, nakładka 60 tokenów) **i są zapamiętywane na kolekcji**,
    więc kolejne wywołanie nie musi nic podawać.
 4. Kolekcja ze `strict_chunking: true` odrzuca wartości inne niż własne --
    `CHUNKING_MISMATCH` (`000006_DATA`).
@@ -442,9 +442,10 @@ docker compose --profile indexing up -d     # api + worker + rabbitmq
 # ... albo lokalnie przez run.sh, bez żadnych dodatkowych konfigów:
 ./run.sh infra    # PostgreSQL + Milvus + RabbitMQ (127.0.0.1:5672, UI 15672)
 ./run.sh worker   # worker indeksacji w foreground
-./run.sh start    # API; przy ENV_USE_CELERY=1 worker startuje razem z nim
+./run.sh start    # API (gunicorn); przy ENV_USE_CELERY=1 worker startuje razem z nim
 ./run.sh status   # kontenery, worker, porty 5471/19530/19121/5672/8271
-./run.sh down     # zatrzymuje workera i usuwa kontenery; wolumeny z danymi zostają
+./run.sh down     # zatrzymuje WSZYSTKIE procesy SSE (worker, serwer API) i usuwa kontenery;
+                    # wolumeny z danymi zostają
 ./run.sh clean    # kontenery + wolumeny (postgres_data, milvus_data, rabbitmq_data) — kasuje dane
 
 # ... albo worker odpalony ręcznie, po zainstalowaniu zależności API:

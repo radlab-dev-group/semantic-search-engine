@@ -4,6 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
+| [0.1.5](#015) | `./run.sh start` now runs the REST API on **gunicorn** (`src/sse_api/run-rest-api-gunicorn.sh`, the same environment and port `8271` as `run-api.sh`; flags `--port`, `--bind`, `--workers`). `./run.sh down` stops **every** SSE process (worker, API) and `./run.sh status` lists them; the bundled Milvus moves to `v3.0.5`. Default chunking of a collection: **400 tokens** per chunk with a **60-token overlap** (was 500 with no overlap) |
 | [0.1.4](#014) | Preview of a whole document: `GET document_content` (PostgreSQL only) and `sse_lib.SSEClient.document_content` / `indexing_status`. Counters of the documents in `GET collections` (`document_count`, `active_document_count`), one query for the whole answer; `sse_lib.Collection` exposes both. Date of a search in the history (`UserQuery.created_on`, `created_on` in `search_history` / `get_search_history`); `sse_lib.SearchHistory.created_on`. Files of the uploads on the disk: `delete_documents` / `delete_collection` remove them with the rows (`deleted_files`, `file_errors`), and the new `delete_files_after_indexing` option of an indexing call removes the file of every document once it is indexed. Documents of an upload are deduplicated by name **and** the path they were read from, so a zip with files of the same name in different subdirectories indexes every one of them |
 | [0.1.3](#013) | Indexing in a Celery + RabbitMQ queue, per-document indexing progress, `indexing_status` endpoint. Deactivation propagates to Milvus (`is_active` of the vectors); Milvus 3.0 |
 | [0.1.2](#012) | Deletion of the search history (`delete_search_history`), form-encoded `[]` list params |
@@ -11,6 +12,45 @@ All notable changes to the Semantic Search Engine are documented in this file.
 | [0.1.0](#010) | Python client library, hybrid search, production deployment tooling, `src/` layout and CI |
 | [0.0.1](#001) | Initial version |
 
+
+## [0.1.5]
+
+### Changed
+
+#### Default chunking of a collection
+- A collection created without chunking settings now uses **400 tokens** per
+  chunk with an **overlap of 60 tokens** instead of 500 tokens with no overlap
+  (`DEFAULT_MAX_TOKENS_IN_CHUNK`, `DEFAULT_NUMBER_OF_OVERLAP_TOKENS` in
+  `src/sse_api/data/core/constants.py`).  The values are still remembered on
+  the collection, so they can be overridden per request or per collection.
+
+### Added
+
+#### API server under gunicorn
+- A new launcher, `src/sse_api/run-rest-api-gunicorn.sh`, starts the REST API on
+  gunicorn (the same environment and the same port `8271` as `run-api.sh`, but
+  without the development server). `./run.sh start` now uses it; `./run.sh down`
+  stops the gunicorn processes too. Flags: `--port`, `--bind`, `--workers`.
+
+### Changed
+
+#### Stopping the processes of the SSE by `run.sh`
+- `./run.sh down` (and `clean`) stop **every** process of the SSE — the worker
+  of the indexing queue and the API server — and no longer only the PID written
+  to `.celery-worker.pid`.  Several checkouts of the project work on one broker
+  and one database whenever their `.env` points at the same hosts, and a worker
+  left behind by an earlier start keeps consuming the tasks of the `indexing`
+  queue with the code it was started with: an indexing job then behaves like an
+  older build — documents silently skipped — however many times the current
+  checkout is restarted.  A process which ignores `SIGTERM` is sent `SIGKILL`
+  after 10 seconds.
+- `./run.sh status` lists the SSE processes it finds, so a second worker, or a
+  server of another checkout sharing the broker, is visible before it can
+  mislead anyone.
+
+#### Bundled Milvus
+- The Docker image of the bundled Milvus moves from `v3.0.3` to `v3.0.5`
+  (`MILVUS_IMAGE` in `run.sh`); the `milvus_data` volume is kept as before.
 
 ## [0.1.4]
 
@@ -117,7 +157,6 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 - README: the REST endpoints table and a new "Counters of a collection"
   section describe the two fields (`README-pl.md` in Polish).
-
 ## [0.1.3]
 
 ### Added
