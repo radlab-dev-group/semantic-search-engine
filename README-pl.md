@@ -283,7 +283,7 @@ wywołania indeksowania:
 1. Wartości z zapytania wygrywają (kolekcja nie jest nadpisywana).
 2. Brak wartości w zapytaniu -- używane są ustawienia kolekcji.
 3. Gdy ani zapytanie, ani kolekcja nic nie deklarują -- używane są wartości
-   domyślne (500 tokenów, brak nakładki) **i są zapamiętywane na kolekcji**,
+   domyślne (400 tokenów, nakładka 60 tokenów) **i są zapamiętywane na kolekcji**,
    więc kolejne wywołanie nie musi nic podawać.
 4. Kolekcja ze `strict_chunking: true` odrzuca wartości inne niż własne --
    `CHUNKING_MISMATCH` (`000006_DATA`).

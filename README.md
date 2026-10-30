@@ -798,7 +798,7 @@ created, so that one collection does not drift between uploads:
 
 1. A request which declares the values wins; the collection is not rewritten.
 2. Otherwise the settings of the collection are used.
-3. When neither side declares anything, the global defaults (500 tokens, no overlap) are used
+3. When neither side declares anything, the global defaults (400 tokens, 60 tokens of overlap) are used
    **and remembered on the collection**, so the next call does not have to pass anything.
 4. A collection created with `strict_chunking: true` refuses indexing options which differ from
    its own — `CHUNKING_MISMATCH` (`000006_DATA`).

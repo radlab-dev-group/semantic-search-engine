@@ -17,10 +17,10 @@ MAX_TOKENS_IN_CHUNK_KEY = "max_tokens_in_chunk"
 NUMBER_OF_OVERLAP_TOKENS_KEY = "number_of_overlap_tokens"
 
 #: Default size of a text chunk, in tokens.
-DEFAULT_MAX_TOKENS_IN_CHUNK = 500
+DEFAULT_MAX_TOKENS_IN_CHUNK = 400
 
 #: Default number of tokens repeated between two neighbouring chunks.
-DEFAULT_NUMBER_OF_OVERLAP_TOKENS = 0
+DEFAULT_NUMBER_OF_OVERLAP_TOKENS = 60
 
 #: Upper bound of a chunk when the embedder does not declare its own limit.
 #: It only guards against typos such as ``500000``; a model which declares

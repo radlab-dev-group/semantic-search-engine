@@ -14,6 +14,15 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 ## [0.1.4]
 
+### Changed
+
+#### Default chunking of a collection
+- A collection created without chunking settings now uses **400 tokens** per
+  chunk with an **overlap of 60 tokens** instead of 500 tokens with no overlap
+  (`DEFAULT_MAX_TOKENS_IN_CHUNK`, `DEFAULT_NUMBER_OF_OVERLAP_TOKENS` in
+  `src/sse_api/data/core/constants.py`).  The values are still remembered on
+  the collection, so they can be overridden per request or per collection.
+
 ### Added
 
 #### API server under gunicorn
