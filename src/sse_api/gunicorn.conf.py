@@ -60,8 +60,14 @@ errorlog = os.environ.get("GUNICORN_ERRORLOG", "-")
 loglevel = os.environ.get("GUNICORN_LOGLEVEL", "info")
 capture_output = True
 
-# `configs/` and `static/` paths are relative to the working directory.
-chdir = os.path.dirname(os.path.abspath(__file__))
+# The project uses a src/ layout: this file lives in <repo>/src/sse_api, while
+# `configs/`, `static/` and `upload_sse/` live in the repository root.  Stay in
+# the root, so every path which is resolved relative to the working directory
+# keeps working (SSE_CONFIG_DIR still wins when it is set).
+chdir = os.environ.get(
+    "GUNICORN_CHDIR",
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+)
 
 proc_name = "sse-api"
 wsgi_app = "sse_api.config.wsgi:application"
