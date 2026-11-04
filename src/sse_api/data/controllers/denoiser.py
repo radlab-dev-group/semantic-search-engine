@@ -13,12 +13,15 @@ Python project that already depends on ``transformers`` and ``torch``.
 
 import json
 import logging
+import os
 import torch
 import Levenshtein
 
 from typing import List
 
 from transformers import T5ForConditionalGeneration, T5Tokenizer
+
+from sse_api.core.constants import CONFIG_DIR
 
 CACHED_MODELS = {}
 
@@ -349,7 +352,9 @@ class DenoiserController:
     JSON_FIELD_DENOISER_MODEL_PATH = "model_path"
 
     def __init__(
-        self, load_model: bool = True, config_path: str = "configs/models.json"
+        self,
+        load_model: bool = True,
+        config_path: str = os.path.join(CONFIG_DIR, "models.json"),
     ):
         """
         Initialise the controller.
@@ -359,7 +364,7 @@ class DenoiserController:
         load_model : bool, default ``True``
             If ``True`` the model is loaded immediately; otherwise it can be loaded
             later via :meth:`load`.
-        config_path : str, default ``"configs/models.json"``
+        config_path : str, default ``configs/models.json``
             Path to the JSON configuration that contains model information.
         """
         assert config_path is not None and len(config_path)
