@@ -42,6 +42,7 @@ from sse_api.data.controllers.deletion import (
 )
 from sse_api.data.controllers.visibility import ContentVisibilityController
 from sse_api.data.controllers.preview import ContentPreviewController
+from sse_api.core.constants import UPLOAD_DIR
 from sse_api.data.core.errors import (
     UPLOAD_REJECTED,
     CHUNK_NOT_FOUND,
@@ -332,7 +333,7 @@ class UploadAndIndexFilesToCollection(APIView):
         if error is not None:
             return error
 
-        upl_controller = UploadDocumentsController(upload_dir="./upload_sse")
+        upl_controller = UploadDocumentsController(upload_dir=UPLOAD_DIR)
         job = indexing_progress.create_job(
             collection=collection,
             organisation_user=organisation_user,
