@@ -189,7 +189,7 @@ class NewCollection(APIView):
 
         text_data_db_controller = RelationalDBController()
         semantic_db_controller = SemanticDBController(
-            milvus_config_path="configs/milvus_config.json", prepare_db=False
+            milvus_config_path=MILVUS_CONFIG_PATH, prepare_db=False
         )
         collection = text_data_db_controller.get_add_collection(
             collection_name=collection_name,
@@ -230,7 +230,7 @@ class ListCollections(APIView):
     def get(self, language, organisation_user, request, *args, **kwargs):
         db_controller = RelationalDBController()
         semantic_db_controller = SemanticDBController(
-            milvus_config_path="configs/milvus_config.json", prepare_db=False
+            milvus_config_path=MILVUS_CONFIG_PATH, prepare_db=False
         )
         sem_collections = semantic_db_controller.collections()
         # User collections

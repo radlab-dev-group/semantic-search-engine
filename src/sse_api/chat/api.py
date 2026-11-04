@@ -43,6 +43,7 @@ from sse_api.chat.serializer import (
 )
 
 from sse_api.engine.controllers.database.relational_db import RelationalDBController
+from sse_api.data.core.constants import MILVUS_CONFIG_PATH
 
 
 class NewChat(APIView):
@@ -268,7 +269,7 @@ class AddUserMessageToChatWithSystemResponse(APIView):
                 history=history,
                 options=options_dict,
                 organisation_user=organisation_user,
-                sse_engin_config_path="configs/milvus_config.json",
+                sse_engin_config_path=MILVUS_CONFIG_PATH,
                 last_questions_to_query=self.LAST_QUESTIONS_TO_QUERY,
                 system_prompt=system_prompt,
             )

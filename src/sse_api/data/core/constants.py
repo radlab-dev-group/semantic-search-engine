@@ -6,6 +6,10 @@ when a collection is created without saying otherwise.  They are also what a
 UI can prefill its form with, see the ``filtering_options`` endpoint.
 """
 
+import os
+
+from sse_api.core.constants import CONFIG_DIR
+
 #: Key of the chunking settings inside ``CollectionOfDocuments.metadata_json``.
 CHUNKING_METADATA_KEY = "chunking"
 
@@ -79,7 +83,7 @@ DEFAULT_INDEXING_STALE_MINUTES = 60
 DB_INDEXING_PROCESS_COUNT = 5
 
 #: Vector database configuration of the collections.
-MILVUS_CONFIG_PATH = "./configs/milvus_config.json"
+MILVUS_CONFIG_PATH = os.path.join(CONFIG_DIR, "milvus_config.json")
 
 #: Documents of one indexing request reported by ``api/indexing_status``.
 MAX_STATUS_DOCUMENTS = 200
