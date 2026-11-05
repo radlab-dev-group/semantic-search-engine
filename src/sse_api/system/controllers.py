@@ -1,14 +1,16 @@
 import json
+import os
 
 from typing import List
 from django.contrib.auth.models import User
 from django.contrib.auth.hashers import make_password
 
+from sse_api.core.constants import CONFIG_DIR
 from sse_api.system.models import Organisation, OrganisationGroup, OrganisationUser
 
 
 class UserConfigReader:
-    def __init__(self, config_path: str = "configs/default-user.json"):
+    def __init__(self, config_path: str = os.path.join(CONFIG_DIR, "default-user.json")):
         self.config_path = config_path
 
         self._organisation = None

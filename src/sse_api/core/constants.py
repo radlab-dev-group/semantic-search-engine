@@ -1,11 +1,19 @@
 import os
+from pathlib import Path
 from django.conf import settings
+
+# Root of the repository (sse_api lives in <repo>/src/sse_api).  The config
+# and the runtime data (uploads, static) live in the repository root, so the
+# defaults below are resolved against it: the server must work no matter
+# which directory the WSGI server changed into (gunicorn chdirs into
+# src/sse_api).
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 STATIC_DIR = "static/"
 # Directory holding runtime config files. Resolved relative to the
-# working directory by default; override with SSE_CONFIG_DIR (used by
-# the Docker image and by tests).
-CONFIG_DIR = os.getenv("SSE_CONFIG_DIR", "configs/")
+# repository root by default; override with SSE_CONFIG_DIR (used by the
+# Docker image, the start scripts and by tests).
+CONFIG_DIR = os.getenv("SSE_CONFIG_DIR", str(REPO_ROOT / "configs"))
 
 SYSTEM_CONFIG_FILENAME = "django-config.json"
 RDL_AUTH_CONFIG_FILENAME = "auth-config.json"
@@ -14,6 +22,9 @@ AWS_CONFIG_FILENAME = "django-config.json"
 
 SECRET_KEY_FILENAME = "secret-key.txt"
 SECRET_KEY_FILENAME_DEFAULT = "secret-key-default.txt"
+
+# Directory where the engine stores the uploaded files.
+UPLOAD_DIR = os.getenv("SSE_UPLOAD_DIR", str(REPO_ROOT / "upload_sse"))
 
 AVAILABLE_CONFIG_DIRS = [
     STATIC_DIR,

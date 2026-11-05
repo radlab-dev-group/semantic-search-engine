@@ -1,5 +1,8 @@
 import json
 import math
+import os
+
+from sse_api.core.constants import CONFIG_DIR, RDL_AUTH_CONFIG_FILENAME
 
 
 class RdlAuthConfig:
@@ -9,7 +12,9 @@ class RdlAuthConfig:
 
     RDL_AUTH_JSON_FIELD = "authorization"
 
-    def __init__(self, cfg_path: str = "configs/auth-config.json"):
+    def __init__(
+        self, cfg_path: str = os.path.join(CONFIG_DIR, RDL_AUTH_CONFIG_FILENAME)
+    ):
         self._auth_host = None
         self._realm = None
         self._client_secret = None

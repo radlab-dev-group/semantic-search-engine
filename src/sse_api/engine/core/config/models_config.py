@@ -27,6 +27,9 @@ currently active models.
 """
 
 import json
+import os
+
+from sse_api.core.constants import CONFIG_DIR
 
 ALL_AVAILABLE_EMBEDDERS_MODELS = {}
 ALL_AVAILABLE_RERANKERS_MODELS = {}
@@ -84,10 +87,10 @@ class EmbeddingModelsConfig:
     ----------
     embedders_config : str, optional
         Path to the JSON file describing embedder models. Defaults to
-        ``"configs/embedders.json"``.
+        ``configs/embedders.json``.
     rerankers_config : str, optional
         Path to the JSON file describing reranker models. Defaults to
-        ``"configs/rerankers.json"``.
+        ``configs/rerankers.json``.
 
     The constructor loads the configuration files (if the supplied strings are
     non‑empty) and populates the global ``ALL_AVAILABLE_EMBEDDERS_MODELS`` and
@@ -97,8 +100,8 @@ class EmbeddingModelsConfig:
 
     def __init__(
         self,
-        embedders_config: str = "configs/embedders.json",
-        rerankers_config: str = "configs/rerankers.json",
+        embedders_config: str = os.path.join(CONFIG_DIR, "embedders.json"),
+        rerankers_config: str = os.path.join(CONFIG_DIR, "rerankers.json"),
     ):
         """
         Create a new configuration loader.

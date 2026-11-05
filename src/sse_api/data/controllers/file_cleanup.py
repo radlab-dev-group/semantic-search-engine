@@ -31,13 +31,14 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from sse_api.core.constants import UPLOAD_DIR
 from sse_api.data.models import Document, UploadedDocuments
 
 MAIN_LOGGER = logging.getLogger("sse_api")
 
 #: Where the engine stores the files of the uploads; the same directory which
 #: the upload controller is given in ``sse_api.data.api``.
-DEFAULT_UPLOAD_ROOT = "./upload_sse"
+DEFAULT_UPLOAD_ROOT = UPLOAD_DIR
 
 
 @dataclass

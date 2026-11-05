@@ -25,6 +25,7 @@ import dateutil
 
 from django.db.models import QuerySet
 
+from sse_api.core.constants import CONFIG_DIR
 from sse_api.system.models import Organisation, OrganisationUser
 
 from sse_api.data.models import Document
@@ -374,7 +375,7 @@ class QueryTemplateConfigReader:
     * ``templates_grammar`` – token/alphabet definitions used by the grammar.
     """
 
-    def __init__(self, config_path: str = "configs/query-templates.json"):
+    def __init__(self, config_path: str = os.path.join(CONFIG_DIR, "query-templates.json")):
         """
         Create a reader and immediately load the configuration.
 
@@ -419,7 +420,7 @@ class QueryTemplatesLoaderController:
         * :class:`QueryTemplate`
     """
 
-    def __init__(self, config_path: str = "configs/query-templates.json"):
+    def __init__(self, config_path: str = os.path.join(CONFIG_DIR, "query-templates.json")):
         """
         Instantiate the controller and read the configuration.
         """

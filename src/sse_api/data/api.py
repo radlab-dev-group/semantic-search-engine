@@ -42,6 +42,7 @@ from sse_api.data.controllers.deletion import (
 )
 from sse_api.data.controllers.visibility import ContentVisibilityController
 from sse_api.data.controllers.preview import ContentPreviewController
+from sse_api.core.constants import UPLOAD_DIR
 from sse_api.data.core.errors import (
     UPLOAD_REJECTED,
     CHUNK_NOT_FOUND,
@@ -189,7 +190,7 @@ class NewCollection(APIView):
 
         text_data_db_controller = RelationalDBController()
         semantic_db_controller = SemanticDBController(
-            milvus_config_path="configs/milvus_config.json", prepare_db=False
+            milvus_config_path=MILVUS_CONFIG_PATH, prepare_db=False
         )
         collection = text_data_db_controller.get_add_collection(
             collection_name=collection_name,
@@ -230,7 +231,7 @@ class ListCollections(APIView):
     def get(self, language, organisation_user, request, *args, **kwargs):
         db_controller = RelationalDBController()
         semantic_db_controller = SemanticDBController(
-            milvus_config_path="configs/milvus_config.json", prepare_db=False
+            milvus_config_path=MILVUS_CONFIG_PATH, prepare_db=False
         )
         sem_collections = semantic_db_controller.collections()
         # User collections
@@ -332,7 +333,7 @@ class UploadAndIndexFilesToCollection(APIView):
         if error is not None:
             return error
 
-        upl_controller = UploadDocumentsController(upload_dir="./upload_sse")
+        upl_controller = UploadDocumentsController(upload_dir=UPLOAD_DIR)
         job = indexing_progress.create_job(
             collection=collection,
             organisation_user=organisation_user,

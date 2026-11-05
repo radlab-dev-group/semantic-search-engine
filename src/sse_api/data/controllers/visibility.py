@@ -29,6 +29,7 @@ from sse_api.data.models import CollectionOfDocuments
 
 from sse_api.engine.controllers.database.relational_db import RelationalDBController
 from sse_api.engine.controllers.database.semantic_db import SemanticDBController
+from sse_api.data.core.constants import MILVUS_CONFIG_PATH
 
 
 @dataclass
@@ -62,7 +63,7 @@ class ContentVisibilityController:
     Decides which documents of a collection take part in the search.
     """
 
-    def __init__(self, milvus_config_path: str = "./configs/milvus_config.json"):
+    def __init__(self, milvus_config_path: str = MILVUS_CONFIG_PATH):
         """
         :param milvus_config_path: Milvus connection configuration used to
         activate/deactivate the vectors of the documents
