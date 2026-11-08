@@ -58,14 +58,18 @@ class ChatLogicController:
 
     @staticmethod
     def get_list_of_user_chats(user: OrganisationUser) -> QuerySet[Chat]:
-        return Chat.objects.filter(organisation_user=user)
+        return Chat.objects.filter(organisation_user=user).select_related(
+            "collection"
+        )
 
     @staticmethod
     def get_chat_by_chat_hash(
         chat_hash: str, only_saved: bool = True
     ) -> Chat | None:
         try:
-            return Chat.objects.get(is_saved=only_saved, hash=chat_hash)
+            return Chat.objects.select_related("collection").get(
+                is_saved=only_saved, hash=chat_hash
+            )
         except Chat.DoesNotExist:
             return None
 

@@ -564,7 +564,7 @@ class Chat:
 
 @dataclass
 class ChatMessage:
-    """A single chat message (``MessageSerializer``)."""
+    """A single chat message (``MessageSerializer`` or ``DeepMessageSerializer``)."""
 
     id: Optional[int] = None
     chat: Optional[int] = None
@@ -574,12 +574,16 @@ class ChatMessage:
     number: Optional[int] = None
     date_time: Optional[str] = None
     generation_time: Optional[float] = None
+    state: Optional[Dict[str, Any]] = None
+    prev_message: Optional[int] = None
+    next_message: Optional[int] = None
     raw: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_api(cls, data: Any) -> "ChatMessage":
         """Build a message from one entry of a serialized history."""
         payload = _as_dict(data)
+        state = payload.get("state")
         return cls(
             id=payload.get("id"),
             chat=payload.get("chat"),
@@ -589,6 +593,9 @@ class ChatMessage:
             number=payload.get("number"),
             date_time=payload.get("date_time"),
             generation_time=payload.get("generation_time"),
+            state=state if isinstance(state, dict) else None,
+            prev_message=payload.get("prev_message"),
+            next_message=payload.get("next_message"),
             raw=payload,
         )
 
@@ -631,6 +638,7 @@ class ChatHistory:
 
     chat_id: Optional[int] = None
     is_read_only: Optional[bool] = None
+    collection_name: Optional[str] = None
     messages: List[ChatMessage] = field(default_factory=list)
     raw: Dict[str, Any] = field(default_factory=dict)
 
@@ -641,6 +649,7 @@ class ChatHistory:
         return cls(
             chat_id=payload.get("chat_id"),
             is_read_only=payload.get("is_read_only"),
+            collection_name=payload.get("collection_name"),
             messages=[
                 ChatMessage.from_api(entry)
                 for entry in _as_list(payload.get("chat_history"))

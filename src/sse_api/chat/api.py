@@ -47,6 +47,7 @@ from sse_api.chat.core.errors import (
 from sse_api.engine.core.errors import DELETE_PROTECTED
 from sse_api.chat.serializer import (
     ChatSerializer,
+    DeepMessageSerializer,
     MessageSerializer,
     MessageStateSerializer,
 )
@@ -440,7 +441,12 @@ class GetSavedChatByHash(APIView):
         return {
             "chat_id": chat.pk if chat is not None else None,
             "is_read_only": chat.read_only if chat else None,
-            "chat_history": MessageSerializer(chat_messages, many=True).data,
+            "collection_name": (
+                chat.collection.name
+                if chat is not None and chat.collection_id is not None
+                else None
+            ),
+            "chat_history": DeepMessageSerializer(chat_messages, many=True).data,
         }
 
 

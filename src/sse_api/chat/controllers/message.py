@@ -124,7 +124,7 @@ class MessageLogicController:
             text=gen_assistant_msg_str,
             text_translated=gen_assistant_msg_str_translated,
             number=len(history) + 2,
-            state=None,
+            state=message_state,
             generation_time=datetime.timedelta(seconds=generation_time),
             prev_message=last_user_message,
         )
