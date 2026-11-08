@@ -4,6 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
+| [0.1.6](#016) | Conversational RAG with memory: the generator sees the previous questions **and** answers, follow-up questions are rewritten into standalone retrieval queries (new `POST rewrite_query`), answers carry numbered source citations (`citations`, per-chat numbering, `answer_source`/`rewritten_query` in the reply) and short commands ("make it a table", "shorten", "translate") reuse the previous sources without a new search. Every search hit and citation carries the chunk's identity and position (`text_id`, `document_id`, `char_start`, `char_end`); `GET document_content?text_id=` opens exactly the chunk's page with a `highlight`. `sse_lib`: `rewrite_query()`, `generative_answer_with_citations()`, `document_content(text_id=...)` and the new reply/citation fields |
 | [0.1.5](#015) | `./run.sh start` now runs the REST API on **gunicorn** (`src/sse_api/run-rest-api-gunicorn.sh`, the same environment and port `8271` as `run-api.sh`; flags `--port`, `--bind`, `--workers`). `./run.sh down` stops **every** SSE process (worker, API) and `./run.sh status` lists them; the bundled Milvus moves to `v3.0.5`. Default chunking of a collection: **400 tokens** per chunk with a **60-token overlap** (was 500 with no overlap) |
 | [0.1.4](#014) | Preview of a whole document: `GET document_content` (PostgreSQL only) and `sse_lib.SSEClient.document_content` / `indexing_status`. Counters of the documents in `GET collections` (`document_count`, `active_document_count`), one query for the whole answer; `sse_lib.Collection` exposes both. Date of a search in the history (`UserQuery.created_on`, `created_on` in `search_history` / `get_search_history`); `sse_lib.SearchHistory.created_on`. Files of the uploads on the disk: `delete_documents` / `delete_collection` remove them with the rows (`deleted_files`, `file_errors`), and the new `delete_files_after_indexing` option of an indexing call removes the file of every document once it is indexed. Documents of an upload are deduplicated by name **and** the path they were read from, so a zip with files of the same name in different subdirectories indexes every one of them |
 | [0.1.3](#013) | Indexing in a Celery + RabbitMQ queue, per-document indexing progress, `indexing_status` endpoint. Deactivation propagates to Milvus (`is_active` of the vectors); Milvus 3.0 |
@@ -12,6 +13,101 @@ All notable changes to the Semantic Search Engine are documented in this file.
 | [0.1.0](#010) | Python client library, hybrid search, production deployment tooling, `src/` layout and CI |
 | [0.0.1](#001) | Initial version |
 
+
+## [0.1.6]
+
+### Added
+
+#### RAG memory of the conversation
+- The RAG answer now receives the previous questions **and** answers as
+  `historical_messages` of the router call, bounded by
+  `rag_history_max_turns` (default `8`, maximum `50`, whole turns only) and
+  `rag_history_max_chars` (default `24000`, maximum `100000`).  Older turns stay
+  in the database, but they are not automatically summarised.
+- Follow-up questions are rewritten into standalone retrieval queries through
+  the router instead of concatenating the old questions onto the current one.
+  The rewriting model comes from `query_rewrite_model`, then
+  `LLM_ROUTER_QUERY_REWRITE_MODEL`, and finally `generative_model`; the first
+  question is not rewritten, and on any router failure the original question is
+  searched.  Rewriting is on by default; an explicit `use_intelligent_query_rewrite: false`
+  keeps the previous behaviour (the current question searched as-is).
+- Sources are numbered per chat (`system_prompt_with_enumerated_documents`, on
+  by default in the chat): every fragment gets its own number `[n]`, independent
+  of the document name, and the number-to-fragment map — `n`, `text_id`,
+  `document_id`, `page_number`, `char_start`, `char_end`, text — is returned in
+  `citations`, stored with the answer in
+  `sse_answer.generative_qa_result_json` and rehydrated from the database (not
+  the client session) for the later turns.  The generator's reply is checked to
+  reference only the known numbers.  A standalone `generative_answer` keeps the
+  numbering off unless the option is set, and then numbers per answer.
+- Short commands such as “zrób z tego tabelę”, “skróć” or “przetłumacz” (PL/EN)
+  — or an explicit `history_only: true` — skip the search and reuse the
+  previous query, response and sources; the reply reports
+  `answer_source: "history"` with an empty `rewritten_query`.  Ambiguous
+  commands, or a missing source context, fall back to the regular search.
+  `answer_source` (`"rag"`, `"history"`, `"llm_fallback"`) is returned in
+  `add_user_message`, stored with the answer, and exposed in
+  `last_state.rag_message_state` (`answer_source`, `rewritten_query`,
+  `citations`) together with the citations.
+- A change of collection or search scope stops reusing turns from another
+  scope; deleted, disabled or changed sources are not used again.  A template
+  prompt now prefixes the user's `system_prompt` instead of replacing it.
+- `add_user_message` runs in a single database transaction with the chat row
+  locked, so concurrent messages of one chat do not interleave.
+
+#### `POST rewrite_query`
+- Rewrites a follow-up question into a standalone retrieval query through the
+  router: `query_str`, `generative_model` and optional `historical_messages`
+  (chronological `{user, assistant}` string turns, validated before the router
+  is called).  Returns `rewritten_query`; a failure returns the standard
+  generation error.  The endpoint does not search and does not store anything.
+
+#### Chunk coordinates in the results and the preview
+- Every search hit and citation carries the identity and the position of its
+  chunk: `text_id`, `document_id` and `char_start`/`char_end` — zero-based
+  Unicode code points with an exclusive end, relative to `pages[].content` of
+  the relational preview (not byte offsets, not JavaScript UTF-16 indices).
+  Missing locations are `null`.  The coordinates come from one query per batch
+  (`data/controllers/chunk_offsets.py`); a stale, changed, empty or unmappable
+  chunk gets `null` instead of a guessed position, and nothing is normalised to
+  force a match.
+- `GET document_content` accepts `text_id` (with the usual `collection_name`,
+  optionally `document_id`/`document_name`/`chunk_type` which must match the
+  chunk).  It resolves the chunk only inside the authorized collection, returns
+  exactly the chunk's page and its stored chunk type — overriding
+  `from_page`/`max_pages` — and adds
+  `highlight: {text_id, page_number, char_start, char_end}`.  Without
+  `text_id` the page window, the response shape and the pagination are
+  unchanged; an unknown, deleted or out-of-scope chunk returns the existing
+  not-found envelope.
+
+### Added
+
+#### `sse_lib`
+- `SSEClient.rewrite_query(query, generative_model=..., historical_messages=...)`
+  returns a standalone retrieval query; history turns are validated as
+  `{user, assistant}` strings and the client language is forwarded.
+- `SSEClient.generative_answer_with_citations(query_response_id, options, ...)`
+  always enables the numbered sources (without mutating the passed options) and
+  returns an `Answer` with `.citations`.
+- `SSEClient.document_content` accepts `text_id` (the document argument becomes
+  optional) and `DocumentPreview` exposes `.highlight`; `SearchHit` carries
+  `text_id`, `document_id`, `char_start`/`char_end`.
+- `ChatOptions` gains `user_msg_is_rag_question`,
+  `system_prompt_with_enumerated_documents`, `query_rewrite_model`,
+  `rag_history_max_turns`, `rag_history_max_chars` and `history_only`;
+  `GenerativeOptions` gains `system_prompt_with_enumerated_documents`;
+  `ChatReply` exposes `answer_source`, `rewritten_query` and `citations`.
+
+### Changed
+
+#### Dependencies
+- The published `radlab-llm-router` is no longer in `requirements.txt`, and
+  `initialize.sh` installs the router from the local `llm-router` checkout.
+  The deployment needs a router (and `llm_router_lib`) build that provides
+  `rewrite_query`, `generative_answer_with_citations` and
+  `enumerated_documents` with `historical_messages` in the RAG payload; the
+  quality of the attribution of a claim to a fragment still depends on the LLM.
 
 ## [0.1.5]
 
