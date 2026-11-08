@@ -69,6 +69,7 @@ ADD_USER_MESSAGE = "add_user_message"
 SAVE_CHAT = "save_chat"
 GET_CHAT_BY_HASH = "get_chat_by_hash"
 CHATS = "chats"
+DELETE_CHAT = "delete_chat"
 
 
 # --- service -------------------------------------------------------------
@@ -113,5 +114,6 @@ ALL_ENDPOINTS = frozenset(
         SAVE_CHAT,
         GET_CHAT_BY_HASH,
         CHATS,
+        DELETE_CHAT,
     }
 )

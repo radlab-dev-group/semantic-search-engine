@@ -1140,6 +1140,29 @@ class SSEClient:
         history = body.get("history") if isinstance(body, dict) else []
         return [ChatHistory.from_api(entry) for entry in history or []]
 
+    def delete_chat(
+        self,
+        chat_ids: Optional[Union[int, Sequence[int]]] = None,
+        *,
+        chat_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Delete one or more chats of the authenticated user (``POST delete_chat``).
+
+        Chats are addressed by their ``chat_id`` (a single id or a sequence of
+        ids).  Their messages and message states are removed with them; the
+        answer reports how many rows disappeared (``deleted``) and which ids
+        were not found (``not_found``).
+        """
+        ids = [_as_identifier(cid) for cid in _as_sequence(chat_ids)]
+        if chat_id is not None:
+            ids.append(_as_identifier(chat_id))
+        if not ids:
+            raise SSEValueError("chat_ids is required")
+        body = self.post(endpoints.DELETE_CHAT, {"chat_ids[]": ids})
+        return dict(body or {})
+
+    delete_chats = delete_chat
+
     # --- internals -----------------------------------------------------------
     def _ensure_authenticated(self) -> None:
         if self.transport.token is None and self.username and self.password:

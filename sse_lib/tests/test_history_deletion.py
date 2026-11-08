@@ -115,5 +115,65 @@ class DeleteSearchHistoryTest(unittest.TestCase):
         self.assertEqual(result["not_found"]["query_ids"], [7])
 
 
+CHAT_BODY = {
+    "deleted": {
+        "chats": 2,
+        "messages": 4,
+        "message_states": 2,
+        "rag_states": 2,
+        "content_supervisor_states": 0,
+    },
+    "not_found": {"chat_ids": []},
+}
+
+
+class DeleteChatTest(unittest.TestCase):
+    def setUp(self):
+        self.client = build_client([ok(CHAT_BODY)])
+        self.session = self.client.fake_session
+
+    def test_chats_are_removed_by_their_ids(self):
+        result = self.client.delete_chat([1, 2])
+
+        self.assertEqual(result, CHAT_BODY)
+        call = self.session.calls[0]
+        self.assertEqual(call.method, "POST")
+        self.assertEqual(call.url, "http://sse.test:8271/api/delete_chat")
+        self.assertEqual(
+            call.json,
+            {"chat_ids[]": [1, 2], "lang": "pl"},
+        )
+
+    def test_a_single_chat_id_may_be_given(self):
+        self.client.delete_chat(5)
+        self.assertEqual(self.session.calls[0].json["chat_ids[]"], [5])
+
+    def test_chat_id_keyword_is_accepted(self):
+        self.client.delete_chat(chat_id=9)
+        self.assertEqual(self.session.calls[0].json["chat_ids[]"], [9])
+
+    def test_giving_no_identifier_is_rejected_early(self):
+        for call in (
+            lambda: self.client.delete_chat(),
+            lambda: self.client.delete_chat([]),
+        ):
+            with self.subTest(call=call):
+                with self.assertRaises(SSEValueError):
+                    call()
+        self.assertEqual(self.session.calls, [])
+
+    def test_not_numeric_identifiers_are_rejected_early(self):
+        for kwargs in (
+            {"chat_ids": ["abc"]},
+            {"chat_ids": [0]},
+            {"chat_ids": [-1]},
+            {"chat_id": 0},
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(SSEValueError):
+                    self.client.delete_chat(**kwargs)
+        self.assertEqual(self.session.calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()
