@@ -35,7 +35,7 @@ psycopg2-binary
 Levenshtein
 
 # LLM Router
-radlab-llm-router
+# radlab-llm-router
 
 # =========================================================
 # # NOTE: Addons - have to be removed from radlab-data

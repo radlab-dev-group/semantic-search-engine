@@ -111,8 +111,24 @@ class RAGStateSerializer(serializers.ModelSerializer):
     """
 
     sse_query = UserQuerySerializer(read_only=True)
+    answer_source = serializers.SerializerMethodField()
+
+    def get_answer_source(self, obj):
+        if obj.sse_answer is None:
+            return "llm_fallback"
+        return (obj.sse_answer.generative_qa_result_json or {}).get(
+            "answer_source", "rag"
+        )
+
     sse_response = UserQueryResponseSerializer(read_only=True)
     sse_answer = UserQueryResponseAnswerSerializer(read_only=True)
+    rewritten_query = serializers.CharField(source="extracted_query", read_only=True)
+    citations = serializers.SerializerMethodField()
+
+    def get_citations(self, obj):
+        if obj.sse_answer is None:
+            return []
+        return (obj.sse_answer.generative_qa_result_json or {}).get("citations", [])
 
     class Meta:
         model = RAGMessageState

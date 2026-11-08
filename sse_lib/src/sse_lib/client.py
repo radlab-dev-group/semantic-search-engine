@@ -449,11 +449,12 @@ class SSEClient:
     def document_content(
         self,
         collection: CollectionLike,
-        document: Union[int, str],
+        document: Optional[Union[int, str]] = None,
         *,
         from_page: Optional[int] = None,
         max_pages: Optional[int] = None,
         chunk_type: Optional[str] = None,
+        text_id: Optional[int] = None,
     ) -> DocumentPreview:
         """Whole text of one document (``GET document_content``).
 
@@ -468,8 +469,12 @@ class SSEClient:
         params: Dict[str, Any] = {"collection_name": _name(collection)}
         if isinstance(document, int):
             params["document_id"] = document
-        else:
+        elif document is not None:
             params["document_name"] = document
+        if text_id is not None:
+            params["text_id"] = _as_identifier(text_id)
+        elif document is None:
+            raise SSEValueError("document or text_id is required")
         if from_page is not None:
             params["from_page"] = from_page
         if max_pages is not None:
@@ -529,9 +534,13 @@ class SSEClient:
             if not isinstance(file_metadata, Mapping):
                 raise SSEValueError("file_metadata must be a mapping")
             try:
-                data["file_metadata"] = json.dumps(dict(file_metadata), allow_nan=False)
+                data["file_metadata"] = json.dumps(
+                    dict(file_metadata), allow_nan=False
+                )
             except (TypeError, ValueError) as exc:
-                raise SSEValueError("file_metadata must contain JSON values") from exc
+                raise SSEValueError(
+                    "file_metadata must contain JSON values"
+                ) from exc
         prepared, opened = _prepare_files(files)
         try:
             body = self.request(
@@ -835,6 +844,81 @@ class SSEClient:
 
         body = self.post(endpoints.GENERATIVE_ANSWER, payload)
         return Answer.from_api(body)
+
+    def generative_answer_with_citations(
+        self,
+        query_response_id: int,
+        options: Optional[OptionsLike] = None,
+        *,
+        query_instruction: str = "",
+        system_prompt: Optional[str] = None,
+        **generation_kwargs: Any,
+    ) -> Answer:
+        """Generate an answer with numbered sources for a stored search.
+
+        Uses SSE's ``generative_answer`` endpoint, which delegates to the
+        dedicated router endpoint when numbering is enabled. The returned
+        :class:`Answer` exposes the source map in ``citations``.
+        All arguments follow :meth:`generate_answer`; numbering is always on.
+        """
+        generation_kwargs["system_prompt_with_enumerated_documents"] = True
+        return self.generate_answer(
+            query_response_id,
+            options,
+            query_instruction=query_instruction,
+            system_prompt=system_prompt,
+            **generation_kwargs,
+        )
+
+    def rewrite_query(
+        self,
+        query: str,
+        *,
+        generative_model: str,
+        historical_messages: Optional[Sequence[Mapping[str, str]]] = None,
+    ) -> str:
+        """Return a standalone retrieval query (``POST rewrite_query``).
+
+        History consists of chronological ``{user, assistant}`` turns.
+        This call does not search documents or save a chat. The model must
+        be available through SSE's configured LLM router.
+        """
+        for value, name in (
+            (query, "query"),
+            (generative_model, "generative_model"),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise SSEValueError(f"{name} must be nonempty text")
+        if historical_messages is None:
+            historical_messages = []
+        if not isinstance(historical_messages, (list, tuple)):
+            raise SSEValueError("historical_messages must be a sequence of turns")
+        history = []
+        for turn in historical_messages:
+            if (
+                not isinstance(turn, Mapping)
+                or set(turn) != {"user", "assistant"}
+                or not all(isinstance(value, str) for value in turn.values())
+            ):
+                raise SSEValueError(
+                    "Each history turn needs user and assistant text"
+                )
+            history.append(dict(turn))
+        body = self.post(
+            endpoints.REWRITE_QUERY,
+            {
+                "query_str": query,
+                "generative_model": generative_model,
+                "historical_messages": history,
+            },
+        )
+        rewritten = body.get("rewritten_query") if isinstance(body, dict) else None
+        if not isinstance(rewritten, str) or not rewritten.strip():
+            raise SSEAPIError(
+                [{"message": "Rewrite response has no nonempty rewritten_query"}],
+                endpoint=endpoints.REWRITE_QUERY,
+            )
+        return rewritten
 
     def rate_answer(
         self,

@@ -13,6 +13,7 @@ actual response body.
 """
 
 from rest_framework.views import APIView
+from django.db import transaction
 
 from sse_api.core.response import response_with_status
 from sse_api.core.decorators import required_params_exists, get_default_language
@@ -140,6 +141,7 @@ class AddUserMessageToChatWithSystemResponse(APIView):
         "system_prompt": optional_text,
     }
 
+    @transaction.atomic
     @required_params_exists(
         required_params=required_params, optional_params=optional_params
     )
@@ -222,6 +224,7 @@ class AddUserMessageToChatWithSystemResponse(APIView):
                 error_name=CHAT_ID_NOT_FOUND,
                 response_body=None,
             )
+        chat_obj = type(chat_obj).objects.select_for_update().get(pk=chat_obj.pk)
         if chat_obj.organisation_user != organisation_user:
             return response_with_status(
                 status=False,
@@ -285,6 +288,23 @@ class AddUserMessageToChatWithSystemResponse(APIView):
             ),
             "generated_assistant_message": assistant_msg,
         }
+        if message_state is not None and message_state.rag_message_state is not None:
+            rag_state = message_state.rag_message_state
+            response_body["answer_source"] = (
+                (rag_state.sse_answer.generative_qa_result_json or {}).get(
+                    "answer_source", "rag"
+                )
+                if rag_state.sse_answer is not None
+                else "llm_fallback"
+            )
+            response_body["rewritten_query"] = rag_state.extracted_query
+            response_body["citations"] = (
+                (rag_state.sse_answer.generative_qa_result_json or {}).get(
+                    "citations", []
+                )
+                if rag_state.sse_answer is not None
+                else []
+            )
 
         return response_with_status(
             status=True,

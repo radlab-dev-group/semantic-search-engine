@@ -3,6 +3,7 @@ import json
 from sse_api.core.constants import CONFIG_DIR
 import logging
 import datetime
+import re
 
 from typing import Dict, List
 
@@ -14,12 +15,16 @@ from llm_router_lib.data_models.builtin_utils import GenerativeAnswerModel
 
 from sse_api.system.models import OrganisationUser
 from sse_api.chat.models import MessageState
+from sse_api.chat.controllers.memory import merge_sources
 from sse_api.engine.models import UserQueryResponse, UserQueryResponseAnswer
 
 # Import from engine.core where possible (pure computation functions)
 from sse_api.engine.core import (
     convert_search_results_to_doc2answer,
     get_accumulated_docs_by_rank_perc,
+)
+from sse_api.engine.core.search_engine import (
+    convert_search_results_to_enumerated_documents,
 )
 
 # Keep DBSemanticSearchController import for backward-compat callers that still need it
@@ -209,6 +214,9 @@ class GenerativeModelControllerApi:
         use_doc_names_in_response: bool = False,
         generation_options: dict | None = None,
         system_prompt: str or None = None,
+        system_prompt_with_enumerated_documents: bool = False,
+        response_metadata: dict | None = None,
+        rag_context: dict | None = None,
     ) -> (str | None, float | None):
         """
         Request a generative answer from a locally hosted model.
@@ -245,23 +253,72 @@ class GenerativeModelControllerApi:
         )
         request_data["question_str"] = question_str
         request_data["question_prompt"] = question_prompt
-        request_data["texts"] = convert_search_results_to_doc2answer(
-            search_results=search_results,
-            which_docs=which_docs,
-            use_doc_names_in_response=use_doc_names_in_response,
-        )
         request_data["model_name"] = qa_gen_model
+        if rag_context is not None:
+            request_data["question_str"] = rag_context["question"]
+            request_data["historical_messages"] = rag_context["history"]
 
-        if not len(request_data["texts"]):
-            return None, None
+        if system_prompt_with_enumerated_documents:
+            request_data["system_prompt_with_enumerated_documents"] = True
+            request_data["enumerated_documents"] = (
+                convert_search_results_to_enumerated_documents(
+                    search_results, which_docs
+                )
+            )
+            if rag_context is not None:
+                registry = rag_context["registry"]
+                request_data["enumerated_documents"] = merge_sources(
+                    (
+                        []
+                        if rag_context["history_only"]
+                        else request_data["enumerated_documents"]
+                    )
+                    + rag_context["sources"],
+                    registry,
+                )
+            if not request_data["enumerated_documents"]:
+                return None, None
+        else:
+            request_data["texts"] = convert_search_results_to_doc2answer(
+                search_results=search_results,
+                which_docs=which_docs,
+                use_doc_names_in_response=use_doc_names_in_response,
+            )
+            if not len(request_data["texts"]):
+                return None, None
 
         if system_prompt is not None and len(system_prompt.strip()):
             request_data["system_prompt"] = system_prompt
 
         _r_client = self._create_router_client(qa_gen_model)
-        generated_answer = _r_client.generative_answer(
-            payload=GenerativeAnswerModel(**request_data)
+        generate = (
+            _r_client.generative_answer_with_citations
+            if system_prompt_with_enumerated_documents
+            else _r_client.generative_answer
         )
+        generated_answer = generate(payload=GenerativeAnswerModel(**request_data))
+
+        if system_prompt_with_enumerated_documents:
+            allowed = {
+                source["n"] for source in request_data["enumerated_documents"]
+            }
+            referenced = {
+                int(number)
+                for number in re.findall(r"\[(\d+)\]", generated_answer.response)
+            }
+            if not referenced.issubset(allowed):
+                raise ValueError(
+                    "Generated answer contains unknown citation numbers"
+                )
+
+        if response_metadata is not None and system_prompt_with_enumerated_documents:
+            response_metadata.update(generated_answer.model_dump())
+            response_metadata["citations"] = request_data["enumerated_documents"]
+            if rag_context is not None:
+                response_metadata["citation_registry"] = rag_context["registry"]
+                response_metadata["answer_source"] = (
+                    "history" if rag_context["history_only"] else "rag"
+                )
 
         generation_time = generated_answer.generation_time
         if generated_answer.response is None:
@@ -269,6 +326,19 @@ class GenerativeModelControllerApi:
             return generated_answer.model_dump(), generation_time
 
         return generated_answer.response, generation_time
+
+    def rewrite_query(
+        self, query: str, history: list[dict], model_name: str, lang: str = "pl"
+    ) -> str:
+        response = self._create_router_client(model_name).rewrite_query(
+            user_last_statement=query,
+            historical_messages=history,
+            model=model_name,
+            lang=lang,
+            temperature=0.0,
+            max_new_tokens=150,
+        )
+        return response.rewritten_query
 
     def conversation_with_local_model(
         self,
@@ -519,6 +589,7 @@ class GenerativeModelController:
         query_instruction: str,
         query_options: dict,
         system_prompt: str or None = None,
+        rag_context: dict | None = None,
     ) -> UserQueryResponseAnswer | None:
         """
         Generate a (possibly translated) answer for a stored ``UserQueryResponse``.
@@ -540,6 +611,7 @@ class GenerativeModelController:
             The newly created answer record, or ``None`` on failure.
         """
         generation_options = self._prepare_generation_options(query_options)
+        response_metadata = {}
 
         generated_answer, generation_time = (
             self.generative_answer_for_response_from_api(
@@ -550,6 +622,11 @@ class GenerativeModelController:
                 use_doc_names_in_response=query_options["use_doc_names_in_response"],
                 generation_options=generation_options,
                 system_prompt=system_prompt,
+                system_prompt_with_enumerated_documents=query_options.get(
+                    "system_prompt_with_enumerated_documents", False
+                ),
+                response_metadata=response_metadata,
+                rag_context=rag_context,
             )
         )
 
@@ -562,6 +639,7 @@ class GenerativeModelController:
             answer_options=query_options,
             query_instruction_prompt=query_instruction,
             generated_answer=generated_answer,
+            generative_qa_result_json=response_metadata or None,
             generation_time=datetime.timedelta(seconds=generation_time),
         )
 
@@ -596,6 +674,9 @@ class GenerativeModelController:
         generation_options: dict | None = None,
         dont_response_when_no_documents: bool = True,
         system_prompt: str | None = None,
+        system_prompt_with_enumerated_documents: bool = False,
+        response_metadata: dict | None = None,
+        rag_context: dict | None = None,
     ) -> (str | None, float | None):
         """
         Generate an answer using a locally hosted model via HTTP API.
@@ -634,7 +715,11 @@ class GenerativeModelController:
         logging.info(f"Number of documents to generate response: {len(which_docs)}")
         logging.info(f"generative model to generate answer: {generative_model}")
 
-        if not len(which_docs) and dont_response_when_no_documents:
+        if (
+            not len(which_docs)
+            and dont_response_when_no_documents
+            and not (rag_context and rag_context["sources"])
+        ):
             return "Brak treści spełniających parametry wyszukiwania", 0.0
 
         generative_answer_str, generation_time = (
@@ -647,6 +732,9 @@ class GenerativeModelController:
                 use_doc_names_in_response=use_doc_names_in_response,
                 generation_options=generation_options,
                 system_prompt=system_prompt,
+                system_prompt_with_enumerated_documents=system_prompt_with_enumerated_documents,
+                response_metadata=response_metadata,
+                rag_context=rag_context,
             )
         )
 

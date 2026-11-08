@@ -5,12 +5,101 @@ from django.test import TestCase
 from sse_api.engine.api import (
     SearchWithOptions,
     GenerativeAnswerForQuestion,
+    RewriteQuery,
     SetRateForQueryResponseAnswer,
 )
 from sse_api.tests.input_support import EndpointInputMixin, GENERATION_OPTIONS
 
 
 class EngineInputTests(EndpointInputMixin, TestCase):
+    def test_rewrite_forwards_history_model_and_language(self):
+        history = [{"user": "Who?", "assistant": "Ada."}]
+        with patch("sse_api.engine.api.GenerativeModelControllerApi") as model:
+            model.return_value.rewrite_query.return_value = (
+                "When did Ada found Acme?"
+            )
+            response = self.invoke(
+                RewriteQuery,
+                {
+                    "query_str": "When?",
+                    "generative_model": "test-model",
+                    "historical_messages": history,
+                    "lang": "en",
+                },
+            )
+        self.assertTrue(response.data["status"])
+        self.assertEqual(
+            response.data["body"]["rewritten_query"], "When did Ada found Acme?"
+        )
+        model.return_value.rewrite_query.assert_called_once_with(
+            query="When?", history=history, model_name="test-model", lang="en"
+        )
+
+    def test_rewrite_defaults_to_empty_history(self):
+        with patch("sse_api.engine.api.GenerativeModelControllerApi") as model:
+            model.return_value.rewrite_query.return_value = "Question"
+            response = self.invoke(
+                RewriteQuery,
+                {
+                    "query_str": "Question",
+                    "generative_model": "test-model",
+                },
+            )
+        self.assertTrue(response.data["status"])
+        self.assertEqual(
+            model.return_value.rewrite_query.call_args.kwargs["history"], []
+        )
+
+    def test_bad_rewrite_input_does_not_call_router(self):
+        payload = {"query_str": "question", "generative_model": "test-model"}
+        with patch("sse_api.engine.api.GenerativeModelControllerApi") as model:
+            for key, value in (
+                ("query_str", " "),
+                ("query_str", 1),
+                ("generative_model", []),
+                ("generative_model", ""),
+                ("historical_messages", None),
+                ("historical_messages", {}),
+                ("historical_messages", [{"user": "q"}]),
+                ("historical_messages", [{"user": "q", "assistant": 1}]),
+                (
+                    "historical_messages",
+                    [{"user": "q", "assistant": "a", "system": "x"}],
+                ),
+            ):
+                with self.subTest(key=key, value=value):
+                    self.assert_denial(
+                        self.invoke(RewriteQuery, {**payload, key: value})
+                    )
+            model.assert_not_called()
+
+    def test_rewrite_failure_returns_registered_error(self):
+        payload = {"query_str": "question", "generative_model": "test-model"}
+        with patch("sse_api.engine.api.GenerativeModelControllerApi") as model:
+            for result in (None, " ", {}):
+                with self.subTest(result=result), self.assertLogs(level="ERROR"):
+                    model.return_value.rewrite_query.return_value = result
+                    self.assert_denial(self.invoke(RewriteQuery, payload))
+            model.return_value.rewrite_query.side_effect = RuntimeError(
+                "Router down"
+            )
+            with self.assertLogs(level="ERROR"):
+                self.assert_denial(self.invoke(RewriteQuery, payload))
+
+    def test_rewrite_requires_organisation_profile(self):
+        with patch("sse_api.engine.api.GenerativeModelControllerApi") as model:
+            request = self.factory.post(
+                "/api/rewrite_query",
+                {
+                    "query_str": "Question",
+                    "generative_model": "test-model",
+                },
+                format="json",
+            )
+            response = RewriteQuery.as_view()(request)
+            self.assertIn(response.status_code, (401, 403))
+            model.assert_not_called()
+
     def test_bad_search_input_has_no_query_or_lookup(self):
         payload = {"collection_name": "docs", "query_str": "question", "options": {}}
         cases = [

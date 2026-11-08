@@ -26,6 +26,8 @@ def _text(row):
     document = SimpleNamespace(name=f"doc{document_id}", relative_path="/")
     return SimpleNamespace(
         id=text_id,
+        pk=text_id,
+        page_id=(document_id, page_number),
         text_number=text_number,
         text_str=text_str,
         language="pl",
@@ -44,6 +46,14 @@ def _fake_objects():
             rows = [r for r in TEXTS if r[0] in ids]
             queryset.select_related.return_value = [_text(r) for r in rows]
             queryset.values_list.return_value = [(r[0], r[5]) for r in rows]
+        elif "page_id__in" in kwargs:
+            rows = [
+                r
+                for r in TEXTS
+                if (r[1], r[3]) in kwargs["page_id__in"]
+                and r[2] in kwargs["text_chunk_type__in"]
+            ]
+            queryset.order_by.return_value = [_text(r) for r in rows]
         else:
             documents = set(kwargs["page__document_id__in"])
             rows = sorted(
@@ -111,3 +121,5 @@ class SurroundingContextTests(SimpleTestCase):
         display = reformat_search_results_to_display(results)
         self.assertEqual(display[0]["left_context"], "md one")
         self.assertEqual(display[0]["right_context"], "md three")
+        self.assertEqual(display[0]["text_id"], 2)
+        self.assertEqual(display[0]["document_id"], 10)

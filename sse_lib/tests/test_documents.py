@@ -11,12 +11,27 @@ from __future__ import annotations
 
 import unittest
 
-from sse_lib import DocumentPreview, DocumentRef, IndexingJobStatus
+from sse_lib import DocumentPreview, DocumentRef, IndexingJobStatus, SSEValueError
 
 from support import build_client, ok
 
 
 class ListDocumentsTest(unittest.TestCase):
+    def test_chunk_preview_by_text_id_returns_highlight(self):
+        highlight = {"text_id": 9, "page_number": 2, "char_start": 0, "char_end": 5}
+        client = build_client([ok({"highlight": highlight})])
+        preview = client.document_content("docs", text_id=9)
+        self.assertEqual(
+            client.fake_session.calls[0].params,
+            {"collection_name": "docs", "text_id": 9, "lang": "pl"},
+        )
+        self.assertEqual(preview.highlight, highlight)
+
+    def test_preview_requires_document_or_chunk(self):
+        client = build_client([])
+        with self.assertRaises(SSEValueError):
+            client.document_content("docs")
+
     def test_only_the_searchable_documents_are_listed_by_default(self):
         client = build_client([ok({"documents": [{"name": "a.pdf"}]})])
         names = client.list_documents("docs")

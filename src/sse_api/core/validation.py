@@ -51,6 +51,19 @@ def optional_text(value):
     return value
 
 
+def conversation_history(value):
+    if not isinstance(value, list):
+        raise ValueError("Expected a list of conversation turns")
+    for turn in value:
+        if (
+            not isinstance(turn, dict)
+            or set(turn) != {"user", "assistant"}
+            or not all(isinstance(text, str) for text in turn.values())
+        ):
+            raise ValueError("Expected user and assistant text in each turn")
+    return value
+
+
 def identifier(value):
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         raise ValueError("Expected positive identifier")
@@ -147,6 +160,10 @@ def generation_options(value):
     value["use_doc_names_in_response"] = boolean(
         value.get("use_doc_names_in_response", False)
     )
+    if "system_prompt_with_enumerated_documents" in value:
+        value["system_prompt_with_enumerated_documents"] = boolean(
+            value["system_prompt_with_enumerated_documents"]
+        )
     if "translate_answer" in value:
         value["translate_answer"] = boolean(value["translate_answer"])
     if value.get("translate_answer"):

@@ -21,6 +21,7 @@ database and no model is loaded: this is the relational text only.
 from dataclasses import dataclass, field
 from typing import List
 
+from sse_api.data.controllers.chunk_offsets import page_content_with_offsets
 from sse_api.data.core.constants import PREVIEW_MAX_PAGES, PREVIEW_MAX_PAGES_LIMIT
 from sse_api.data.models import Document, DocumentPage, DocumentPageText
 
@@ -45,6 +46,7 @@ class DocumentPreview:
     pages: List[dict] = field(default_factory=list)
     total_pages: int = 0
     truncated: bool = False
+    highlight: dict | None = None
 
     @property
     def content(self) -> str:
@@ -69,7 +71,7 @@ class DocumentPreview:
         from, its pages, the whole text of the window and the limits of it
         """
         content = self.content
-        return {
+        result = {
             "document_id": self.document.pk,
             "document_name": self.document.name,
             "relative_path": self.document.relative_path,
@@ -86,6 +88,9 @@ class DocumentPreview:
             "truncated": self.truncated,
             "next_page": self.next_page,
         }
+        if self.highlight is not None:
+            result["highlight"] = self.highlight
+        return result
 
 
 class ContentPreviewController:
@@ -121,12 +126,33 @@ class ContentPreviewController:
             )
         return documents.order_by("-id").first()
 
+    @staticmethod
+    def find_text(
+        collection,
+        text_id: int,
+        document_id: int | None = None,
+        document_name: str | None = None,
+        chunk_type: str | None = None,
+    ) -> DocumentPageText | None:
+        """Resolve a chunk only inside the authorized collection and selectors."""
+        chunks = DocumentPageText.objects.filter(
+            pk=text_id, page__document__collection=collection
+        ).select_related("page__document")
+        if document_id is not None:
+            chunks = chunks.filter(page__document_id=document_id)
+        if document_name:
+            chunks = chunks.filter(page__document__name=document_name)
+        if chunk_type:
+            chunks = chunks.filter(text_chunk_type=chunk_type)
+        return chunks.first()
+
     def document_content(
         self,
         document: Document,
         from_page: int = 1,
         max_pages: int = PREVIEW_MAX_PAGES,
         chunk_type: str | None = None,
+        text_id: int | None = None,
     ) -> DocumentPreview:
         """
         Text of one window of the pages of a document.
@@ -134,10 +160,23 @@ class ContentPreviewController:
         :param from_page: First page of the window (pages are numbered from 1)
         :param max_pages: How many pages the window holds at most
         :param chunk_type: Chunk type to read, ``None`` for the newest one
+        :param text_id: Show exactly this chunk's page and highlight its range
         :return: DocumentPreview
         """
         max_pages = self.__bounded_pages(max_pages)
         from_page = max(1, int(from_page or 1))
+        target = None
+        if text_id is not None:
+            target = DocumentPageText.objects.filter(
+                pk=text_id, page__document=document
+            ).select_related("page").first()
+            if target is None or (
+                chunk_type and target.text_chunk_type != chunk_type
+            ):
+                raise ValueError("Text does not belong to this document/chunk type")
+            from_page = target.page.page_number
+            max_pages = 1
+            chunk_type = target.text_chunk_type
         chunk_types = self.chunk_types(document)
         chosen = self.__resolve_chunk_type(document, chunk_types, chunk_type)
 
@@ -151,14 +190,26 @@ class ContentPreviewController:
         window = pages[:max_pages]
 
         texts = self.__chunk_texts(window, chosen)
-        rows = [
-            {
+        rows = []
+        highlight = None
+        for page in window:
+            chunks = texts.get(page.pk, [])
+            content, offsets = page_content_with_offsets(chunks)
+            rows.append({
                 "page": page.page_number,
-                "content": "\n\n".join(texts.get(page.pk, [])),
-                "chunks": len(texts.get(page.pk, [])),
-            }
-            for page in window
-        ]
+                "content": content,
+                "chunks": sum(bool(chunk.text_str) for chunk in chunks),
+            })
+            if target is not None and page.pk == target.page_id:
+                start, end = offsets.get(target.pk, (None, None))
+                if start is not None and content[start:end] != target.text_str:
+                    start, end = None, None
+                highlight = {
+                    "text_id": target.pk,
+                    "page_number": page.page_number,
+                    "char_start": start,
+                    "char_end": end,
+                }
         return DocumentPreview(
             document=document,
             chunk_type=chosen,
@@ -167,6 +218,7 @@ class ContentPreviewController:
             pages=rows,
             total_pages=total_pages,
             truncated=truncated,
+            highlight=highlight,
         )
 
     @staticmethod
@@ -188,11 +240,10 @@ class ContentPreviewController:
     @staticmethod
     def __chunk_texts(pages, chunk_type: str) -> dict:
         """
-        Text of every page of the window: its chunks of one type, joined in
-        the order the document reads them.
+        Chunks of one type for every page, in the order the document reads them.
         :param pages: DocumentPage rows of the window
         :param chunk_type: Chunk type to read
-        :return: ``{page_id: text}``
+        :return: ``{page_id: [DocumentPageText, ...]}``
         """
         if not len(pages) or not chunk_type:
             return {}
@@ -200,9 +251,8 @@ class ContentPreviewController:
             page__in=pages, text_chunk_type=chunk_type
         ).order_by("page_id", "text_number", "id")
         texts: dict = {}
-        for page_id, text in chunks.values_list("page_id", "text_str"):
-            if text:
-                texts.setdefault(page_id, []).append(text)
+        for chunk in chunks:
+            texts.setdefault(chunk.page_id, []).append(chunk)
         return texts
 
     @staticmethod

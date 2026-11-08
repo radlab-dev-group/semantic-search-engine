@@ -84,6 +84,32 @@ state is consistent for every consumer of the vector collection. While
 disabled, its chunks are not returned by the search (vector and full‑text
 sides alike).
 
+### Chunk highlights (`CR-02`)
+
+`document_content` also accepts `text_id` with `collection_name`. The collection
+must be accessible to the caller; any supplied `document_id`, `document_name`,
+or `chunk_type` must match that chunk. Unknown, deleted, or out-of-scope chunks
+return the existing not-found envelope, without falling back to another document.
+
+A text-id preview returns exactly the chunk's page and its stored chunk type,
+overriding `from_page` and `max_pages`, plus
+`highlight: {text_id, page_number, char_start, char_end}`. Without `text_id`, the
+existing page window, response shape, and pagination remain unchanged.
+
+Coordinates are zero-based Unicode code-point offsets with an exclusive end,
+relative to the corresponding `pages[].content`, not byte offsets or JavaScript
+UTF-16 indices. That page is the existing relational preview: nonempty chunks
+of one type in `(text_number, id)` order, joined by two newlines. Overlapping
+and repeated chunks remain separate occurrences; this is not a reconstruction
+of the original file. Empty, stale, changed, or otherwise unmappable chunks
+have both coordinates `null`. Text is never normalized to guess a match.
+
+`controllers/chunk_offsets.py::chunk_offsets_for_texts` accepts loaded
+`DocumentPageText` rows and returns `{text_id: (char_start, char_end)}` using one
+query (none for an empty batch). The relational search adapter must attach these
+coordinates to its raw result text dictionaries. The database-free search
+formatter preserves them in detailed results, using `null` when absent.
+
 ### Chunking of a collection
 
 `CollectionOfDocuments.metadata_json` keeps the settings which belong to the collection as a

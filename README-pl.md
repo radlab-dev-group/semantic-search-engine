@@ -1,3 +1,66 @@
+### Query rewriting i numerowane źródła przez LLM Router
+
+W `options` żądania `add_user_message` można włączyć:
+
+```json
+{
+  "use_rag_supervisor": true,
+  "user_msg_is_rag_question": true,
+  "use_intelligent_query_rewrite": true,
+  "query_rewrite_model": "nazwa-modelu-w-routerze",
+  "generative_model": "nazwa-modelu-w-routerze",
+  "percentage_rank_mass": 100,
+  "use_doc_names_in_response": false,
+  "system_prompt_with_enumerated_documents": true
+}
+```
+
+Przepisywanie korzysta z endpointu `rewrite_query` routera i tego samego ograniczonego
+kontekstu rozmowy co RAG. Model jest wybierany z `query_rewrite_model`,
+następnie `LLM_ROUTER_QUERY_REWRITE_MODEL`, a na końcu `generative_model`.
+Pierwsze pytanie nie wymaga przepisywania; przy błędzie routera wyszukiwanie
+otrzymuje oryginalne pytanie.
+
+`system_prompt_with_enumerated_documents` działa również w `query_options`
+endpointu `generative_answer`. SSE wywołuje wtedy dedykowany endpoint routera
+`generative_answer_with_citations`. Każdy przekazany fragment ma własny numer `[n]`,
+niezależny od nazwy dokumentu. Odpowiedź zawiera `citations` z mapą numerów na
+teksty, identyfikatory i strony. Mapa jest zapisywana w
+`sse_answer.generative_qa_result_json`, a czat udostępnia ją także w
+`last_state.rag_message_state.citations`. `rewritten_query` zawiera zapytanie
+użyte do wyszukiwania. W czacie numery są wspólne dla całej rozmowy: rejestr jest
+zapisywany w `generative_qa_result_json.citation_registry` i odtwarzany z bazy,
+nie z sesji klienta. Samodzielne `generative_answer` nadal numeruje per odpowiedź.
+
+W czacie RAG rewriting i numerowane cytowania są domyślnie włączone; jawne `false`
+pozwala zachować starszy tryb. Wyłączenie rewritingu oznacza wyszukanie bieżącego
+pytania bez sklejania dawnych tematów. Generator dostaje oryginalną wypowiedź,
+historię pytań i odpowiedzi oraz aktualne i wcześniejsze źródła. Domyślne limity:
+`rag_history_max_turns=8`, `rag_history_max_chars=24000` (pełne tury, bez ucinania
+w połowie; maksima 50 i 100000). Starsza treść pozostaje w bazie, ale nie jest
+automatycznie streszczana. Zmiana kolekcji/zakresu wyłącza użycie wcześniejszych
+tur z innego zakresu. Usunięte, wyłączone i zmienione źródła nie są używane ponownie.
+
+Proste polecenia PL/EN, np. „Zrób z tego tabelę”, „skróć”, „przetłumacz na angielski”,
+korzystają z historii bez wyszukiwania, jeśli istnieje aktualny kontekst źródłowy.
+Można to wskazać jawnie przez `history_only=true`. Odpowiedź zwraca wtedy
+`answer_source: "history"` oraz puste `rewritten_query`; źródła pozostają w
+`citations`. Polecenia niejednoznaczne lub brak źródeł przechodzą zwykłe wyszukiwanie.
+`answer_source` jest również zapisane przy odpowiedzi i w stanie RAG.
+
+Wyniki i cytowania zawierają `char_start`/`char_end`: indeksy znaków Unicode,
+od zera, koniec wyłączny, w `pages[].content` z `document_content?text_id=...`.
+Podgląd zwraca `highlight` z tym samym zakresem. To współrzędne odtworzonego
+podglądu (fragmenty rozdzielone dwoma nowymi liniami), nie bajty pliku ani indeksy
+UTF-16 JavaScript. Brakujące lokalizacje mają `null`. Wdrożenie wymaga zgodnych
+wersji routera i `llm_router_lib` z obsługą `historical_messages` w RAG.
+Poprawność merytorycznego przypisania twierdzenia do fragmentu nadal zależy od LLM.
+
+Wymagana jest wersja `llm_router_lib` i API routera zawierająca `rewrite_query`
+oraz obsługę `enumerated_documents`. W czacie obie opcje są domyślnie włączone;
+w samodzielnym `generative_answer` numerowane źródła są wyłączone, dopóki
+`system_prompt_with_enumerated_documents` nie zostanie ustawione na `true`.
+
 ## Moduł`engine.controllers.search.DBSemanticSearchController`
 
 Logika wyszukiwania jest w ogólnej mierze nastepująca:

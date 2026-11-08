@@ -139,7 +139,7 @@ The fake session returns real `requests.Response` objects with the envelope
 | `list_categories(collection)` | `GET categories` |
 | `list_documents(collection, with_disabled=False)`, `list_document_details(collection)` | `GET documents` |
 | `upload_files(collection, files, ...)` | `POST upload_and_index_files` |
-| `document_content(collection, document, from_page=None, max_pages=None, chunk_type=None)` | `GET document_content` |
+| `document_content(collection, document=None, from_page=None, max_pages=None, chunk_type=None, text_id=None)` | `GET document_content` (`text_id` alone is enough and returns the chunk's page with `.highlight`) |
 | `index_documents(collection, documents, ...)` | `POST add_and_index_texts` |
 | `indexing_status(collection=None, job_id=None)` | `GET indexing_status` |
 | `delete_texts(collection, chunk_ids)` | `POST delete_texts` |
@@ -150,6 +150,8 @@ The fake session returns real `requests.Response` objects with the envelope
 | `list_filter_options()` | `GET filter_options` |
 | `search(collection, query, options, ...)` | `POST search_with_options` |
 | `generate_answer(query_response_id, options, ...)` | `POST generative_answer` |
+| `generative_answer_with_citations(query_response_id, options, ...)` | `POST generative_answer` with numbered sources enabled |
+| `rewrite_query(query, generative_model=..., historical_messages=None)` | `POST rewrite_query` |
 | `rate_answer(answer_response_id, value, value_max, comment=None)` | `POST rate_generative_answer` |
 | `list_search_history(collection=None, query_response_id=None)`, `get_search_history(query_response_id)`, `delete_search_history(query_ids=None, query_response_ids=None)` | `GET search_history`, `GET get_search_history`, `POST delete_search_history` |
 | `list_generative_models()`, `list_embedders()`, `list_rerankers()` | `GET generative_models`, `GET embedders`, `GET rerankers` |
@@ -163,6 +165,32 @@ Collections may be passed as a name, a `Collection` returned by
 `create_collection()` / `list_collections()`, or any mapping with a `name` key.
 A `Collection` also carries the settings of the collection: `metadata_json`,
 `chunking` (`{}` when none was declared) and `strict_chunking`.
+
+Rewrite a follow-up before searching, then request an answer with citations:
+
+```python
+query = client.rewrite_query(
+    "When?",
+    generative_model="my-model",
+    historical_messages=[{"user": "Who founded Acme?", "assistant": "Ada."}],
+)
+found = client.search("my_docs", query)
+answer = client.generative_answer_with_citations(
+    found.query_response_id,
+    GenerativeOptions(generative_model="my-model", percentage_rank_mass=40),
+)
+print(answer.answer, answer.citations)
+```
+
+`rewrite_query()` returns a string and does not search or save a conversation.
+History turns are chronological and contain exactly `user` and `assistant`
+strings; the client's `language` is forwarded to SSE. This method requires
+the SSE `rewrite_query` endpoint from this release, not just an updated router.
+`generative_answer_with_citations()` accepts the same arguments as
+`generate_answer()` and always enables numbered sources, even when options
+explicitly disable them. It returns an `Answer` with `.citations` and delegates
+through SSE to the router's dedicated citation endpoint; it does not call the
+router directly or accept arbitrary document fragments.
 
 The answer of `GET collections` also carries the counters of the collection:
 `document_count` (every document of the collection) and
@@ -192,7 +220,7 @@ provided empty prefix overrides `SSE_API_PREFIX`.
 | `SearchOptions` | `search()` | Only the fields that are set are sent; `extra` merges unknown keys |
 | `IndexingOptions` | `upload_files()`, `index_documents()` | Serialises the five cleaning keys the server reads with `options["..."]`; the two chunk keys and `delete_files_after_indexing` appear only when set, so the collection and the engine decide |
 | `GenerativeOptions` | `generate_answer()`, `send_chat_message()` | `None` fields are dropped; carries `use_doc_names_in_response`, the flag the generator reads from the same `query_options` |
-| `ChatOptions` | `new_chat()`, `send_chat_message()` (`chat_options=`) | The four pipeline switches (`use_rag_supervisor`, `use_content_supervisor`, `use_intelligent_query_rewrite`, `query_instruction`) merged into the single `options` object the chat endpoints read |
+| `ChatOptions` | `new_chat()`, `send_chat_message()` (`chat_options=`) | The pipeline switches (`use_rag_supervisor`, `use_content_supervisor`, `use_intelligent_query_rewrite`, `query_instruction`, `user_msg_is_rag_question`) and the RAG memory settings (`system_prompt_with_enumerated_documents`, `query_rewrite_model`, `rag_history_max_turns`, `rag_history_max_chars`, `history_only`) merged into the single `options` object the chat endpoints read |
 
 Single options may also be passed as keyword arguments — the two calls below are
 equivalent:
@@ -229,6 +257,14 @@ Methods return dataclasses (`sse_lib.models`): `Collection`, `SearchResponse`
 untouched server payload in `.raw`, and
 `client.request("GET", "some_endpoint")` returns the unwrapped `body` of any
 endpoint for fields that are not modelled yet.
+
+The places where a citation leads back to the text are modelled directly:
+`SearchHit.text_id` / `.document_id` and `.char_start` / `.char_end` (the
+position of the chunk in the preview page, `None` when it cannot be
+reproduced), `DocumentPreview.highlight` for the page returned by
+`document_content(text_id=...)`, `Answer.citations` for the numbered sources of
+an answer, and `ChatReply.citations` / `.rewritten_query` / `.answer_source`
+(`"rag"`, `"history"` or `"llm_fallback"`) for a reply of a chat.
 
 ## Errors
 

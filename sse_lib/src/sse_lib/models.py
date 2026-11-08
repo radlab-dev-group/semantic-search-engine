@@ -162,6 +162,7 @@ class DocumentPreview:
     truncated: bool = False
     next_page: Optional[int] = None
     raw: Dict[str, Any] = field(default_factory=dict)
+    highlight: Optional[Dict[str, Any]] = None
 
     @classmethod
     def from_api(cls, data: Any) -> "DocumentPreview":
@@ -189,6 +190,7 @@ class DocumentPreview:
             truncated=bool(payload.get("truncated")),
             next_page=payload.get("next_page"),
             raw=payload,
+            highlight=payload.get("highlight"),
         )
 
 
@@ -208,6 +210,10 @@ class SearchHit:
     left_context: Optional[str] = None
     right_context: Optional[str] = None
     raw: Dict[str, Any] = field(default_factory=dict)
+    text_id: Optional[int] = None
+    document_id: Optional[int] = None
+    char_start: Optional[int] = None
+    char_end: Optional[int] = None
 
     @classmethod
     def from_api(cls, data: Any) -> "SearchHit":
@@ -226,6 +232,10 @@ class SearchHit:
             left_context=payload.get("left_context"),
             right_context=payload.get("right_context"),
             raw=payload,
+            text_id=payload.get("text_id"),
+            document_id=payload.get("document_id"),
+            char_start=payload.get("char_start"),
+            char_end=payload.get("char_end"),
         )
 
 
@@ -276,6 +286,7 @@ class Answer:
     answer_translated: Optional[str] = None
     generation_time: Optional[float] = None
     raw: Dict[str, Any] = field(default_factory=dict)
+    citations: List[Dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def from_api(cls, body: Any) -> "Answer":
@@ -287,6 +298,7 @@ class Answer:
             answer_translated=payload.get("answer_translated"),
             generation_time=payload.get("generation_time"),
             raw=payload,
+            citations=_as_list(payload.get("citations")),
         )
 
 
@@ -590,6 +602,9 @@ class ChatReply:
     history: List[ChatMessage] = field(default_factory=list)
     last_state: Optional[Dict[str, Any]] = None
     raw: Dict[str, Any] = field(default_factory=dict)
+    rewritten_query: Optional[str] = None
+    answer_source: Optional[str] = None
+    citations: List[Dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def from_api(cls, body: Any) -> "ChatReply":
@@ -604,6 +619,9 @@ class ChatReply:
             ],
             last_state=payload.get("last_state"),
             raw=payload,
+            rewritten_query=payload.get("rewritten_query"),
+            answer_source=payload.get("answer_source"),
+            citations=_as_list(payload.get("citations")),
         )
 
 

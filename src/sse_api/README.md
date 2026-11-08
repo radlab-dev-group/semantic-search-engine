@@ -150,6 +150,15 @@ curl -X POST http://localhost:8271/api/generative_answer/ \
       }'
 ```
 
+With `"system_prompt_with_enumerated_documents": true` in `query_options` every
+fragment gets its own number `[n]` and the answer also carries a `citations` map
+(`n`, `text_id`, `document_id`, `page_number`, `char_start`, `char_end`, text).
+
+A follow-up question can be rewritten into a standalone retrieval query before
+the search (`POST /api/rewrite_query/` with `query_str`, `generative_model` and
+optional `historical_messages` of `{user, assistant}` turns); the chat does this
+itself, `rewrite_query` is exposed for clients which search on their own.
+
 ### 4. Chat Interaction
 
 Start a new chat session:
