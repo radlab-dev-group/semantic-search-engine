@@ -150,6 +150,8 @@ The fake session returns real `requests.Response` objects with the envelope
 | `list_filter_options()` | `GET filter_options` |
 | `search(collection, query, options, ...)` | `POST search_with_options` |
 | `generate_answer(query_response_id, options, ...)` | `POST generative_answer` |
+| `generative_answer_with_citations(query_response_id, options, ...)` | `POST generative_answer` with numbered sources enabled |
+| `rewrite_query(query, generative_model=..., historical_messages=None)` | `POST rewrite_query` |
 | `rate_answer(answer_response_id, value, value_max, comment=None)` | `POST rate_generative_answer` |
 | `list_search_history(collection=None, query_response_id=None)`, `get_search_history(query_response_id)`, `delete_search_history(query_ids=None, query_response_ids=None)` | `GET search_history`, `GET get_search_history`, `POST delete_search_history` |
 | `list_generative_models()`, `list_embedders()`, `list_rerankers()` | `GET generative_models`, `GET embedders`, `GET rerankers` |
@@ -163,6 +165,32 @@ Collections may be passed as a name, a `Collection` returned by
 `create_collection()` / `list_collections()`, or any mapping with a `name` key.
 A `Collection` also carries the settings of the collection: `metadata_json`,
 `chunking` (`{}` when none was declared) and `strict_chunking`.
+
+Rewrite a follow-up before searching, then request an answer with citations:
+
+```python
+query = client.rewrite_query(
+    "When?",
+    generative_model="my-model",
+    historical_messages=[{"user": "Who founded Acme?", "assistant": "Ada."}],
+)
+found = client.search("my_docs", query)
+answer = client.generative_answer_with_citations(
+    found.query_response_id,
+    GenerativeOptions(generative_model="my-model", percentage_rank_mass=40),
+)
+print(answer.answer, answer.citations)
+```
+
+`rewrite_query()` returns a string and does not search or save a conversation.
+History turns are chronological and contain exactly `user` and `assistant`
+strings; the client's `language` is forwarded to SSE. This method requires
+the SSE `rewrite_query` endpoint from this release, not just an updated router.
+`generative_answer_with_citations()` accepts the same arguments as
+`generate_answer()` and always enables numbered sources, even when options
+explicitly disable them. It returns an `Answer` with `.citations` and delegates
+through SSE to the router's dedicated citation endpoint; it does not call the
+router directly or accept arbitrary document fragments.
 
 The answer of `GET collections` also carries the counters of the collection:
 `document_count` (every document of the collection) and

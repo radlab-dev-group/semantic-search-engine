@@ -63,6 +63,38 @@ class NewChatOptionsTest(unittest.TestCase):
 
 
 class SendChatMessageOptionsTest(unittest.TestCase):
+    def test_memory_options_and_reply_metadata(self):
+        citations = [{"n": 2, "text_id": 9, "char_start": 0, "char_end": 12}]
+        client = build_client(
+            [
+                ok(
+                    {
+                        "generated_assistant_message": "Table [2]",
+                        "answer_source": "history",
+                        "rewritten_query": "",
+                        "citations": citations,
+                    }
+                )
+            ]
+        )
+        reply = client.send_chat_message(
+            3,
+            "Make it a table",
+            collection="docs",
+            chat_options=ChatOptions(
+                history_only=True,
+                rag_history_max_turns=4,
+                rag_history_max_chars=12000,
+                system_prompt_with_enumerated_documents=True,
+            ),
+        )
+        self.assertEqual(reply.answer_source, "history")
+        self.assertEqual(reply.rewritten_query, "")
+        self.assertEqual(reply.citations, citations)
+        self.assertEqual(
+            client.fake_session.calls[0].json["options"]["rag_history_max_turns"], 4
+        )
+
     def test_chat_options_merge_into_the_generation_options(self):
         client = build_client([ok({"generated_assistant_message": "a"})])
         client.send_chat_message(

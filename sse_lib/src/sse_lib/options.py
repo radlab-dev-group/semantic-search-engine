@@ -139,6 +139,7 @@ class GenerativeOptions:
     #: ``core.validation.generation_options`` defaults it to ``False``.
     use_doc_names_in_response: Optional[bool] = None
     extra: Optional[Dict[str, Any]] = None
+    system_prompt_with_enumerated_documents: Optional[bool] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialise to the payload understood by the API (``None`` dropped)."""
@@ -162,7 +163,7 @@ class ChatOptions:
     """Switches of the chat endpoints, sent in the same ``options`` object.
 
     ``add_user_message`` and ``new_chat`` read one ``options`` dictionary for
-    both the generation settings and the four switches below, which is why
+    both the generation settings and the switches below, which is why
     :meth:`sse_lib.SSEClient.send_chat_message` merges this class into the
     generation options instead of sending a second field.
     """
@@ -171,6 +172,12 @@ class ChatOptions:
     use_intelligent_query_rewrite: Optional[bool] = None
     use_rag_supervisor: Optional[bool] = None
     use_content_supervisor: Optional[bool] = None
+    user_msg_is_rag_question: Optional[bool] = None
+    system_prompt_with_enumerated_documents: Optional[bool] = None
+    query_rewrite_model: Optional[str] = None
+    rag_history_max_turns: Optional[int] = None
+    rag_history_max_chars: Optional[int] = None
+    history_only: Optional[bool] = None
     #: Keys of this dict are merged into the payload; escape hatch for switches
     #: that this release of the library does not know about yet.
     extra: Optional[Dict[str, Any]] = None

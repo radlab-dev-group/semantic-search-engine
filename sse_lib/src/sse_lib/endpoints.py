@@ -56,6 +56,7 @@ SEARCH_HISTORY = "search_history"
 GET_SEARCH_HISTORY = "get_search_history"
 DELETE_SEARCH_HISTORY = "delete_search_history"
 GENERATIVE_ANSWER = "generative_answer"
+REWRITE_QUERY = "rewrite_query"
 RATE_GENERATIVE_ANSWER = "rate_generative_answer"
 GENERATIVE_MODELS = "generative_models"
 EMBEDDERS = "embedders"
@@ -102,6 +103,7 @@ ALL_ENDPOINTS = frozenset(
         GET_SEARCH_HISTORY,
         DELETE_SEARCH_HISTORY,
         GENERATIVE_ANSWER,
+        REWRITE_QUERY,
         RATE_GENERATIVE_ANSWER,
         GENERATIVE_MODELS,
         EMBEDDERS,

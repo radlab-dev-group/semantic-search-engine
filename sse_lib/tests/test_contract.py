@@ -105,6 +105,8 @@ class ApiContractTest(unittest.TestCase):
     def test_public_facade_has_the_documented_methods(self):
         for method in (
             "login",
+            "rewrite_query",
+            "generative_answer_with_citations",
             "create_collection",
             "list_collections",
             "list_documents",
@@ -143,7 +145,7 @@ class ApiContractTest(unittest.TestCase):
 
     def test_generative_options_match_the_server(self):
         consumed = _consumed_keys(
-            r'query_options\.get\("([a-z_]+)"',
+            r'query_options\.get\(\s*"([a-z_]+)"',
             r'query_options\["([a-z_]+)"\]',
         )
         self.assertEqual(
@@ -176,11 +178,17 @@ class ApiContractTest(unittest.TestCase):
 
     def test_chat_options_match_the_server(self):
         consumed = _consumed_keys(
-            r'options\.get\("([a-z_]+)"',
+            r'options\.get\(\s*"([a-z_]+)"',
+            r'options\.setdefault\(\s*"([a-z_]+)"',
+            r'options\[\s*"([a-z_]+)"\]',
             only=("chat/controllers/message.py",),
         )
+        # The rewrite call also reads generation and transport settings from
+        # the merged request, not just chat-specific switches.
+        shared = {"generative_model", "lang"}
+        self.assertTrue(shared.issubset(consumed))
         self.assertEqual(
-            _option_fields(ChatOptions),
+            _option_fields(ChatOptions) | shared,
             consumed,
             "ChatOptions drifted away from the switches the chat reads",
         )
