@@ -1,4 +1,5 @@
 import logging
+import os
 import random
 import datetime
 
@@ -11,7 +12,17 @@ from sse_api.chat.models import (
     ContentSupervisorState,
     RAGMessageState,
 )
-from sse_api.data.models import OrganisationUser, CollectionOfDocuments
+from sse_api.data.models import (
+    OrganisationUser,
+    CollectionOfDocuments,
+    DocumentPageText,
+)
+from sse_api.data.controllers.chunk_offsets import chunk_offsets_for_texts
+from sse_api.chat.controllers.memory import (
+    build_memory,
+    is_history_transformation,
+    scoped_history,
+)
 
 from sse_api.content_supervisor.supervisor import ContentSupervisor
 from sse_api.content_supervisor.processors.regex_processors import URLRegexProcessor
@@ -163,15 +174,53 @@ class MessageLogicController:
             return None
 
         instruction_str = self._extract_instruction_from_message(message)
+        options = dict(message.options or {})
+        options.setdefault("system_prompt_with_enumerated_documents", True)
+        rag_context, previous_rag = self._prepare_rag_memory(
+            message, history, collection
+        )
+        history_only = bool(
+            rag_context["history"]
+            and rag_context["sources"]
+            and previous_rag is not None
+            and options["system_prompt_with_enumerated_documents"]
+            and (
+                options.get("history_only") is True
+                or is_history_transformation(message.text)
+            )
+        )
+        rag_context["history_only"] = history_only
 
-        if user_msg_is_rag_question:
+        if history_only:
+            answer = self.gen_model_controller.generative_answer_for_response(
+                user_response=previous_rag.sse_response,
+                query_instruction=instruction_str,
+                query_options=options,
+                system_prompt=system_prompt,
+                rag_context=rag_context,
+            )
+            return RAGMessageState.objects.create(
+                contains_query=False,
+                contains_instruction=True,
+                extracted_query="",
+                extracted_instruction=message.text,
+                sse_query=previous_rag.sse_query,
+                sse_response=previous_rag.sse_response,
+                sse_answer=answer,
+                system_prompt=system_prompt,
+            )
+
+        if user_msg_is_rag_question or options.get(
+            "use_intelligent_query_rewrite", True
+        ):
             question_str = self._prepare_sse_question_based_on_history(
                 user_message=message,
                 history=history,
                 only_first_user_history_message=False,
-                options=message.options if message.options else {},
+                options=options,
                 last_questions=last_questions_to_query,
                 instruction_str=instruction_str,
+                historical_turns=rag_context["history"],
             )
         else:
             question_str = self._extract_question_from_message(message)
@@ -189,7 +238,8 @@ class MessageLogicController:
         )
 
         user_response = SearchQueryController.get_user_response_by_id(
-            query_response_id=query_db_results_dict["query_response_id"]
+            query_response_id=query_db_results_dict["query_response_id"],
+            organisation_user=organisation_user,
         )
 
         if "template_prompts" in query_db_results_dict:
@@ -197,14 +247,17 @@ class MessageLogicController:
             prompts = [p for p in prompts if p is not None and len(p.strip())]
             if len(prompts):
                 random.shuffle(prompts)
-                system_prompt = prompts[0]
+                system_prompt = "\n\n".join(
+                    prompt for prompt in (prompts[0], system_prompt) if prompt
+                )
 
         # Prepare generative answer
         query_response = self.gen_model_controller.generative_answer_for_response(
             user_response=user_response,
             query_instruction=instruction_str,
-            query_options=message.options,
+            query_options=options,
             system_prompt=system_prompt,
+            rag_context=rag_context,
         )
 
         rag_state = RAGMessageState.objects.create(
@@ -220,6 +273,62 @@ class MessageLogicController:
 
         return rag_state
 
+    @staticmethod
+    def _prepare_rag_memory(message, history, collection):
+        _, registry, _ = build_memory(history, max_turns=0)
+        selected_history, previous_rag = scoped_history(
+            history, getattr(collection, "pk", None), message.search_options
+        )
+
+        options = message.options or {}
+        max_turns = options.get("rag_history_max_turns", 8)
+        max_chars = options.get("rag_history_max_chars", 24000)
+        max_turns = min(max(max_turns, 0), 50) if type(max_turns) is int else 8
+        max_chars = (
+            min(max(max_chars, 0), 100000) if type(max_chars) is int else 24000
+        )
+        turns, registry, sources = build_memory(
+            selected_history, max_turns, max_chars, initial_registry=registry
+        )
+        if sources:
+            chunks = list(
+                DocumentPageText.objects.filter(
+                    id__in=[source.get("text_id") for source in sources],
+                    page__document__collection=collection,
+                    page__document__use_in_search=True,
+                ).select_related("page__document")
+            )
+            current = {chunk.pk: chunk for chunk in chunks}
+            valid = [
+                source
+                for source in sources
+                if source.get("text_id") in current
+                and current[source["text_id"]].text_str == source.get("text_str")
+            ]
+            if len(valid) != len(sources):
+                turns = []
+                sources = []
+            else:
+                offsets = chunk_offsets_for_texts(chunks)
+                sources = [
+                    dict(
+                        source,
+                        document_id=current[source["text_id"]].page.document_id,
+                        document_name=current[source["text_id"]].page.document.name,
+                        page_number=current[source["text_id"]].page.page_number,
+                        char_start=offsets[source["text_id"]][0],
+                        char_end=offsets[source["text_id"]][1],
+                    )
+                    for source in valid
+                ]
+        return {
+            "history": turns,
+            "registry": registry,
+            "sources": sources,
+            "question": message.text,
+            "history_only": False,
+        }, previous_rag
+
     def _prepare_sse_question_based_on_history(
         self,
         user_message: Message,
@@ -228,47 +337,24 @@ class MessageLogicController:
         options: dict,
         last_questions: int = -1,
         instruction_str: str or None = None,
+        historical_turns: list | None = None,
     ) -> str:
-        if options.get("use_intelligent_query_rewrite", False):
+        if options.get("use_intelligent_query_rewrite", True):
             return self._rewrite_query_with_llm(
-                query=user_message.text, history=history, options=options
+                query=user_message.text,
+                history=history,
+                options=options,
+                historical_turns=historical_turns,
             )
 
-        if last_questions == 0:
-            history = []
-        elif last_questions > 0:
-            # *2 because history contains user and assisntant messages
-            history = history[-last_questions * 2 :]
-
-        user_question = ""
-        for msg in history:
-            if msg.role == self.USER_ROLE:
-                if msg.text in user_question:
-                    continue
-
-                user_question += msg.text + "\n"
-                if only_first_user_history_message:
-                    break
-
-        if not len(user_question.strip()):
-            return user_message.text
-
-        user_question = "Użytkownik wcześniej pytał o:\n" + user_question + "\n\n"
-        user_question += "Odpowiedz teraz na pytanie: " + user_message.text
-
-        # If query-instruction is given, then add it to user prompt
-        if instruction_str is not None:
-            instruction_str = instruction_str.strip()
-            if len(instruction_str):
-                user_question += (
-                    "\n\n" + "Udzielając odpowiedzi zastosuj się do zasad:"
-                )
-                user_question += "\n" + instruction_str
-
-        return user_question.strip()
+        return user_message.text
 
     def _rewrite_query_with_llm(
-        self, query: str, history: List[Message], options: dict
+        self,
+        query: str,
+        history: List[Message],
+        options: dict,
+        historical_turns: list | None = None,
     ) -> str:
         """
         Rewrite user query using LLM to make it a standalone question.
@@ -276,40 +362,37 @@ class MessageLogicController:
         if not history:
             return query
 
-        history_str = ""
-        # Take last 5 messages for context
-        for msg in history[-5:]:
-            role = "Użytkownik" if msg.role == self.USER_ROLE else "Asystent"
-            history_str += f"{role}: {msg.text}\n"
+        history_turns = []
+        turn = None
+        for msg in history[-10:]:
+            if msg.role == self.USER_ROLE:
+                turn = {self.USER_ROLE: msg.text}
+            elif msg.role == self.ASSISTANT_ROLE and turn is not None:
+                turn[self.ASSISTANT_ROLE] = msg.text
+                history_turns.append(turn)
+                turn = None
+        if historical_turns is not None:
+            history_turns = historical_turns
+        if not history_turns:
+            return query
 
-        prompt = (
-            "Na podstawie poniższej historii rozmowy, przeformułuj ostatnie "
-            "pytanie użytkownika w samodzielne zapytanie do wyszukiwarki "
-            "dokumentów. Zapytanie powinno być zwięzłe i zawierać wszystkie "
-            "niezbędne konteksty z historii. "
-            "Zwróć TYLKO przeformułowane pytanie, bez żadnych dodatkowych komentarzy.\n\n"
-            f"Historia:\n{history_str}\n"
-            f"Ostatnie pytanie: {query}\n"
-            "Samodzielne zapytanie:"
+        model_name = (
+            options.get("query_rewrite_model")
+            or os.getenv("LLM_ROUTER_QUERY_REWRITE_MODEL", "").strip()
+            or options.get("generative_model")
         )
-
-        model_name = options.get(
-            "query_rewrite_model", "google/gemini-2.5-flash-lite"
-        )
+        if not model_name or not history_turns:
+            return query
         try:
-            rewritten_query, _ = (
-                self.gen_model_controller.gen_model_controller.conversation_with_local_model(
-                    history=[],
-                    last_user_message=prompt,
-                    options={"max_new_tokens": 150, "temperature": 0.0},
-                    model_name_path=model_name,
+            rewritten_query = (
+                self.gen_model_controller.gen_model_controller.rewrite_query(
+                    query=query,
+                    history=history_turns,
+                    model_name=model_name,
+                    lang=options.get("lang", "pl"),
                 )
             )
-            if (
-                rewritten_query
-                and not isinstance(rewritten_query, dict)
-                and len(rewritten_query.strip()) > 5
-            ):
+            if isinstance(rewritten_query, str) and rewritten_query.strip():
                 return rewritten_query.strip()
         except Exception as e:
             logging.error(f"Error during query rewriting: {e}")
@@ -409,4 +492,12 @@ class MessageLogicController:
 
     @staticmethod
     def get_chat_messages(chat: Chat) -> List[Message]:
-        return [m for m in Message.objects.filter(chat=chat).order_by("number")]
+        return list(
+            Message.objects.filter(chat=chat)
+            .select_related(
+                "state__rag_message_state__sse_answer",
+                "state__rag_message_state__sse_query",
+                "state__rag_message_state__sse_response",
+            )
+            .order_by("number")
+        )

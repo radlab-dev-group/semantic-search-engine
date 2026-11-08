@@ -1,8 +1,9 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 with patch(
@@ -24,6 +25,170 @@ from sse_api.chat.models import Chat, Message
 from sse_api.data.models import CollectionOfDocuments
 from sse_api.core.errors import MSG, MSG_EN, ECODE
 from sse_api.system.models import Organisation, OrganisationUser
+from sse_api.chat.controllers.message import MessageLogicController
+from sse_api.chat.models import RAGMessageState
+from sse_api.chat.serializer import RAGStateSerializer
+from sse_api.engine.models import UserQueryResponseAnswer
+
+
+class QueryRewriteTests(SimpleTestCase):
+    def setUp(self):
+        self.controller = object.__new__(MessageLogicController)
+        self.history = [
+            SimpleNamespace(role="user", text="What are the obligations?"),
+            SimpleNamespace(role="assistant", text="Providers must keep records."),
+        ]
+
+    def test_rewrite_sends_questions_and_answers_using_configured_model(self):
+        with patch.object(
+            self.controller, "gen_model_controller", create=True
+        ) as gen:
+            gen.gen_model_controller.rewrite_query.return_value = "Records for SMEs?"
+            result = self.controller._rewrite_query_with_llm(
+                "And SMEs?",
+                self.history,
+                {"query_rewrite_model": "rewrite-model", "lang": "en"},
+            )
+            gen.gen_model_controller.rewrite_query.assert_called_once_with(
+                query="And SMEs?",
+                history=[
+                    {"user": self.history[0].text, "assistant": self.history[1].text}
+                ],
+                model_name="rewrite-model",
+                lang="en",
+            )
+        self.assertEqual(result, "Records for SMEs?")
+
+    def test_rewrite_failure_returns_original_question(self):
+        with patch.object(
+            self.controller, "gen_model_controller", create=True
+        ) as gen:
+            gen.gen_model_controller.rewrite_query.side_effect = RuntimeError(
+                "timeout"
+            )
+            result = self.controller._rewrite_query_with_llm(
+                "And SMEs?", self.history, {"generative_model": "answer-model"}
+            )
+        self.assertEqual(result, "And SMEs?")
+
+    def test_rewrite_uses_environment_model(self):
+        with (
+            patch.dict(
+                "os.environ", {"LLM_ROUTER_QUERY_REWRITE_MODEL": "env-model"}
+            ),
+            patch.object(
+                self.controller, "gen_model_controller", create=True
+            ) as gen,
+        ):
+            gen.gen_model_controller.rewrite_query.return_value = "SMEs?"
+            self.controller._rewrite_query_with_llm(
+                "And SMEs?", self.history, {"generative_model": "answer-model"}
+            )
+            self.assertEqual(
+                gen.gen_model_controller.rewrite_query.call_args.kwargs[
+                    "model_name"
+                ],
+                "env-model",
+            )
+
+    def test_first_question_needs_no_router_call(self):
+        self.assertEqual(
+            self.controller._rewrite_query_with_llm("Hello", [], {}), "Hello"
+        )
+
+    def test_rag_state_serializes_saved_citations_and_search_query(self):
+        citations = [{"n": 2, "text_id": 12, "document_id": 3, "page_number": 4}]
+        state = RAGMessageState(
+            extracted_query="Standalone question",
+            sse_answer=UserQueryResponseAnswer(
+                is_generative=True,
+                answer_options={},
+                generative_qa_result_json={"citations": citations},
+            ),
+        )
+        data = RAGStateSerializer(state).data
+        self.assertEqual(data["rewritten_query"], "Standalone question")
+        self.assertEqual(data["citations"], citations)
+
+    def test_template_instructions_do_not_replace_user_prompt(self):
+        message = SimpleNamespace(text="question", options={}, search_options={})
+        response = SimpleNamespace(user_query=object())
+        with (
+            patch(
+                "sse_api.chat.controllers.message.SearchQueryController"
+            ) as search,
+            patch("sse_api.chat.controllers.message.RAGMessageState.objects.create"),
+            patch.object(
+                self.controller, "gen_model_controller", create=True
+            ) as gen,
+        ):
+            search.new_query.return_value = {
+                "query_response_id": 1,
+                "template_prompts": ["Template instructions"],
+            }
+            search.get_user_response_by_id.return_value = response
+            self.controller._prepare_rag_supervisor_state(
+                message=message,
+                history=[],
+                collection=object(),
+                organisation_user=object(),
+                sse_engin_config_path="unused",
+                user_msg_is_rag_question=True,
+                system_prompt="Use a table and citations",
+            )
+            self.assertEqual(
+                gen.generative_answer_for_response.call_args.kwargs["system_prompt"],
+                "Template instructions\n\nUse a table and citations",
+            )
+
+    def test_history_transformation_skips_search_and_keeps_context(self):
+        context = {
+            "history": [{"user": "Obowiązki?", "assistant": "Ewidencja [4]."}],
+            "sources": [{"n": 4, "text_id": 9}],
+            "registry": [{"n": 4, "text_id": 9}],
+            "question": "Zrób z tego tabelę",
+            "history_only": False,
+        }
+        previous = SimpleNamespace(sse_response=object(), sse_query=object())
+        message = SimpleNamespace(
+            text=context["question"], options={}, search_options={}
+        )
+        with (
+            patch.object(
+                self.controller,
+                "_prepare_rag_memory",
+                return_value=(context, previous),
+            ),
+            patch.object(
+                self.controller, "gen_model_controller", create=True
+            ) as gen,
+            patch(
+                "sse_api.chat.controllers.message.SearchQueryController"
+            ) as search,
+            patch(
+                "sse_api.chat.controllers.message.RAGMessageState.objects.create"
+            ) as state,
+        ):
+            self.controller._prepare_rag_supervisor_state(
+                message, [], object(), object(), "unused"
+            )
+            search.new_query.assert_not_called()
+            args = gen.generative_answer_for_response.call_args.kwargs
+            self.assertTrue(args["rag_context"]["history_only"])
+            self.assertEqual(args["rag_context"]["sources"][0]["n"], 4)
+            self.assertIs(args["user_response"], previous.sse_response)
+            self.assertEqual(state.call_args.kwargs["extracted_query"], "")
+
+    def test_disabled_rewrite_never_concatenates_old_topics(self):
+        self.assertEqual(
+            self.controller._prepare_sse_question_based_on_history(
+                SimpleNamespace(text="New topic"),
+                self.history,
+                False,
+                {"use_intelligent_query_rewrite": False},
+            ),
+            "New topic",
+        )
 
 
 class ChatAccessTests(TestCase):
