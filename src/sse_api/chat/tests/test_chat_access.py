@@ -11,6 +11,7 @@ with patch(
 ):
     from sse_api.chat.api import (
         AddUserMessageToChatWithSystemResponse,
+        DeleteChat,
         GetSavedChatByHash,
         SetChatStateAsSaved,
     )
@@ -21,14 +22,23 @@ from sse_api.chat.core.errors import (
     CANNOT_ADD_MESSAGE_CHAT_RO,
     COLLECTION_NOT_FOUND,
 )
-from sse_api.chat.models import Chat, Message
+from sse_api.chat.models import (
+    Chat,
+    ContentSupervisorState,
+    Message,
+    MessageState,
+    RAGMessageState,
+)
 from sse_api.data.models import CollectionOfDocuments
 from sse_api.core.errors import MSG, MSG_EN, ECODE
 from sse_api.system.models import Organisation, OrganisationUser
 from sse_api.chat.controllers.message import MessageLogicController
-from sse_api.chat.models import RAGMessageState
 from sse_api.chat.serializer import RAGStateSerializer
-from sse_api.engine.models import UserQueryResponseAnswer
+from sse_api.engine.models import (
+    UserQuery,
+    UserQueryResponse,
+    UserQueryResponseAnswer,
+)
 
 
 class QueryRewriteTests(SimpleTestCase):
@@ -462,8 +472,86 @@ class ChatAccessTests(TestCase):
             (SetChatStateAsSaved, {"chat_id": None, "read_only": True}, "post"),
             (GetSavedChatByHash, {"chat_hash": None}, "get"),
             (GetSavedChatByHash, {"chat_hash": " "}, "get"),
+            (DeleteChat, {}, "post"),
+            (DeleteChat, {"chat_id": "bad"}, "post"),
+            (DeleteChat, {"chat_ids[]": []}, "post"),
         ):
             response = self.request_view(view, payload, method)
             self.assertFalse(response.data["status"])
             self.chat.refresh_from_db()
             self.assertFalse(self.chat.is_saved)
+
+    def test_delete_owned_chat_removes_messages_and_states_keeping_queries(self):
+        query = UserQuery.objects.create(
+            organisation_user=self.owner,
+            collection=self.collection,
+            query_str_prompt="question",
+            query_options={},
+        )
+        q_resp = UserQueryResponse.objects.create(
+            user_query=query,
+            general_stats_json={},
+            detailed_results_json={},
+        )
+        rag_state = RAGMessageState.objects.create(
+            contains_query=True,
+            contains_instruction=False,
+            extracted_query="question",
+            sse_query=query,
+            sse_response=q_resp,
+        )
+        cs_state = ContentSupervisorState.objects.create(
+            state_type="moderation",
+        )
+        msg_state = MessageState.objects.create(
+            rag_message_state=rag_state,
+            content_supervisor_state=cs_state,
+        )
+        user_msg = Message.objects.create(
+            chat=self.chat,
+            role="user",
+            text="question",
+            number=1,
+            state=msg_state,
+        )
+        asst_msg = Message.objects.create(
+            chat=self.chat,
+            role="assistant",
+            text="answer",
+            number=2,
+            prev_message=user_msg,
+        )
+        user_msg.next_message = asst_msg
+        user_msg.save()
+
+        response = self.request_view(
+            DeleteChat,
+            {"chat_id": self.chat.pk},
+        )
+        self.assertTrue(response.data["status"])
+        body = response.data["body"]
+        self.assertEqual(body["deleted"]["chats"], 1)
+        self.assertEqual(body["deleted"]["messages"], 2)
+        self.assertEqual(body["deleted"]["message_states"], 1)
+        self.assertEqual(body["deleted"]["rag_states"], 1)
+        self.assertEqual(body["deleted"]["content_supervisor_states"], 1)
+        self.assertEqual(body["not_found"]["chat_ids"], [])
+        self.assertFalse(Chat.objects.filter(pk=self.chat.pk).exists())
+        self.assertFalse(Message.objects.filter(chat_id=self.chat.pk).exists())
+        self.assertFalse(MessageState.objects.filter(pk=msg_state.pk).exists())
+        self.assertFalse(RAGMessageState.objects.filter(pk=rag_state.pk).exists())
+        self.assertFalse(ContentSupervisorState.objects.filter(pk=cs_state.pk).exists())
+        # Underlying search query and foreign chat stay untouched
+        self.assertTrue(UserQuery.objects.filter(pk=query.pk).exists())
+        self.assertTrue(Chat.objects.filter(pk=self.foreign.pk).exists())
+
+    def test_delete_missing_or_foreign_chat_is_denied(self):
+        for chat_id in (999999, self.foreign.pk):
+            with self.subTest(chat_id=chat_id):
+                response = self.request_view(
+                    DeleteChat,
+                    {"chat_id": chat_id},
+                )
+                self.assert_error(response, CHAT_ID_NOT_FOUND)
+        self.assertTrue(Chat.objects.filter(pk=self.foreign.pk).exists())
+        self.assertTrue(Message.objects.filter(pk=self.secret.pk).exists())
