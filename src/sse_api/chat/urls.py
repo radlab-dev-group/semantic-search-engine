@@ -6,6 +6,7 @@ from sse_api.chat.api import (
     SetChatStateAsSaved,
     GetSavedChatByHash,
     ListOfUserChats,
+    DeleteChat,
 )
 from sse_api.core.constants import prepare_api_url
 
@@ -34,5 +35,10 @@ urlpatterns = [
         prepare_api_url("chats"),
         ListOfUserChats.as_view(),
         name="chats",
+    ),
+    path(
+        prepare_api_url("delete_chat"),
+        DeleteChat.as_view(),
+        name="delete_chat",
     ),
 ]
