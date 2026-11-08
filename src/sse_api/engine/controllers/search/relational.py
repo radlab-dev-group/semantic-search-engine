@@ -2,6 +2,7 @@ from collections import defaultdict
 
 from django.contrib.postgres.search import SearchVector, SearchQuery, SearchRank
 from sse_api.data.models import CollectionOfDocuments, DocumentPageText, Document
+from sse_api.data.controllers.chunk_offsets import chunk_offsets_for_texts
 
 
 class DBTextSearchController:
@@ -61,6 +62,7 @@ class DBTextSearchController:
         )
         # Map IDs to objects to maintain order from texts_ids
         pages_map = {page.id: page for page in document_pages}
+        offsets = chunk_offsets_for_texts(document_pages)
 
         context_map = {}
         if surrounding_chunks > 0 and document_pages:
@@ -84,6 +86,8 @@ class DBTextSearchController:
                     similarity=similarity,
                 )
             )
+            start, end = offsets.get(text_id, (None, None))
+            doc_results[-1]["result"]["text"].update(char_start=start, char_end=end)
         return doc_results
 
     @staticmethod
@@ -163,6 +167,8 @@ class DBTextSearchController:
         (see ``_get_surrounding_chunks``).
         """
         main_text = {
+            "text_id": doc_page.id,
+            "document_id": doc_page.page.document_id,
             "score": score,
             "similarity": similarity,
             "document_name": doc_page.page.document.name,

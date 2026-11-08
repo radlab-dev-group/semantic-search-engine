@@ -560,6 +560,7 @@ class GetDocumentContent(APIView):
     optional_params = [
         "document_name",
         "document_id",
+        "text_id",
         "chunk_type",
         "from_page",
         "max_pages",
@@ -568,6 +569,7 @@ class GetDocumentContent(APIView):
         "collection_name": required_text,
         "document_name": optional_text,
         "document_id": identifier,
+        "text_id": identifier,
         "chunk_type": optional_text,
         "from_page": identifier,
         "max_pages": identifier,
@@ -591,26 +593,47 @@ class GetDocumentContent(APIView):
 
         document_id = params.get("document_id")
         document_name = params.get("document_name")
-        if document_id is None and not str(document_name or "").strip():
+        text_id = params.get("text_id")
+        if (
+            document_id is None
+            and not str(document_name or "").strip()
+            and text_id is None
+        ):
             return error_response(INVALID_PARAMS, language)
 
         controller = ContentPreviewController()
-        document = controller.find_document(
-            collection=collection,
-            document_id=document_id,
-            document_name=document_name,
-        )
+        if text_id is not None:
+            target = controller.find_text(
+                collection=collection,
+                text_id=text_id,
+                document_id=document_id,
+                document_name=document_name,
+                chunk_type=params.get("chunk_type"),
+            )
+            document = target.page.document if target is not None else None
+        else:
+            document = controller.find_document(
+                collection=collection,
+                document_id=document_id,
+                document_name=document_name,
+            )
         if document is None:
             return response_with_status(
                 status=False, language=language, error_name=DOCUMENT_NOT_FOUND
             )
 
-        preview = controller.document_content(
-            document=document,
-            from_page=params.get("from_page") or 1,
-            max_pages=params.get("max_pages") or PREVIEW_MAX_PAGES,
-            chunk_type=params.get("chunk_type"),
-        )
+        try:
+            preview = controller.document_content(
+                document=document,
+                from_page=params.get("from_page") or 1,
+                max_pages=params.get("max_pages") or PREVIEW_MAX_PAGES,
+                chunk_type=params.get("chunk_type"),
+                text_id=text_id,
+            )
+        except ValueError:
+            return response_with_status(
+                status=False, language=language, error_name=DOCUMENT_NOT_FOUND
+            )
         return response_with_status(
             status=True, language=language, response_body=preview.as_dict()
         )

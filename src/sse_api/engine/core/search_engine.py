@@ -578,6 +578,10 @@ def reformat_search_results_to_display(
 
         text_info = a["text"]
         ans_dict[idx] = {
+            "text_id": text_info.get("text_id"),
+            "document_id": text_info.get("document_id"),
+            "char_start": text_info.get("char_start"),
+            "char_end": text_info.get("char_end"),
             "score": text_info["score"],
             "score_normalized": text_info.get("score_normalized"),
             "similarity": text_info.get("similarity"),
