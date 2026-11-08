@@ -1,3 +1,4 @@
+import logging
 import os
 
 from rest_framework.views import APIView
@@ -9,6 +10,7 @@ from sse_api.core.validation import (
     request_params,
     required_text,
     optional_text,
+    conversation_history,
     identifier,
     boolean,
     identifiers,
@@ -179,7 +181,52 @@ class GenerativeAnswerForQuestion(APIView):
                 "answer": query_response.generated_answer,
                 "answer_translated": query_response.generated_answer_translated,
                 "generation_time": query_response.generation_time,
+                "citations": (query_response.generative_qa_result_json or {}).get(
+                    "citations", []
+                ),
             },
+        )
+
+
+class RewriteQuery(APIView):
+    required_params = ["query_str", "generative_model"]
+    optional_params = ["historical_messages"]
+    input_validators = {
+        "query_str": required_text,
+        "generative_model": required_text,
+        "historical_messages": conversation_history,
+    }
+
+    @required_params_exists(
+        required_params=required_params, optional_params=optional_params
+    )
+    @get_organisation_user
+    @get_default_language
+    def post(self, language, organisation_user, request):
+        params = request_params(request)
+        try:
+            controller = GenerativeModelControllerApi(deepl_api_key="")
+            rewritten = controller.rewrite_query(
+                query=params["query_str"],
+                history=params.get("historical_messages", []),
+                model_name=params["generative_model"],
+                lang=language,
+            )
+            if not isinstance(rewritten, str) or not rewritten.strip():
+                raise ValueError("Router returned an empty rewritten query")
+        except Exception:
+            logging.exception("Query rewriting failed")
+            return response_with_status(
+                status=False,
+                language=language,
+                error_name=GENERATION_FAILED,
+                response_body={},
+            )
+        return response_with_status(
+            status=True,
+            language=language,
+            error_name=None,
+            response_body={"rewritten_query": rewritten},
         )
 
 

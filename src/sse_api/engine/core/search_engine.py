@@ -508,6 +508,34 @@ def convert_search_results_to_doc2answer(
     return doc2answers
 
 
+def convert_search_results_to_enumerated_documents(
+    search_results: dict, which_docs: list | None = None
+) -> list[dict]:
+    """Keep a deterministic, lossless mapping from citation numbers to chunks."""
+    documents = []
+    for result in search_results.values():
+        if which_docs is not None and result["document_name"] not in which_docs:
+            continue
+        documents.append(
+            {
+                "n": len(documents) + 1,
+                "text_str": result["text_str"],
+                "document_name": result["document_name"],
+                **{
+                    key: result.get(key)
+                    for key in (
+                        "text_id",
+                        "document_id",
+                        "page_number",
+                        "char_start",
+                        "char_end",
+                    )
+                },
+            }
+        )
+    return documents
+
+
 def get_accumulated_docs_by_rank_perc(
     results: dict, perc_rank_gen_qa: float
 ) -> list:

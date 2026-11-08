@@ -15,6 +15,7 @@ from sse_api.core.constants import prepare_api_url
 from sse_api.engine.api import (
     SearchWithOptions,
     GenerativeAnswerForQuestion,
+    RewriteQuery,
     ListGenerativeModels,
     ListEmbeddersModels,
     ListRerankersModels,
@@ -54,6 +55,11 @@ urlpatterns = [
         prepare_api_url("rate_generative_answer"),
         SetRateForQueryResponseAnswer.as_view(),
         name="rate_generative_answer",
+    ),
+    path(
+        prepare_api_url("rewrite_query"),
+        RewriteQuery.as_view(),
+        name="rewrite_query",
     ),
     path(
         prepare_api_url("generative_models"),
