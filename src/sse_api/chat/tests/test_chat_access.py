@@ -13,6 +13,7 @@ with patch(
         AddUserMessageToChatWithSystemResponse,
         DeleteChat,
         GetSavedChatByHash,
+        ListOfUserChats,
         SetChatStateAsSaved,
     )
 from sse_api.chat.core.errors import (
@@ -341,10 +342,51 @@ class ChatAccessTests(TestCase):
                     "body": {
                         "chat_id": None,
                         "is_read_only": None,
+                        "collection_name": None,
                         "chat_history": [],
                     },
                 },
             )
+
+    def test_list_chats_returns_collection_name_and_message_state(self):
+        query = UserQuery.objects.create(
+            organisation_user=self.owner,
+            collection=self.collection,
+            query_str_prompt="question",
+            query_options={},
+        )
+        q_resp = UserQueryResponse.objects.create(
+            user_query=query,
+            general_stats_json={},
+            detailed_results_json={"1": {"document_name": "doc-a.pdf", "text_str": "chunk"}},
+        )
+        rag_state = RAGMessageState.objects.create(
+            contains_query=True,
+            contains_instruction=False,
+            extracted_query="question",
+            sse_query=query,
+            sse_response=q_resp,
+        )
+        msg_state = MessageState.objects.create(rag_message_state=rag_state)
+        Message.objects.create(
+            chat=self.chat,
+            role="user",
+            text="question",
+            number=1,
+            state=msg_state,
+        )
+        response = self.request_view(ListOfUserChats, {}, "get")
+        self.assertTrue(response.data["status"])
+        history = response.data["body"]["history"]
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["chat_id"], self.chat.pk)
+        self.assertEqual(history[0]["collection_name"], self.collection.name)
+        msg_data = history[0]["chat_history"][0]
+        self.assertIsNotNone(msg_data["state"])
+        self.assertEqual(
+            msg_data["state"]["rag_message_state"]["sse_response"]["detailed_results_json"],
+            {"1": {"document_name": "doc-a.pdf", "text_str": "chunk"}},
+        )
 
     def test_foreign_saved_hash_denied_without_history_read(self):
         with patch("sse_api.chat.api.ChatController.get_chat_messages") as history:
