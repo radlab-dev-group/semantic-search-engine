@@ -78,7 +78,7 @@ Installed at deployment via `src/sse_api/initialize.sh`:
 | Package | Source | Purpose |
 |---------|--------|---------|
 | `radlab-data` | GitHub (`radlab-dev-group/radlab-data`) | Internal preprocessing pipeline and text utilities |
-| `llm-router` | GitHub (`radlab-dev-group/llm-router`) | LLM routing client for local model API |
+| `llm-router` | Local checkout (installed by `initialize.sh`; the published `radlab-llm-router` is no longer in `requirements.txt`) | LLM routing client for local model API; the build must provide `rewrite_query`, `generative_answer_with_citations` and `enumerated_documents` |
 
 ---
 
