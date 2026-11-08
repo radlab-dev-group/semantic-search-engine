@@ -139,7 +139,7 @@ The fake session returns real `requests.Response` objects with the envelope
 | `list_categories(collection)` | `GET categories` |
 | `list_documents(collection, with_disabled=False)`, `list_document_details(collection)` | `GET documents` |
 | `upload_files(collection, files, ...)` | `POST upload_and_index_files` |
-| `document_content(collection, document, from_page=None, max_pages=None, chunk_type=None)` | `GET document_content` |
+| `document_content(collection, document=None, from_page=None, max_pages=None, chunk_type=None, text_id=None)` | `GET document_content` (`text_id` alone is enough and returns the chunk's page with `.highlight`) |
 | `index_documents(collection, documents, ...)` | `POST add_and_index_texts` |
 | `indexing_status(collection=None, job_id=None)` | `GET indexing_status` |
 | `delete_texts(collection, chunk_ids)` | `POST delete_texts` |
@@ -220,7 +220,7 @@ provided empty prefix overrides `SSE_API_PREFIX`.
 | `SearchOptions` | `search()` | Only the fields that are set are sent; `extra` merges unknown keys |
 | `IndexingOptions` | `upload_files()`, `index_documents()` | Serialises the five cleaning keys the server reads with `options["..."]`; the two chunk keys and `delete_files_after_indexing` appear only when set, so the collection and the engine decide |
 | `GenerativeOptions` | `generate_answer()`, `send_chat_message()` | `None` fields are dropped; carries `use_doc_names_in_response`, the flag the generator reads from the same `query_options` |
-| `ChatOptions` | `new_chat()`, `send_chat_message()` (`chat_options=`) | The four pipeline switches (`use_rag_supervisor`, `use_content_supervisor`, `use_intelligent_query_rewrite`, `query_instruction`) merged into the single `options` object the chat endpoints read |
+| `ChatOptions` | `new_chat()`, `send_chat_message()` (`chat_options=`) | The pipeline switches (`use_rag_supervisor`, `use_content_supervisor`, `use_intelligent_query_rewrite`, `query_instruction`, `user_msg_is_rag_question`) and the RAG memory settings (`system_prompt_with_enumerated_documents`, `query_rewrite_model`, `rag_history_max_turns`, `rag_history_max_chars`, `history_only`) merged into the single `options` object the chat endpoints read |
 
 Single options may also be passed as keyword arguments — the two calls below are
 equivalent:
@@ -257,6 +257,14 @@ Methods return dataclasses (`sse_lib.models`): `Collection`, `SearchResponse`
 untouched server payload in `.raw`, and
 `client.request("GET", "some_endpoint")` returns the unwrapped `body` of any
 endpoint for fields that are not modelled yet.
+
+The places where a citation leads back to the text are modelled directly:
+`SearchHit.text_id` / `.document_id` and `.char_start` / `.char_end` (the
+position of the chunk in the preview page, `None` when it cannot be
+reproduced), `DocumentPreview.highlight` for the page returned by
+`document_content(text_id=...)`, `Answer.citations` for the numbered sources of
+an answer, and `ChatReply.citations` / `.rewritten_query` / `.answer_source`
+(`"rag"`, `"history"` or `"llm_fallback"`) for a reply of a chat.
 
 ## Errors
 
