@@ -17,11 +17,14 @@ from django.db import transaction
 
 from sse_api.core.response import response_with_status
 from sse_api.core.decorators import required_params_exists, get_default_language
+from sse_api.core.errors import error_response
+from sse_api.core.errors_list import INVALID_PARAMS
 from sse_api.core.validation import (
     request_params,
     required_text,
     optional_text,
     identifier,
+    identifiers,
     boolean,
     options_object,
     search_options,
@@ -31,12 +34,17 @@ from sse_api.system.core.decorators import get_organisation_user
 
 from sse_api.chat.models import Chat, Message
 from sse_api.chat.controllers.chat import ChatController
+from sse_api.chat.controllers.deletion import (
+    ChatDeletionController,
+    ChatDeletionProtected,
+)
 from sse_api.chat.core.errors import (
     COLLECTION_NOT_FOUND,
     CHAT_ID_NOT_FOUND,
     USER_DENIED_TO_CHAT,
     CANNOT_ADD_MESSAGE_CHAT_RO,
 )
+from sse_api.engine.core.errors import DELETE_PROTECTED
 from sse_api.chat.serializer import (
     ChatSerializer,
     MessageSerializer,
@@ -468,3 +476,65 @@ class ListOfUserChats(APIView):
             error_name=None,
             response_body={"history": history},
         )
+
+
+class DeleteChat(APIView):
+    """
+    Delete one or more chats belonging to the authenticated user.
+
+    Chats can be given by ``chat_ids[]`` and/or by ``chat_id`` (at least one
+    of them is required).  The messages of the chats and their message states
+    are removed with them; the underlying search queries and answers keep
+    their life.
+    """
+
+    required_params = []
+    optional_params = [
+        "chat_ids[]",
+        "chat_id",
+    ]
+    input_validators = {
+        "chat_ids[]": identifiers,
+        "chat_id": identifier,
+    }
+
+    @required_params_exists(
+        required_params=required_params, optional_params=optional_params
+    )
+    @get_organisation_user
+    @get_default_language
+    def post(self, language, organisation_user, request, *args, **kwargs):
+        params = request_params(request)
+        chat_ids = list(params.get("chat_ids[]") or [])
+        if params.get("chat_id") is not None:
+            chat_ids.append(params["chat_id"])
+
+        if not chat_ids:
+            return error_response(INVALID_PARAMS, language)
+
+        controller = ChatDeletionController()
+        try:
+            result = controller.delete_chats(
+                organisation_user=organisation_user,
+                chat_ids=chat_ids,
+            )
+        except ChatDeletionProtected:
+            return response_with_status(
+                status=False, language=language, error_name=DELETE_PROTECTED
+            )
+
+        if not result.deleted.get("chats"):
+            return response_with_status(
+                status=False,
+                language=language,
+                error_name=CHAT_ID_NOT_FOUND,
+            )
+
+        return response_with_status(
+            status=True,
+            language=language,
+            error_name=None,
+            response_body=result.as_dict(),
+        )
+
+    delete = post

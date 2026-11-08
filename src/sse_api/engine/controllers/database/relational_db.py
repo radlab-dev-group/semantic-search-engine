@@ -776,9 +776,17 @@ def _delete_collection_chats(collection: CollectionOfDocuments) -> int:
     :param collection: Collection referenced by the chats
     :return: Number of deleted chats
     """
+    from sse_api.chat.controllers.deletion import delete_chats_by_ids
+
     chat_model = apps.get_model("chat", "Chat")
-    result = chat_model.objects.filter(collection=collection).delete()
-    return _deleted_rows(result, chat_model)
+    chat_ids = list(
+        chat_model.objects.filter(collection=collection).values_list(
+            "pk", flat=True
+        )
+    )
+    if not chat_ids:
+        return 0
+    return delete_chats_by_ids(chat_ids)["chats"]
 
 
 def _delete_collection_queries(collection: CollectionOfDocuments) -> int:

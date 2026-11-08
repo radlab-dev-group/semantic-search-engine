@@ -124,6 +124,7 @@ class ApiContractTest(unittest.TestCase):
             "save_chat",
             "get_chat_by_hash",
             "list_chats",
+            "delete_chat",
             "list_embedders",
             "list_rerankers",
             "embedders_info",

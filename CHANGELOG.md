@@ -4,6 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
+| [0.1.7](#017) | Deletion of user chats: `POST delete_chat` (also accepted as `DELETE`, `chat_id` / `chat_ids[]`), `ChatDeletionController`, and `sse_lib.SSEClient.delete_chat` (`endpoints.DELETE_CHAT`). Deleting a collection also removes messages and states of its chats cleanly |
 | [0.1.6](#016) | Conversational RAG with memory: the generator sees the previous questions **and** answers, follow-up questions are rewritten into standalone retrieval queries (new `POST rewrite_query`), answers carry numbered source citations (`citations`, per-chat numbering, `answer_source`/`rewritten_query` in the reply) and short commands ("make it a table", "shorten", "translate") reuse the previous sources without a new search. Every search hit and citation carries the chunk's identity and position (`text_id`, `document_id`, `char_start`, `char_end`); `GET document_content?text_id=` opens exactly the chunk's page with a `highlight`. `sse_lib`: `rewrite_query()`, `generative_answer_with_citations()`, `document_content(text_id=...)` and the new reply/citation fields |
 | [0.1.5](#015) | `./run.sh start` now runs the REST API on **gunicorn** (`src/sse_api/run-rest-api-gunicorn.sh`, the same environment and port `8271` as `run-api.sh`; flags `--port`, `--bind`, `--workers`). `./run.sh down` stops **every** SSE process (worker, API) and `./run.sh status` lists them; the bundled Milvus moves to `v3.0.5`. Default chunking of a collection: **400 tokens** per chunk with a **60-token overlap** (was 500 with no overlap) |
 | [0.1.4](#014) | Preview of a whole document: `GET document_content` (PostgreSQL only) and `sse_lib.SSEClient.document_content` / `indexing_status`. Counters of the documents in `GET collections` (`document_count`, `active_document_count`), one query for the whole answer; `sse_lib.Collection` exposes both. Date of a search in the history (`UserQuery.created_on`, `created_on` in `search_history` / `get_search_history`); `sse_lib.SearchHistory.created_on`. Files of the uploads on the disk: `delete_documents` / `delete_collection` remove them with the rows (`deleted_files`, `file_errors`), and the new `delete_files_after_indexing` option of an indexing call removes the file of every document once it is indexed. Documents of an upload are deduplicated by name **and** the path they were read from, so a zip with files of the same name in different subdirectories indexes every one of them |
@@ -12,6 +13,31 @@ All notable changes to the Semantic Search Engine are documented in this file.
 | [0.1.1](#0.1.1) | Deletion API (PostgreSQL + Milvus), document deactivation (`use_in_search`), normalized `[0, 1]` document ranking weights, collection-level chunking and `max_model_length` |
 | [0.1.0](#010) | Python client library, hybrid search, production deployment tooling, `src/` layout and CI |
 | [0.0.1](#001) | Initial version |
+
+
+## [0.1.7]
+
+### Added
+
+#### API — deletion of user chats
+- **`POST delete_chat`** (also accepted as `DELETE`) — remove one or more chats
+  of the authenticated user by their ids (`chat_id` and/or `chat_ids[]`)
+  together with their messages and message states (`MessageState`,
+  `RAGMessageState`, `ContentSupervisorState`).  The underlying search queries,
+  responses and answers referenced by the RAG states are kept intact.  The
+  answer reports how many rows were removed (`deleted`) and which of the
+  requested ids were not found (`not_found`).  Foreign or missing chats return
+  `CHAT_ID_NOT_FOUND` without leaking ownership.
+- `ChatDeletionController` (`chat/controllers/deletion.py`) removes the chat
+  rows and their states in the order which respects the `PROTECT` foreign keys,
+  inside a single transaction.  Collection deletion (`_delete_collection_chats`)
+  now uses the same helper so collections with non-empty chats are removed
+  cleanly.
+
+#### `sse_lib`
+- `SSEClient.delete_chat(chat_ids=None, *, chat_id=None)` (alias
+  `delete_chats`) wraps `POST delete_chat` (`endpoints.DELETE_CHAT`), validating
+  identifiers client-side before sending the request.
 
 
 ## [0.1.6]

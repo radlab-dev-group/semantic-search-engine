@@ -60,6 +60,7 @@ chat/
 | **save_chat**        | `POST`      | Mark a chat as saved (`SetChatStateAsSaved`), optionally make it read‑only, and return the chat hash.                                                                    |
 | **get_chat_by_hash** | `GET`       | Retrieve a saved chat (including full message history) using its hash (`GetSavedChatByHash`).                                                                            |
 | **chats**            | `GET`       | List all chats belonging to the authenticated user (`ListOfUserChats`).                                                                                                  |
+| **delete_chat**      | `POST`      | Delete one or more chats belonging to the authenticated user (`DeleteChat`).                                                                                             |
 
 All endpoints use the common decorators:
 
