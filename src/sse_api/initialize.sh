@@ -21,8 +21,8 @@ if [[ "$INSTALLATION_MODE_NAME" == "dep" || "$INSTALLATION_MODE_NAME" == "all" ]
   echo "📦 Installing dependencies"
   echo "   🔧 installing radlab-data"
   pip install git+https://github.com/radlab-dev-group/radlab-data.git --break-system-packages
-#  echo "   🔧 installing llm-router"
-#  pip install git+https://github.com/radlab-dev-group/llm-router.git
+  echo "   🔧 installing llm-router"
+  pip install /mnt/data2/dev/develop/llm-router
 fi
 
 if [[ "$INSTALLATION_MODE_NAME" == "migrate"  || "$INSTALLATION_MODE_NAME" == "all" ]]; then
