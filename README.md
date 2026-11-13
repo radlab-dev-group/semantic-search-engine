@@ -614,6 +614,7 @@ each app.
 | `GET`  | `/api/collections/`            | List collections visible to the user, with the counters of their documents.      |
 | `POST` | `/api/upload_and_index_files/` | Upload files (multipart) and trigger indexing.                                  |
 | `POST` | `/api/search_with_options/`    | Perform a **Hybrid Search** (vector + text) with rich filtering options.        |
+| `POST` | `/api/update_knowledge_quality/` | Owner-only monotonic knowledge quality counters; updates existing document metadata without re-embedding. |
 | `POST` | `/api/generative_answer/`      | Generate a RAG answer for a previously stored query response (optionally with numbered `citations`). |
 | `POST` | `/api/rewrite_query/`          | Rewrite a follow-up question into a standalone retrieval query.                 |
 | `GET`  | `/api/question_templates/`     | List available query‑template collections.                                      |
@@ -870,6 +871,57 @@ The `search_with_options` endpoint expects a JSON payload with:
   }
 }
 ```
+
+#### Keywords and lexical matching
+
+`options.keywords` optionally replaces `query_str` **only in PostgreSQL full-text
+search**. It does not add a third retrieval branch or change the embedding or
+reranker question. `options.keywords_match` accepts exactly `"and"` or `"any"`:
+
+- omitted or `"and"`: all keyword entries must match (AND);
+- `"any"`: at least one keyword entry must match (OR).
+
+Other values, including `"all"`, `"or"`, `"AND"` and `null`, are rejected as invalid
+API input. The default remains AND for backward compatibility. Keyword matching
+is enforced with the FTS boolean match operator before applying `SearchRank`.
+Each entry is parsed as a **plain** PostgreSQL query, not raw `tsquery` syntax:
+`["pool timeout", "TypeError"]` with `"any"` means `(pool AND timeout) OR TypeError`
+after language-dependent tokenization and normalization. Punctuation, stop words
+and paths are processed by PostgreSQL; keywords are not exact-string/path filters.
+Use a single-word entry per alternative if OR between individual words is desired.
+
+```json
+{
+  "collection_name": "MyCollection",
+  "query_str": "Fix timeout when acquiring an async database connection",
+  "options": {
+    "hybrid_search": true,
+    "keywords": ["ConnectionTimeoutError", "acquire", "pool"],
+    "keywords_match": "any",
+    "rerank_results": true,
+    "max_results": 15
+  }
+}
+```
+
+| Options | Vector branch | FTS branch | Merge |
+|---|---|---|---|
+| Hybrid, keywords omitted/empty | `query_str` | `query_str`, historical plain query | RRF |
+| Hybrid, keywords, mode omitted/`and` | `query_str` | keyword entries joined by AND | RRF |
+| Hybrid, keywords, mode `any` | `query_str` | keyword entries joined by OR | RRF |
+| `hybrid_search: false` | `query_str` | Not run; keywords/mode have no search effect | No RRF |
+
+The two branches contribute equally to RRF. If reranking is enabled, the
+cross-encoder subsequently ranks merged candidates against `query_str`.
+Without nonempty keywords, `keywords_match` does not alter the historical plain
+FTS query. Validation of the enum still applies, even when hybrid search is off.
+
+`query_str` is persisted in `UserQuery.query_str_prompt`; supplied `keywords`
+and `keywords_match` are persisted in the existing JSON `UserQuery.query_options`.
+No database schema migration is needed. In the Python client, use the updated
+`SearchOptions(keywords=[...], keywords_match="any")`, or pass an options mapping.
+`keywords_match` is independent of `use_and_operator`, which combines document
+filter families, not lexical terms.
 
 Key concepts:
 

@@ -95,8 +95,8 @@ Ważnym elementem jest`search_params`, to słownik, który służy do filtrowani
 przeszukiwaniem wyszukiwarki semantycznej. Słownik ten posiada pola:
 
 * `categories` -- jako lista kategorii (stringów), dokument musi posiadać co
-  najmniej jedną z tych kategorii, dokument ma przypisaną jedną kategorię główną
-  (`document.category`) i to ona jest sprawdzana z tą listą.
+  najmniej jedną z tych kategorii, dokument ma przypisaną jedną kategorię główną (`document.category`) i to ona jest
+  sprawdzana z tą listą.
 * `documents` -- lista nazw dokumentów, które mają być brane pod uwagę podczas
   przeszukiwania, tylko te wskazane dokumenty będą przeszukiwane
 * `relative_path` -- podobnie jak dokumenty, ale wskazane ściezki relatywne.
@@ -107,8 +107,7 @@ przeszukiwaniem wyszukiwarki semantycznej. Słownik ten posiada pola:
   sciezka relatywna, to _url_ strony. Wtedy tą listą można przefiltrować strony po domenie,
   a właściwie po liście domen -- można tym sposobem wybrać tylko teksty z określonych urli.
 * `templates` -- lista identyfikatorów templatek, którymi maja być filtrowane dokumenty
-* `metadata_filter` -- dowolny filtr oparty o przeszukiwanie metadanych
-  (pole `metadata_json` w `Document`)
+* `metadata_filter` -- dowolny filtr oparty o przeszukiwanie metadanych (pole `metadata_json` w `Document`)
 * `only_template_documents` -- znacznik _boolowski_, który domyślnie jest wyłaczony.
   Włączenie tego przełącznika powoduje, że tylko dokumenty spełniający założenia templatek
   będą wykorzystywane do wuszkiwania. Jeżeli ustawiona na _False_ wtedy również inne
@@ -119,6 +118,68 @@ przeszukiwaniem wyszukiwarki semantycznej. Słownik ten posiada pola:
 * `min_similarity` -- próg odcięcia podobieństwa cosine (domyślnie `0.5`).
   Wyniki z podobieństwem poniżej tego progu są odrzucane, dlatego zapytanie
   może zwrócić pusty zbiór wyników.
+
+### Słowa kluczowe: `keywords` i `keywords_match`
+
+`options.keywords` jest opcjonalną listą niepustych napisów. Gdy lista jest
+niepusta, zastępuje `query_str` **wyłącznie w gałęzi PostgreSQL FTS**. Embedding
+zapytania i cross-encoder nadal korzystają z `query_str`. Nie powstaje trzecia
+lista wyników.
+
+`options.keywords_match` dopuszcza dokładnie dwie wartości:
+
+* brak pola lub `"and"` — AND pomiędzy wpisami listy keywords;
+* `"any"` — OR pomiędzy wpisami listy keywords.
+
+Domyślny tryb to **AND**. Nie ma automatycznej zmiany na OR dla długiej listy.
+Inne wartości (np. `"all"`, `"or"`, `"AND"`, pusty napis lub `null`) są odrzucane
+przez walidację. Boolean FTS jest sprawdzany przed rankingiem `SearchRank`.
+Każdy wpis jest bezpiecznie parsowany przez `SearchQuery(..., search_type="plain")`:
+przy `keywords=["pool timeout", "TypeError"]` i `keywords_match="any"` otrzymamy
+`(pool AND timeout) OR TypeError`, po analizie językowej PostgreSQL. Jeśli OR ma
+łączyć pojedyncze słowa, należy podać je jako osobne elementy listy.
+
+```json
+{
+  "collection_name": "MyCollection",
+  "query_str": "Napraw timeout podczas pobierania połączenia z puli",
+  "options": {
+    "hybrid_search": true,
+    "keywords": [
+      "ConnectionTimeoutError",
+      "acquire",
+      "pool"
+    ],
+    "keywords_match": "any",
+    "rerank_results": true,
+    "max_results": 15
+  }
+}
+```
+
+| Opcje                                  | Semantycznie | FTS                                  | Łączenie |
+|----------------------------------------|--------------|--------------------------------------|----------|
+| Hybrid, brak/puste keywords            | `query_str`  | `query_str`, dotychczasowe plain FTS | RRF      |
+| Hybrid, keywords, brak trybu lub `and` | `query_str`  | AND pomiędzy keywords                | RRF      |
+| Hybrid, keywords, tryb `any`           | `query_str`  | OR pomiędzy keywords                 | RRF      |
+| `hybrid_search: false`                 | `query_str`  | Nie jest uruchamiany                 | Bez RRF  |
+
+RRF nadaje obu gałęziom takie same wagi; przy włączonym rerankerze końcowa
+kolejność jest następnie ustalana względem `query_str`. Bez niepustej listy
+keywords tryb `any` nie zmienia zwykłego FTS po `query_str`. Niepoprawny enum
+jest jednak odrzucany również przy wyłączonym hybrid.
+
+Keywords podlegają tokenizacji, normalizacji i usuwaniu stop-słów zgodnie z
+konfiguracją językową PostgreSQL. Nie są literalnym dopasowaniem całego napisu
+ani filtrem ścieżki. Wymagane ograniczenia dokumentów należy wyrażać filtrami.
+`keywords_match` nie jest tym samym co `use_and_operator` — ten drugi parametr
+łączy rodziny filtrów dokumentów, a nie słowa wyszukiwania.
+
+Historia pozostaje w tym samym rekordzie `UserQuery`: `query_str` w
+`query_str_prompt`, a przesłane `keywords` i `keywords_match` w istniejącym
+JSONField `query_options`. Nie trzeba wykonywać migracji schematu bazy.
+W zaktualizowanym kliencie Python można użyć
+`SearchOptions(keywords=[...], keywords_match="any")` lub słownika opcji.
 
 W polu `stats` (statystyki na poziomie dokumentu) każdy wynik z chunka jest
 najpierw normalizowany do przedziału `[0, 1]` -- w zależności od etapu
@@ -132,6 +193,7 @@ najlepszego dokumentu).
 Warto pamiętać, że `score` przy wynikach (chunkach) to **ocena, która
 ustaliła kolejność**, a jej sens zależy od trybu -- odpowiedź zawiera pole
 `score_scale`:
+
 * `cosine` -- zwykłe wyszukiwanie wektorowe (`hybrid_search` wyłączone):
   `score` to cosine,
 * `rrf` -- wyszukiwanie hybrydowe (`hybrid_search` włączone, **domyślnie**):
@@ -280,13 +342,17 @@ Konflikty zbrojne na Ukrainie. gt Konflikty zbrojne na Ukrainie. -> False
 125 eq 125 -> True
 ```
 
-Po wyżej przedstawionej procedurze uruchamiane jest wyszukiwanie hybrydowe (lub tylko semantyczne, zależnie od flagi `hybrid_search`).
+Po wyżej przedstawionej procedurze uruchamiane jest wyszukiwanie hybrydowe (lub tylko semantyczne, zależnie od flagi
+`hybrid_search`).
 
 Wyszukiwanie hybrydowe łączy dwa podejścia:
-1. **Wyszukiwanie semantyczne (Milvus)**: Znajduje fragmenty o podobnym znaczeniu wektorowym.
-2. **Wyszukiwanie tekstowe (PostgreSQL FTS)**: Znajduje fragmenty zawierające dokładnie te same słowa lub ich odmiany (wykorzystując wagi SearchVector i SearchRank).
 
-Wyniki z obu źródeł są łączone przy użyciu algorytmu **Reciprocal Rank Fusion (RRF)**, który pozwala na sprawiedliwe uszeregowanie wyników pochodzących z różnych systemów punktacji.
+1. **Wyszukiwanie semantyczne (Milvus)**: Znajduje fragmenty o podobnym znaczeniu wektorowym.
+2. **Wyszukiwanie tekstowe (PostgreSQL FTS)**: Znajduje fragmenty zawierające dokładnie te same słowa lub ich odmiany
+   (wykorzystując wagi SearchVector i SearchRank).
+
+Wyniki z obu źródeł są łączone przy użyciu algorytmu **Reciprocal Rank Fusion (RRF)**, który pozwala na sprawiedliwe
+uszeregowanie wyników pochodzących z różnych systemów punktacji.
 
 Główna metoda wywołująca wyszukiwanie w `DBSemanticSearchController` wygląda obecnie tak:
 
@@ -294,10 +360,10 @@ Główna metoda wywołująca wyszukiwanie w `DBSemanticSearchController` wygląd
 if hybrid_search:
     # Pobranie wyników wektorowych z Milvus
     milvus_results = self.search(...)
-    
+
     # Pobranie wyników tekstowych z Postgres FTS
     postgres_results = textual_controller.search_texts(...)
-    
+
     # Połączenie wyników algorytmem RRF
     texts_ids, texts_scores = self._rrf_merge(
         milvus_results=milvus_results,
@@ -310,7 +376,8 @@ else:
     # ... ekstrakcja ID i score ...
 ```
 
-W metodzie `search` do przeszukiwania semantycznego wykorzystywany jest handler do Milvusa. Pamiętajmy, że tutaj przeszukujemy bazę semantyczną
+W metodzie `search` do przeszukiwania semantycznego wykorzystywany jest handler do Milvusa. Pamiętajmy, że tutaj
+przeszukujemy bazę semantyczną
 czyli określamy podobieństwo między dwoma _reprezentacjami embeddingowymi_
 tekstów -- pytania i fragmentu dokumentu. Dla embeddingu pytania
 odszukiwane są najbardziej podobne embeddingi z fragmentami tekstów.
@@ -335,7 +402,10 @@ Wartości trzymane są w `CollectionOfDocuments.metadata_json`:
 
 ```json
 {
-  "chunking": {"max_tokens_in_chunk": 500, "number_of_overlap_tokens": 64},
+  "chunking": {
+    "max_tokens_in_chunk": 500,
+    "number_of_overlap_tokens": 64
+  },
   "strict_chunking": false
 }
 ```
@@ -362,12 +432,12 @@ chunka.
 
 ### Endpointy
 
-| Endpoint | Zmiana |
-|----------|--------|
-| `POST new_collection` | opcjonalne `chunking` (`max_tokens_in_chunk`, `number_of_overlap_tokens`) oraz `strict_chunking`; odpowiedź zwraca oba pola (`collection_id`, `chunking`, `strict_chunking`) |
+| Endpoint                                                  | Zmiana                                                                                                                                                                         |
+|-----------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `POST new_collection`                                     | opcjonalne `chunking` (`max_tokens_in_chunk`, `number_of_overlap_tokens`) oraz `strict_chunking`; odpowiedź zwraca oba pola (`collection_id`, `chunking`, `strict_chunking`)   |
 | `POST upload_and_index_files`, `POST add_and_index_texts` | `max_tokens_in_chunk` i `number_of_overlap_tokens` w `indexing_options` są opcjonalne -- bez nich obowiązują ustawienia kolekcji (pozostałych pięć flag nadal jest wymaganych) |
-| `GET collections` | każdy obiekt zawiera `metadata_json`, czyli `chunking` i `strict_chunking` |
-| `GET filter_options` | `chunking_defaults` -- wartości do wstępnie wypełnionego formularza |
+| `GET collections`                                         | każdy obiekt zawiera `metadata_json`, czyli `chunking` i `strict_chunking`                                                                                                     |
+| `GET filter_options`                                      | `chunking_defaults` -- wartości do wstępnie wypełnionego formularza                                                                                                            |
 
 ### `max_model_length` modeli
 
@@ -387,7 +457,9 @@ Wartości są dostępne w `GET embedders` i `GET rerankers` jako `models_info`:
 
 ```json
 {
-  "models": ["google/embeddinggemma-300m"],
+  "models": [
+    "google/embeddinggemma-300m"
+  ],
   "models_info": [
     {
       "name": "google/embeddinggemma-300m",
@@ -426,7 +498,7 @@ client.create_collection(
 )
 # chunkingu nie trzeba już podawać przy indeksowaniu
 client.index_documents("my_docs", ["Tekst do zaindeksowania."])
-client.embedders_info()   # vector_size, device, max_model_length
+client.embedders_info()  # vector_size, device, max_model_length
 ```
 
 `IndexingOptions` wysyła klucze fragmentowania tylko wtedy, gdy zostały ustawione,
@@ -438,9 +510,9 @@ kolekcji z `metadata_json`.
 `GET collections` zwraca przy każdej kolekcji dwie liczby, dzięki czemu klient
 nie musi wołać `GET documents` raz na kolekcję:
 
-| Pole | Co liczy |
-------|----------|
-| `document_count` | Wszystkie dokumenty kolekcji, również wyłączone z wyszukiwania |
+| Pole                    | Co liczy                                                        |
+-------------------------|-----------------------------------------------------------------|
+| `document_count`        | Wszystkie dokumenty kolekcji, również wyłączone z wyszukiwania  |
 | `active_document_count` | Dokumenty bierzące udział w wyszukiwaniu (`use_in_search=True`) |
 
 Oba liczniki powstają **w bazie** -- jedno zapytanie na całą odpowiedź
@@ -453,8 +525,8 @@ przelicza `GET documents`.
 
 ## Kolejka indeksacji (Celery + RabbitMQ)
 
-Indeksację można uruchomić w wątku żądania (tak jak dotąd) albo w kolejce
-**Celery** z brokerem **RabbitMQ**. Decyduje o tym `ENV_USE_CELERY=1` (lub
+Indeksację można uruchomić w wątku żądania (tak jak dotąd) albo w kolejce **Celery** z brokerem **RabbitMQ**. Decyduje o
+tym `ENV_USE_CELERY=1` (lub
 `"use_celery": true` w `django-config.json`). Niezależnie od trybu wykonywany
 jest ten sam pipeline, a postęp wygląda identycznie.
 
@@ -467,12 +539,12 @@ wykonaniu (`acks_late`), więc zabity worker niczego nie gubi.
 Postęp mieszka w bazie relacyjnej (nie w result backendzie Celery), dlatego
 przeżywa restart workera i jest widoczny dla wielu workerów naraz:
 
-| Pole | Znaczenie |
-|------|-----------|
-| `IndexingJob.status` | `queued` → `preparing` → `indexing` → `completed` / `partial` / `failed` |
-| `IndexingJob.total_documents`, `documents_indexed`, `documents_failed`, `documents_skipped` | liczniki zgłoszenia (aktualizowane przez `F()`) |
-| `IndexingJob.current_document` | dokument aktualnie indeksowany |
-| `Document.indexing_status` | `pending` / `indexing` / `indexed` / `failed` / `skipped`; `NULL` dla dokumentów zaindeksowanych wcześniej |
+| Pole                                                                                        | Znaczenie                                                                                                  |
+|---------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------|
+| `IndexingJob.status`                                                                        | `queued` → `preparing` → `indexing` → `completed` / `partial` / `failed`                                   |
+| `IndexingJob.total_documents`, `documents_indexed`, `documents_failed`, `documents_skipped` | liczniki zgłoszenia (aktualizowane przez `F()`)                                                            |
+| `IndexingJob.current_document`                                                              | dokument aktualnie indeksowany                                                                             |
+| `Document.indexing_status`                                                                  | `pending` / `indexing` / `indexed` / `failed` / `skipped`; `NULL` dla dokumentów zaindeksowanych wcześniej |
 
 Czyta go `GET api/indexing_status` -- po `job_id` albo po `collection_name`
 (najnowsze zadanie kolekcji). Odpowiedź zawiera zadanie, jego dokumenty ze
@@ -486,13 +558,30 @@ curl -H "Authorization: Token $TOKEN" \
 ```
 
 ```json
-{"status": true, "body": {
-  "job": {"id": 12, "status": "indexing", "total_documents": 30,
-           "documents_indexed": 12, "documents_failed": 1,
-           "documents_pending": 17, "percent": 43,
-           "current_document": "regulation.pdf", "finished": false},
-  "documents": [{"id": 41, "name": "regulation.pdf", "indexing_status": "indexed"}],
-  "pending_documents": 17}}
+{
+  "status": true,
+  "body": {
+    "job": {
+      "id": 12,
+      "status": "indexing",
+      "total_documents": 30,
+      "documents_indexed": 12,
+      "documents_failed": 1,
+      "documents_pending": 17,
+      "percent": 43,
+      "current_document": "regulation.pdf",
+      "finished": false
+    },
+    "documents": [
+      {
+        "id": 41,
+        "name": "regulation.pdf",
+        "indexing_status": "indexed"
+      }
+    ],
+    "pending_documents": 17
+  }
+}
 ```
 
 **Uruchomienie** (docker compose chowa kolejkę za profilem, więc stack bez
@@ -516,11 +605,11 @@ celery -A sse_api.config worker -Q indexing -l INFO
 ```
 
 **Basen workera to `solo`** (`CELERY_WORKER_POOL`, wartość domyślna `run.sh` i
-`docker compose`).  Odczyt wgranych plików działa w własnym basenie
+`docker compose`). Odczyt wgranych plików działa w własnym basenie
 `multiprocessing.Pool`, a zadania basenu `prefork` są procesami-demona, którym
 Python zabrania tworzenia własnych dzieci: taki worker odpowiada
 `AssertionError: daemonic processes are not allowed to have children` zamiast
-cokolwiek zaindeksować.  Zadanie, które mimo to trafi do procesu-demona,
+cokolwiek zaindeksować. Zadanie, które mimo to trafi do procesu-demona,
 przeczyta swoje pliki w jednym procesie (z ostrzeżeniem) zamiast paść.
 
 Embedder kolekcji jest ładowany raz na proces workera, więc `CELERY_CONCURRENCY`
@@ -529,21 +618,24 @@ modelu. Worker zabity na zawsze zostawia zadanie jako uruchomione --
 `python -m sse_api.manage reset_stale_indexing_jobs` domyka wszystko, co wciąż
 się "wykonuje" po godzinie (`--minutes`, `--dry-run`).
 
-
 ## Pliki wgranych dokumentów
 
 Pliki, z których powstały dokumenty, leżą pod katalogiem uploadu
 (`upload_sse/<organizacja>/<user>/<kolekcja>/<wgranie>`), a ich ścieżki to
-kolumny `Document.path`.  Wgranie może poprosić o nie z powrotem, skoro ich
+kolumny `Document.path`. Wgranie może poprosić o nie z powrotem, skoro ich
 wektory są już zapisane -- wystarczy jedna opcja `indexing_options`:
 
 ```json
-{"clear_text": true, "check_text_lang": true, "...": "...",
- "delete_files_after_indexing": true}
+{
+  "clear_text": true,
+  "check_text_lang": true,
+  "...": "...",
+  "delete_files_after_indexing": true
+}
 ```
 
-| Opcja | Domyślnie | Co robi |
-|-------|-----------|---------|
+| Opcja                         | Domyślnie            | Co robi                                                                                       |
+|-------------------------------|----------------------|-----------------------------------------------------------------------------------------------|
 | `delete_files_after_indexing` | brak (pliki zostają) | Plik każdego dokumentu tego wywołania znika z dysku, gdy jego dokument skończy się indeksować |
 
 * Opcja trafia do `IndexingJob.indexing_options` razem z resztą opcji
@@ -552,8 +644,8 @@ wektory są już zapisane -- wystarczy jedna opcja `indexing_options`:
 * **`indexed` i `skipped` usuwają plik**, **`failed` go zostawia**: plik
   dokumentu, którego wektorów nie ma w bazie, to jedyna rzecz, na której da
   się jeszcze coś zrobić przy ponowieniu.
-* Usunięcie dzieje się per dokument, w `run_index_document`, w obu trybach
-  (w żądaniu i w kolejce), a katalog znika dopiero wtedy, gdy nie ma w nim
+* Usunięcie dzieje się per dokument, w `run_index_document`, w obu trybach (w żądaniu i w kolejce), a katalog znika
+  dopiero wtedy, gdy nie ma w nim
   już żadnego pliku.
 * Problem z dyskiem idzie do loga i przerywa najwyżej usuwanie tego jednego
   pliku -- nigdy całej indeksacji.
@@ -565,10 +657,10 @@ wektory są już zapisane -- wystarczy jedna opcja `indexing_options`:
 
 `delete_documents` i `delete_collection` usuwają razem z wierszami i wektorami
 także pliki z dysku (pliki jako ostatnie, żeby dokument, który wciąż jest w
-bazach, nigdy nie stracił swojego pliku).  Odpowiedź mówi, ile plików
+bazach, nigdy nie stracił swojego pliku). Odpowiedź mówi, ile plików
 poszło, w polu `deleted_files`, a pliku, którego usunąć się nie dało (np.
 tylko do odczytu), po prostu nie udaje się usunąć -- jest wypisany w
-`file_errors`.  Problem z dyskiem nie powoduje błędu całego usuwania.
+`file_errors`. Problem z dyskiem nie powoduje błędu całego usuwania.
 
 * Usuwane są wyłącznie ścieżki z katalogu uploadu -- ścieżki spoza niego
   nigdy nie są dotykane, więc wpis do bazy nie wyłączy niczego obok.
