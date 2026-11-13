@@ -47,7 +47,10 @@ class RelationalDBReaderMetadataTests(SimpleTestCase):
             )
 
         self.assertEqual(
-            [call.kwargs["page_number"] for call in get_or_create_page.call_args_list],
+            [
+                call.kwargs["page_number"]
+                for call in get_or_create_page.call_args_list
+            ],
             [1, 2, 3],
         )
 

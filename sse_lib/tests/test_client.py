@@ -438,7 +438,11 @@ class IndexingTest(unittest.TestCase):
         self.assertTrue(result.is_indexed)
 
     def test_upload_rejects_non_json_metadata_before_transport(self):
-        for metadata in ([], {"x": {"options": {"v": float("nan")}}}, {"x": object()}):
+        for metadata in (
+            [],
+            {"x": {"options": {"v": float("nan")}}},
+            {"x": object()},
+        ):
             with self.subTest(metadata=metadata):
                 client = build_client([])
                 with self.assertRaises(SSEValueError):

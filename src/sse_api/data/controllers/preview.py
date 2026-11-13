@@ -167,9 +167,11 @@ class ContentPreviewController:
         from_page = max(1, int(from_page or 1))
         target = None
         if text_id is not None:
-            target = DocumentPageText.objects.filter(
-                pk=text_id, page__document=document
-            ).select_related("page").first()
+            target = (
+                DocumentPageText.objects.filter(pk=text_id, page__document=document)
+                .select_related("page")
+                .first()
+            )
             if target is None or (
                 chunk_type and target.text_chunk_type != chunk_type
             ):
@@ -195,11 +197,13 @@ class ContentPreviewController:
         for page in window:
             chunks = texts.get(page.pk, [])
             content, offsets = page_content_with_offsets(chunks)
-            rows.append({
-                "page": page.page_number,
-                "content": content,
-                "chunks": sum(bool(chunk.text_str) for chunk in chunks),
-            })
+            rows.append(
+                {
+                    "page": page.page_number,
+                    "content": content,
+                    "chunks": sum(bool(chunk.text_str) for chunk in chunks),
+                }
+            )
             if target is not None and page.pk == target.page_id:
                 start, end = offsets.get(target.pk, (None, None))
                 if start is not None and content[start:end] != target.text_str:

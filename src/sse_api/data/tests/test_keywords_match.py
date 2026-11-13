@@ -36,7 +36,11 @@ class KeywordsMatchTests(TestCase):
             with self.subTest(mode=mode):
                 self.assertEqual(
                     build_fts_query(
-                        "unused", ["pool timeout", "TypeError"], mode, "simple", Query
+                        "unused",
+                        ["pool timeout", "TypeError"],
+                        mode,
+                        "simple",
+                        Query,
                     ).value,
                     (expected, "pool timeout", "TypeError"),
                 )
@@ -44,7 +48,9 @@ class KeywordsMatchTests(TestCase):
     def test_no_keywords_preserves_plain_query(self):
         for words in (None, []):
             for mode in ("and", "any"):
-                query = build_fts_query("original query", words, mode, "simple", Query)
+                query = build_fts_query(
+                    "original query", words, mode, "simple", Query
+                )
                 self.assertEqual(query.value, "original query")
                 self.assertEqual(query.kwargs["search_type"], "plain")
 

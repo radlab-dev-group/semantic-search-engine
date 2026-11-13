@@ -18,7 +18,10 @@ The module is used by the web application to answer user questions
 against a collection of documents.
 """
 
-from sse_api.data.core.knowledge_extensions import lexical_query, intersect_filter_groups
+from sse_api.data.core.knowledge_extensions import (
+    lexical_query,
+    intersect_filter_groups,
+)
 
 import tqdm
 import json
@@ -650,12 +653,19 @@ class DBSemanticSearchController:
                     only_used_to_search=True,
                 )
             )
-            relative_doc_names = list(set(relative_doc_names) | set(
-                self.__filter_documents_based_on_metadata(
-                    collection=collection,
-                    metadata_filters=[{"operator": "in", "field": {"path_prefixes": prefix}}
-                                      for prefix in relative_path_contains],
-                    use_and_operator=False)))
+            relative_doc_names = list(
+                set(relative_doc_names)
+                | set(
+                    self.__filter_documents_based_on_metadata(
+                        collection=collection,
+                        metadata_filters=[
+                            {"operator": "in", "field": {"path_prefixes": prefix}}
+                            for prefix in relative_path_contains
+                        ],
+                        use_and_operator=False,
+                    )
+                )
+            )
             was_filter_option = True
             if not len(relative_doc_names) and use_and_operator:
                 return {}, {}, []
@@ -720,10 +730,14 @@ class DBSemanticSearchController:
 
         groups = search_params.get("metadata_filter_groups") or []
         if groups:
-            metadata_doc_names = intersect_filter_groups(groups, lambda group:
-                self.__filter_documents_based_on_metadata(
-                    collection=collection, metadata_filters=group,
-                    use_and_operator=False))
+            metadata_doc_names = intersect_filter_groups(
+                groups,
+                lambda group: self.__filter_documents_based_on_metadata(
+                    collection=collection,
+                    metadata_filters=group,
+                    use_and_operator=False,
+                ),
+            )
             was_filter_option = True
             if not metadata_doc_names:
                 return {}, {}, []

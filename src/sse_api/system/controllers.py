@@ -10,7 +10,9 @@ from sse_api.system.models import Organisation, OrganisationGroup, OrganisationU
 
 
 class UserConfigReader:
-    def __init__(self, config_path: str = os.path.join(CONFIG_DIR, "default-user.json")):
+    def __init__(
+        self, config_path: str = os.path.join(CONFIG_DIR, "default-user.json")
+    ):
         self.config_path = config_path
 
         self._organisation = None

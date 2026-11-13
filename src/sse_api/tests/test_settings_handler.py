@@ -40,8 +40,7 @@ from sse_api.core.settings import SystemSettingsHandler
 def dummy_handler(tmp_path):
     """Create a SystemSettingsHandler instance with mock json config."""
     config_file = tmp_path / "django-config.json"
-    config_file.write_text(
-        """{
+    config_file.write_text("""{
         "main": {
             "debug": false,
             "allowed_hosts": ["localhost", "127.0.0.1"],
@@ -83,8 +82,7 @@ def dummy_handler(tmp_path):
         "aws": {
             "region": "eu-central-1"
         }
-    }"""
-    )
+    }""")
     secret_key_file = tmp_path / "secret-key.txt"
     secret_key_file.write_text("test-secret-key-12345")
 

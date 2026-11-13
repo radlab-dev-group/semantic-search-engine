@@ -358,7 +358,9 @@ class ChatAccessTests(TestCase):
         q_resp = UserQueryResponse.objects.create(
             user_query=query,
             general_stats_json={},
-            detailed_results_json={"1": {"document_name": "doc-a.pdf", "text_str": "chunk"}},
+            detailed_results_json={
+                "1": {"document_name": "doc-a.pdf", "text_str": "chunk"}
+            },
         )
         rag_state = RAGMessageState.objects.create(
             contains_query=True,
@@ -384,7 +386,9 @@ class ChatAccessTests(TestCase):
         msg_data = history[0]["chat_history"][0]
         self.assertIsNotNone(msg_data["state"])
         self.assertEqual(
-            msg_data["state"]["rag_message_state"]["sse_response"]["detailed_results_json"],
+            msg_data["state"]["rag_message_state"]["sse_response"][
+                "detailed_results_json"
+            ],
             {"1": {"document_name": "doc-a.pdf", "text_str": "chunk"}},
         )
 
@@ -582,7 +586,9 @@ class ChatAccessTests(TestCase):
         self.assertFalse(Message.objects.filter(chat_id=self.chat.pk).exists())
         self.assertFalse(MessageState.objects.filter(pk=msg_state.pk).exists())
         self.assertFalse(RAGMessageState.objects.filter(pk=rag_state.pk).exists())
-        self.assertFalse(ContentSupervisorState.objects.filter(pk=cs_state.pk).exists())
+        self.assertFalse(
+            ContentSupervisorState.objects.filter(pk=cs_state.pk).exists()
+        )
         # Underlying search query and foreign chat stay untouched
         self.assertTrue(UserQuery.objects.filter(pk=query.pk).exists())
         self.assertTrue(Chat.objects.filter(pk=self.foreign.pk).exists())

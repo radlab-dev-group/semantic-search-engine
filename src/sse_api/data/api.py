@@ -340,7 +340,9 @@ class UploadAndIndexFilesToCollection(APIView):
             kind=INDEXING_JOB_FILES,
             indexing_options=indexing_options,
             request_payload=(
-                {"file_metadata": file_metadata} if file_metadata is not None else None
+                {"file_metadata": file_metadata}
+                if file_metadata is not None
+                else None
             ),
         )
 
@@ -1018,30 +1020,46 @@ class SetDocumentsUseInSearch(APIView):
 
 class UpdateKnowledgeQuality(APIView):
     """Monotonic quality counters; never permit arbitrary metadata updates."""
+
     required_params = ["collection_name", "document_name", "upvotes", "downvotes"]
-    input_validators = {"collection_name": required_text, "document_name": required_text}
+    input_validators = {
+        "collection_name": required_text,
+        "document_name": required_text,
+    }
 
     @required_params_exists(required_params=required_params)
     @get_organisation_user
     @get_default_language
     def post(self, language, organisation_user, request, *args, **kwargs):
         from django.db import transaction
+
         params = request_params(request)
         up, down = params.get("upvotes"), params.get("downvotes")
         if any(type(v) is not int or v < 0 or v > 10**12 for v in (up, down)):
             return error_response(INVALID_PARAMS, language)
         collection = CollectionOfDocuments.objects.filter(
-            name=params["collection_name"], created_by=organisation_user).first()
+            name=params["collection_name"], created_by=organisation_user
+        ).first()
         if collection is None:
             return error_response(COLLECTION_NOT_FOUND, language)
         with transaction.atomic():
-            documents = list(Document.objects.select_for_update().filter(
-                collection=collection, name=params["document_name"]))
+            documents = list(
+                Document.objects.select_for_update().filter(
+                    collection=collection, name=params["document_name"]
+                )
+            )
             if not documents:
                 return error_response(DOCUMENT_NOT_FOUND, language)
             for document in documents:
                 from sse_api.data.core.knowledge_extensions import merge_quality
-                document.metadata_json = merge_quality(document.metadata_json, up, down)
+
+                document.metadata_json = merge_quality(
+                    document.metadata_json, up, down
+                )
                 document.save(update_fields=["metadata_json"])
-        return response_with_status(status=True, language=language,
-                                    error_name=None, response_body={"updated": len(documents)})
+        return response_with_status(
+            status=True,
+            language=language,
+            error_name=None,
+            response_body={"updated": len(documents)},
+        )

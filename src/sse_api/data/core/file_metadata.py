@@ -68,7 +68,9 @@ def resolve_file_metadata(value, filenames):
         ):
             raise ValueError("file_metadata entries require category and options")
         resolved[target] = metadata
-    ordinary_files = {name for name in filenames if not name.lower().endswith(".zip")}
+    ordinary_files = {
+        name for name in filenames if not name.lower().endswith(".zip")
+    }
     if set(resolved) != ordinary_files:
         raise ValueError("Missing file_metadata for an uploaded file")
     return resolved
@@ -89,7 +91,9 @@ def apply_file_metadata(documents, file_metadata, upload_dir):
         try:
             name = Path(document["filepath"]).resolve().relative_to(root).as_posix()
         except ValueError as exc:
-            raise FileMetadataError("Reader result outside upload directory") from exc
+            raise FileMetadataError(
+                "Reader result outside upload directory"
+            ) from exc
         metadata = file_metadata.get(name)
         if metadata is not None:
             if name not in remaining:

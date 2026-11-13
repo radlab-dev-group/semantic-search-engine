@@ -160,9 +160,13 @@ def search_options(value):
         if not isinstance(group, list) or not 1 <= len(group) <= 32:
             raise ValueError("Expected nonempty metadata filter group")
         for expr in group:
-            if (not isinstance(expr, dict) or expr.get("operator") not in
-                    ("eq", "ne", "in", "hse", "gt", "lt", "ge", "le")
-                    or not isinstance(expr.get("field"), dict) or len(expr["field"]) != 1):
+            if (
+                not isinstance(expr, dict)
+                or expr.get("operator")
+                not in ("eq", "ne", "in", "hse", "gt", "lt", "ge", "le")
+                or not isinstance(expr.get("field"), dict)
+                or len(expr["field"]) != 1
+            ):
                 raise ValueError("Invalid metadata expression")
     return value
 

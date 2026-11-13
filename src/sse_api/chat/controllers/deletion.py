@@ -117,9 +117,7 @@ def delete_chats_by_ids(chat_ids: List[int]) -> dict:
 
     with transaction.atomic():
         state_ids = list(
-            message_model.objects.filter(
-                chat__pk__in=chat_ids, state__isnull=False
-            )
+            message_model.objects.filter(chat__pk__in=chat_ids, state__isnull=False)
             .values_list("state_id", flat=True)
             .distinct()
         )
@@ -148,9 +146,7 @@ def delete_chats_by_ids(chat_ids: List[int]) -> dict:
             result = message_state_model.objects.filter(
                 pk__in=state_ids, message__isnull=True
             ).delete()
-            deleted["message_states"] = _deleted_rows(
-                result, message_state_model
-            )
+            deleted["message_states"] = _deleted_rows(result, message_state_model)
 
         if rag_state_ids:
             result = rag_state_model.objects.filter(

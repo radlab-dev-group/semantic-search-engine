@@ -48,6 +48,8 @@ def build_fts_query(query_str, keywords, keywords_match, config, query_factory):
     for keyword in keywords:
         part = query_factory(keyword, config=config, search_type="plain")
         query = (
-            part if query is None else (query | part if mode == "any" else query & part)
+            part
+            if query is None
+            else (query | part if mode == "any" else query & part)
         )
     return query

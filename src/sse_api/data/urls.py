@@ -20,8 +20,11 @@ from sse_api.data.api import (
 from sse_api.core.constants import prepare_api_url
 
 urlpatterns = [
-    path(prepare_api_url("update_knowledge_quality"), UpdateKnowledgeQuality.as_view(),
-         name="update_knowledge_quality"),
+    path(
+        prepare_api_url("update_knowledge_quality"),
+        UpdateKnowledgeQuality.as_view(),
+        name="update_knowledge_quality",
+    ),
     path(
         prepare_api_url("new_collection"),
         NewCollection.as_view(),
