@@ -2,6 +2,8 @@ import json
 import math
 from collections.abc import Mapping
 
+from sse_api.data.core.knowledge_extensions import keyword_match_mode
+
 
 def request_params(request):
     if hasattr(request, "validated_params"):
@@ -136,6 +138,7 @@ def search_options(value):
         "documents_names",
         "relative_paths",
         "relative_path_contains",
+        "keywords",
     ):
         if key in value and value[key] is not None:
             if not isinstance(value[key], list):
@@ -148,6 +151,19 @@ def search_options(value):
             value["templates"] = [identifier(item) for item in templates]
         else:
             value["templates"] = identifier(templates)
+    if "keywords_match" in value:
+        value["keywords_match"] = keyword_match_mode(value["keywords_match"])
+    groups = value.get("metadata_filter_groups", [])
+    if not isinstance(groups, list) or len(groups) > 8:
+        raise ValueError("Expected up to eight metadata filter groups")
+    for group in groups:
+        if not isinstance(group, list) or not 1 <= len(group) <= 32:
+            raise ValueError("Expected nonempty metadata filter group")
+        for expr in group:
+            if (not isinstance(expr, dict) or expr.get("operator") not in
+                    ("eq", "ne", "in", "hse", "gt", "lt", "ge", "le")
+                    or not isinstance(expr.get("field"), dict) or len(expr["field"]) != 1):
+                raise ValueError("Invalid metadata expression")
     return value
 
 
