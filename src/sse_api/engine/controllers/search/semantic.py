@@ -18,6 +18,8 @@ The module is used by the web application to answer user questions
 against a collection of documents.
 """
 
+from sse_api.data.core.knowledge_extensions import lexical_query, intersect_filter_groups
+
 import tqdm
 import json
 import pandas as pd
@@ -648,6 +650,12 @@ class DBSemanticSearchController:
                     only_used_to_search=True,
                 )
             )
+            relative_doc_names = list(set(relative_doc_names) | set(
+                self.__filter_documents_based_on_metadata(
+                    collection=collection,
+                    metadata_filters=[{"operator": "in", "field": {"path_prefixes": prefix}}
+                                      for prefix in relative_path_contains],
+                    use_and_operator=False)))
             was_filter_option = True
             if not len(relative_doc_names) and use_and_operator:
                 return {}, {}, []
@@ -708,6 +716,16 @@ class DBSemanticSearchController:
             was_filter_option = True
 
             if not len(metadata_doc_names) and use_and_operator:
+                return {}, {}, []
+
+        groups = search_params.get("metadata_filter_groups") or []
+        if groups:
+            metadata_doc_names = intersect_filter_groups(groups, lambda group:
+                self.__filter_documents_based_on_metadata(
+                    collection=collection, metadata_filters=group,
+                    use_and_operator=False))
+            was_filter_option = True
+            if not metadata_doc_names:
                 return {}, {}, []
 
         # Prepare OR/AND operator between all doc names from:
@@ -817,7 +835,7 @@ class DBSemanticSearchController:
 
         if hybrid_search:
             postgres_results = textual_controller.search_texts(
-                query_str=question_str,
+                query_str=lexical_query(question_str, search_params.get("keywords")),
                 collection=collection,
                 max_results=max_results,
                 filters={
@@ -826,6 +844,8 @@ class DBSemanticSearchController:
                     "language": lang_str,
                 },
                 language=lang_str,
+                keywords=search_params.get("keywords"),
+                keywords_match=search_params.get("keywords_match", "and"),
             )
             texts_ids, texts_scores = self._rrf_merge(
                 milvus_results=milvus_results,
