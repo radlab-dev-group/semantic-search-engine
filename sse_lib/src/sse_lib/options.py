@@ -49,6 +49,9 @@ class SearchOptions:
     categories: Optional[List[str]] = None
     documents: Optional[List[str]] = None
     relative_paths: Optional[List[str]] = None
+    keywords: Optional[List[str]] = None
+    #: AND by omission; "any" ORs the plain queries of keyword entries.
+    keywords_match: Optional[str] = None
     relative_path_contains: Optional[List[str]] = None
     metadata_filters: Optional[List[Dict[str, Any]]] = None
     templates: Optional[int] = None
