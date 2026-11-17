@@ -124,6 +124,7 @@ def search_options(value):
         "use_and_operator",
         "only_template_documents",
         "hybrid_search",
+        "lexical_only",
         "rerank_results",
         "return_with_factored_fields",
     ):

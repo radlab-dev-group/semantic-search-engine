@@ -156,11 +156,15 @@ SCORE_SCALE_RERANKER = "reranker"
 SCORE_SCALE_RRF = "rrf"
 #: Already normalized scores -- only clamped to ``[0, 1]``.
 SCORE_SCALE_RAW = "raw"
+#: Postgres full-text search alone -- the ``SearchRank`` of the query against
+#: the chunk, already on ``[0, 1]``.
+SCORE_SCALE_FTS = "fts"
 SCORE_SCALES = (
     SCORE_SCALE_COSINE,
     SCORE_SCALE_RERANKER,
     SCORE_SCALE_RRF,
     SCORE_SCALE_RAW,
+    SCORE_SCALE_FTS,
 )
 DEFAULT_RRF_K = 60
 
@@ -235,7 +239,7 @@ def normalize_relevance(
         # Reciprocal Rank Fusion sums one 1/(k + rank) term per fused list,
         # so two lists put a perfect hit at 2 / (k + 1).
         normalized = value * (max(1.0, float(rrf_k)) + 1.0) / 2.0
-    elif score_scale == SCORE_SCALE_RAW:
+    elif score_scale in (SCORE_SCALE_RAW, SCORE_SCALE_FTS):
         normalized = value
     else:
         normalized = (1.0 + value) / 2.0
@@ -243,7 +247,9 @@ def normalize_relevance(
     return min(1.0, max(0.0, normalized))
 
 
-def retrieval_score_scale(rerank: bool = False, hybrid_search: bool = False) -> str:
+def retrieval_score_scale(
+    rerank: bool = False, hybrid_search: bool = False, lexical_only: bool = False
+) -> str:
     """
     Return the score scale produced by a given search configuration.
 
@@ -258,6 +264,9 @@ def retrieval_score_scale(rerank: bool = False, hybrid_search: bool = False) -> 
         Whether a cross‑encoder reranker was applied to the results.
     hybrid_search : bool, default False
         Whether Reciprocal Rank Fusion merged vector and full‑text results.
+    lexical_only : bool, default False
+        Whether the search ran the full-text leg alone, with no vector search
+        and nothing to fuse; the score is then the text search rank.
 
     Returns
     -------
@@ -268,6 +277,8 @@ def retrieval_score_scale(rerank: bool = False, hybrid_search: bool = False) -> 
         return SCORE_SCALE_RERANKER
     if hybrid_search:
         return SCORE_SCALE_RRF
+    if lexical_only:
+        return SCORE_SCALE_FTS
     return SCORE_SCALE_COSINE
 
 

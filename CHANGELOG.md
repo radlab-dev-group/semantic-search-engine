@@ -4,6 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
+| [Unreleased](#unreleased) | Lexical-only search: a `search_with_options` request may answer from the full-text leg alone (`"lexical_only": true`), with no embedding of the query and no vector store round trip, and report the rank of the text index as its `score_scale` (`"fts"`). The option is validated by the API, understood by `sse_lib.SearchOptions`, and takes precedence over `hybrid_search` |
 | [0.1.7](#017) | Deletion of user chats: `POST delete_chat` (also accepted as `DELETE`, `chat_id` / `chat_ids[]`), `ChatDeletionController`, and `sse_lib.SSEClient.delete_chat` (`endpoints.DELETE_CHAT`). Deleting a collection also removes messages and states of its chats cleanly. Chat history (`GET chats` and `GET get_chat_by_hash`) now serializes messages with `DeepMessageSerializer` (including `state` with RAG responses, answers, and citations) and `collection_name` |
 | [0.1.6](#016) | Conversational RAG with memory: the generator sees the previous questions **and** answers, follow-up questions are rewritten into standalone retrieval queries (new `POST rewrite_query`), answers carry numbered source citations (`citations`, per-chat numbering, `answer_source`/`rewritten_query` in the reply) and short commands ("make it a table", "shorten", "translate") reuse the previous sources without a new search. Every search hit and citation carries the chunk's identity and position (`text_id`, `document_id`, `char_start`, `char_end`); `GET document_content?text_id=` opens exactly the chunk's page with a `highlight`. `sse_lib`: `rewrite_query()`, `generative_answer_with_citations()`, `document_content(text_id=...)` and the new reply/citation fields |
 | [0.1.5](#015) | `./run.sh start` now runs the REST API on **gunicorn** (`src/sse_api/run-rest-api-gunicorn.sh`, the same environment and port `8271` as `run-api.sh`; flags `--port`, `--bind`, `--workers`). `./run.sh down` stops **every** SSE process (worker, API) and `./run.sh status` lists them; the bundled Milvus moves to `v3.0.5`. Default chunking of a collection: **400 tokens** per chunk with a **60-token overlap** (was 500 with no overlap) |
@@ -14,6 +15,35 @@ All notable changes to the Semantic Search Engine are documented in this file.
 | [0.1.0](#010) | Python client library, hybrid search, production deployment tooling, `src/` layout and CI |
 | [0.0.1](#001) | Initial version |
 
+
+## [Unreleased]
+
+### Added
+
+#### API — lexical-only search
+- A `search_with_options` request may now answer from the full-text leg
+  alone: `"lexical_only": true` in `options` skips the embedding of the
+  query and the vector store entirely and ranks the chunks with the
+  Postgres full-text rank, which a request answers better than a cosine
+  when it is literal — an exception class, an identifier, a config key.
+  The answer reports `score_scale: "fts"`, the one scale the rest of the
+  pipeline did not already use, and a reranker over a lexical search is a
+  reranker: it overwrites the scale it is given.
+- The option is a boolean of the search options like every other switch,
+  so `"true"` that arrives as a string is not a string the controller has
+  to guess at. It takes precedence over `hybrid_search`, because asking
+  for both is asking to skip the vectors.
+
+#### `sse_lib`
+- `SearchOptions.lexical_only`: the client asks for it the same way it
+  asks for `hybrid_search`, and says nothing when it did not set it.
+
+### Changed
+- `retrieval_score_scale` knows the leg that ran: a lexical-only search
+  reports `"fts"`, a hybrid one `"rrf"`, a plain vector search a cosine,
+  and a reranker over any of them `"reranker"`.  The new scale is clamped
+  to `[0, 1]` like a raw rank, because a Postgres `SearchRank` is already
+  on that scale and there is nothing to squash.
 
 ## [0.1.7]
 
