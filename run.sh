@@ -16,6 +16,8 @@
 #   ./run.sh start|up        # run the API server (gunicorn, src/sse_api/run-rest-api-gunicorn.sh)
 #                            # in the foreground → http://0.0.0.0:8271/api/ (step 7)
 #   ./run.sh worker          # run the Celery worker (indexing queue) in the foreground
+#   ./run.sh models          # run the model service (embedder + reranker) in the
+#                            # foreground → SSE_MODELS_HOST:PORT (see src/sse_models/)
 #   ./run.sh down            # stop ALL the SSE processes (worker, API) and remove the containers;
 #                            # THE DATA VOLUMES ARE KEPT
 #   ./run.sh clean           # like down, but it also removes the volumes (postgres_data, milvus_data, rabbitmq_data)
@@ -78,7 +80,7 @@ API_DIR="$ROOT_DIR"
 CONFIG_DIR="$ROOT_DIR/configs"
 VENV_DIR="$ROOT_DIR/.venv"
 PY_PREFERRED="python3.11"
-MILVUS_IMAGE="milvusdb/milvus:v3.0.5"
+MILVUS_IMAGE="milvusdb/milvus:v3.0.6"
 
 export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/sse_lib/src:${PYTHONPATH:-}"
 export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-sse_api.config.settings}"
@@ -628,6 +630,14 @@ worker() {
   ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" celery "${CELERY_WORKER_ARGS[@]}" )
 }
 
+models() {
+  step "Model service (embedder + reranker) → http://${SSE_MODELS_HOST:-0.0.0.0}:${SSE_MODELS_PORT:-8280}/docs"
+  [[ -d "$API_DIR/src/sse_models" ]] || { err "Missing src/sse_models/"; exit 1; }
+  [[ "$NO_VENV" == "1" ]] || activate_venv
+  log "role=${SSE_MODELS_ROLE:-all} warm_models=${SSE_MODELS_WARM_MODELS:-0} config=$CONFIG_DIR"
+  ( cd "$API_DIR" && PYTHONPATH="$API_DIR/src" SSE_CONFIG_DIR="$CONFIG_DIR" python -m sse_models )
+}
+
 down() {
   step "Stop: stopping and removing the PG + Milvus + RabbitMQ containers (the volumes are kept)"
   stop_worker
@@ -735,6 +745,7 @@ case "$CMD" in
   config) config ;;
   start|up) start ;;
   worker) worker ;;
+  models) models ;;
   down)   down ;;
   clean)  clean ;;
   status) status ;;
