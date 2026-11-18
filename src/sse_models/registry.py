@@ -75,6 +75,11 @@ class ModelRegistry:
         self._settings = settings or ModelServiceSettings()
         self._lock = threading.Lock()
         self._model_locks: Dict[str, threading.Lock] = {}
+        # One inference lock per loaded model, never one for the whole process:
+        # two models pinned to different GPUs (see the ``device`` key in the
+        # catalog) have nothing to serialize against each other, while a single
+        # model still serves one batch at a time so its latency stays flat.
+        self._inference_locks: Dict[str, threading.Lock] = {}
         self._embedders: Dict[str, Dict[str, Any]] | None = None
         self._rerankers: Dict[str, Dict[str, Any]] | None = None
         self._loaded: Dict[str, Any] = {}
@@ -170,6 +175,10 @@ class ModelRegistry:
         if not os.path.isdir(path):
             raise ModelConfigError(f"{kind} model '{name}' path not found: {path}")
 
+        # ``device`` is passed through to the loader untouched, so any torch
+        # device string works per model: "cpu", "cuda", "cuda:1", "cuda:2".
+        # Nothing validates it — a typo fails at load with the torch error,
+        # which is more useful than a second, narrower vocabulary here.
         device = entry.get("device") or "cpu"
         load_kwargs = {"device": device, "trust_remote_code": True}
 
@@ -186,6 +195,23 @@ class ModelRegistry:
             return model
 
         raise ValueError(f"unknown model kind: {kind}")
+
+    def inference_lock(self, kind: str, name: str) -> threading.Lock:
+        """
+        Lock guarding inference on one model.
+
+        Deliberately per model. A catalog may pin the embedder to ``cuda:1``
+        and the reranker to ``cuda:2``; a process-wide lock would run those two
+        device queues one after the other and throw away the separation the
+        ``device`` values were chosen for.
+        """
+        key = f"{kind}:{name}"
+        with self._lock:
+            lock = self._inference_locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                self._inference_locks[key] = lock
+            return lock
 
     def warm(self, kind: str | None = None) -> Dict[str, str]:
         """

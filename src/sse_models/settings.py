@@ -74,10 +74,6 @@ class ModelServiceSettings:
             env.get("SSE_MODELS_RERANK_MAX_DOCUMENTS"), 256
         )
 
-        # Torch dtype used when loading models.  ``auto`` lets the loader pick
-        # (fp32 on CPU, bf16 on CUDA); pin e.g. ``float16`` on a GPU.
-        self.torch_dtype = env.get("SSE_MODELS_TORCH_DTYPE", "auto").strip().lower()
-
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------

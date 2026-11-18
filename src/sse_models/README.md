@@ -106,6 +106,36 @@ The model catalog is the **same** `configs/embedders.json` and
 and per-model `device`. A model the engine knows is a model the service can
 serve; a model deactivated there is not served here either.
 
+### Model placement (device)
+
+The `device` key is a **per-model** torch device string, passed to the loader
+untouched. Any string torch accepts works: `cpu`, `cuda`, `cuda:1`, `cuda:2`.
+
+```json
+{ "name": "google/embeddinggemma-300m", "path": "/models/embeddinggemma-300m",
+  "device": "cuda:1" }
+{ "name": "qwen/Qwen3-Reranker-0.6", "path": "/models/Qwen3-Reranker-0.6B",
+  "device": "cuda:2" }
+```
+
+Two models pinned to different GPUs are independent: inference on one is locked
+**per model, not per process**, so an embed batch on `cuda:1` and a rerank batch
+on `cuda:2` run at the same time. (Before that, a single process-wide lock
+serialized every model against every other, which would have made the whole
+point of splitting them across GPUs meaningless.)
+
+Notes:
+
+* A `device` of `cuda:N` is only as good as the GPUs actually present and
+  visible to the process. `CUDA_VISIBLE_DEVICES` **remaps** the indices — with
+  `CUDA_VISIBLE_DEVICES=1,2`, `cuda:1` is the *second* GPU in that list, not
+  GPU number 1.
+* There is no validation: a typo (`cuda:7` on a two-GPU box) fails at load with
+  the torch error, surfaced as `500` on that model's endpoint while the rest
+  keep serving.
+* Pinning is per **catalog entry**, i.e. per model, and is honored by the
+  engine's in-process path too — same `device` key, same value, either side.
+
 ---
 
 ## 4. Pointing the engine at it
@@ -185,9 +215,11 @@ The role only gates what is *served*; a model is loaded on first use unless
 `SSE_MODELS_WARM_MODELS=1`, which loads before the port is bound so a load
 balancer never sees a ready-but-cold instance.
 
-**One batch at a time.** Inference in a process is guarded by a lock: two
-concurrent batches on one model mostly queue on the device and inflate latency
-for both. Scale with replicas, not with concurrency.
+**One batch per model.** Each model's inference is guarded by its own lock:
+two concurrent batches on the *same* model mostly queue on the device and
+inflate latency for both, so one model serves one batch at a time. Different
+models — and especially different GPUs — do not wait on each other. Scale a
+single model with replicas, not with concurrency.
 
 **Security.** `SSE_MODELS_API_TOKEN` is a shared secret, not identity: it stops
 casual use, not an attacker. The service returns model output, never file paths
@@ -229,6 +261,7 @@ pytest src/sse_models/tests/test_api.py -q          # 21 tests, no ML stack need
 
 They run against fake embedder/reranker objects, so they cover the contract —
 status codes, auth, role gating, ordering, index mapping, `top_n`, limits —
-without loading a model. The engine side is covered by
+without loading a model. `test_registry.py` covers catalog handling, per-model
+`device` pass-through and the per-model inference lock. The engine side is covered by
 `src/sse_api/engine/tests/test_model_backend.py` (17 tests: the factory, name
 resolution, payload shapes, the circuit breaker and the fallback).

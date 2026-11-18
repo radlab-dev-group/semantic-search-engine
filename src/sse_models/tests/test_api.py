@@ -6,6 +6,8 @@ reranker objects, so the tests cover the contract (status codes, ordering,
 index mapping, auth, limits) rather than the numerics.
 """
 
+import threading
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -51,6 +53,8 @@ class FakeRegistry:
     def __init__(self, embedder=None, reranker=None) -> None:
         self.embedder = embedder or FakeEmbedder()
         self.reranker = reranker or FakeReranker()
+        self._locks = {}
+        self._locks_guard = threading.Lock()
 
     def get(self, kind, name):
         if kind == "embedder" and name == EMBED_MODEL:
@@ -80,6 +84,15 @@ class FakeRegistry:
 
     def errors(self):
         return {}
+
+    def inference_lock(self, kind, name):
+        import threading
+
+        key = f"{kind}:{name}"
+        with self._locks_guard:
+            if key not in self._locks:
+                self._locks[key] = threading.Lock()
+            return self._locks[key]
 
 
 def _client(**kwargs) -> TestClient:

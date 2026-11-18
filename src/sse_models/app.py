@@ -25,7 +25,6 @@ Design notes
 """
 
 import logging
-import threading
 import time
 from typing import Optional
 
@@ -97,10 +96,6 @@ def create_app(
     )
     app.state.settings = settings
     app.state.registry = registry
-    # A torch forward pass releases the GIL, but two concurrent batches on one
-    # model mostly queue on the device and inflate latency for both.  Serving
-    # one batch at a time keeps p99 predictable; scale with replicas instead.
-    app.state.inference_lock = threading.Lock()
 
     auth = [Depends(_require_token(settings))]
 
@@ -175,7 +170,7 @@ def create_app(
 
         start = time.perf_counter()
         try:
-            with app.state.inference_lock:
+            with registry.inference_lock("embedder", payload.model):
                 vectors = model.encode(
                     sentences=payload.texts,
                     normalize_embeddings=normalize,
@@ -261,7 +256,7 @@ def create_app(
 
         start = time.perf_counter()
         try:
-            with app.state.inference_lock:
+            with registry.inference_lock("reranker", payload.model):
                 scores = model.predict(pairs, **predict_kwargs)
         except Exception as exc:  # noqa: BLE001 - report, keep the server alive
             logger.exception("reranking failed for model=%s", payload.model)
