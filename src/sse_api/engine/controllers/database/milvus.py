@@ -1,16 +1,12 @@
 import os
 import copy
 import json
-import torch
 
 from typing import List, Dict, Any
 
-from sentence_transformers import SentenceTransformer
-from sentence_transformers.cross_encoder import CrossEncoder
-
-
-from pymilvus.exceptions import MilvusException  # type: ignore[import-untyped]
 from sse_api.core.constants import get_logger
+from sse_api.engine.core.models.backend import build_backend, service_enabled
+from pymilvus.exceptions import MilvusException  # type: ignore[import-untyped]
 from pymilvus import (
     db,
     MilvusClient,
@@ -132,6 +128,9 @@ class MilvusHandler:
         self._is_connected = False
         self._reranker_model = None
         self._embedder_model = None
+        # Built lazily on first use: with the model service disabled this is a
+        # plain local backend, with it enabled a remote one (see backend.py).
+        self._model_backend = None
         self._schema_fields = None
         self._milvus_client = None
         self._collection = None
@@ -151,10 +150,13 @@ class MilvusHandler:
         if load_collection_and_schema:
             self.__get_add_collection_and_schema()
 
-        if load_embedder:
+        # When the model service is on the models live in another process and
+        # there is nothing to load here: skip the eager embedder load so the
+        # engine starts without the model stack at all.
+        if load_embedder and not service_enabled():
             self.__load_embedder_model_from_path()
 
-        if load_reranker:
+        if load_reranker and not service_enabled():
             self.__load_reranker_model_from_path()
 
     @property
@@ -458,13 +460,9 @@ class MilvusHandler:
         :param texts: List of texts to prepare embeddings
         :return: List of prepared embeddings
         """
-        with torch.no_grad():
-            texts_embeddings = self._embedder_model.encode(
-                sentences=texts,
-                normalize_embeddings=self._normalize_embeddings,
-                show_progress_bar=False,
-            )
-        return texts_embeddings
+        return self.model_backend.embed(
+            texts, normalize=self._normalize_embeddings
+        )
 
     def search(
         self,
@@ -637,15 +635,17 @@ class MilvusHandler:
     def _rerank_search_results(
         self, search_text: str, all_queries_results: list
     ) -> list:
-        if self._reranker_model is None:
-            raise Exception("Reranker model is not loaded")
-
         re_results = []
         for query_results in all_queries_results:
-            ce_texts_pairs = []
-            for result in query_results:
-                ce_texts_pairs.append([search_text, result[self.DB_FIELD_TEXT]])
-            ce_query_result = self._reranker_model.predict(ce_texts_pairs)
+            candidate_texts = [
+                result[self.DB_FIELD_TEXT] for result in query_results
+            ]
+            # The backend answers with one score per candidate, in the order
+            # they were sent; the sort below stays the single place where the
+            # ranking is decided, whichever backend produced the scores.
+            ce_query_result = self.model_backend.rerank_scores(
+                search_text, candidate_texts
+            )
             sorted_ce_query_result = sorted(
                 {idx: r for idx, r in enumerate(ce_query_result)}.items(),
                 key=lambda item: item[1],
@@ -861,7 +861,43 @@ class MilvusHandler:
             )
 
     # ----------------------------------------------------------------------------
+    @property
+    def model_backend(self):
+        """
+        Backend used for embedding and reranking.
+
+        Created on first use and reused afterwards.  It wraps this handler's
+        own models unless the model service is enabled, in which case the
+        models live in another process and the handlers here are only the
+        fallback.
+        """
+        if self._model_backend is None:
+            self._model_backend = build_backend(
+                embedder_provider=self.__embedder_model_or_load,
+                reranker_provider=self.__reranker_model_or_load,
+                embedder_model_path=self.embedder_model_path,
+                reranker_model_path=self.reranker_model_path,
+                normalize_embeddings=self._normalize_embeddings,
+            )
+        return self._model_backend
+
+    def __embedder_model_or_load(self):
+        """Return the in-process embedder, loading it only when really needed."""
+        if self._embedder_model is None and self.embedder_model_path is not None:
+            self.__load_embedder_model_from_path()
+        return self._embedder_model
+
+    def __reranker_model_or_load(self):
+        """Return the in-process reranker, loading it only when really needed."""
+        if self._reranker_model is None and self.reranker_model_path is not None:
+            self._load_reranker_model_from_path()
+        return self._reranker_model
+
     def __load_embedder_model_from_path(self):
+        # Imported here rather than at module level so an engine that delegates
+        # inference to the model service never loads torch.
+        from sentence_transformers import SentenceTransformer
+
         if self.embedder_model_path is None:
             raise Exception("Embedder model path must be set!")
 
@@ -888,8 +924,18 @@ class MilvusHandler:
         return self._embedder_model
 
     def _load_reranker_model_from_path(self):
+        from sentence_transformers import CrossEncoder
+
         if self.reranker_model_path is None:
             raise Exception("Reranker model path must be set!")
+
+        # With the model service enabled the reranker is served from there, so
+        # the callers that used to warm an in-process copy get nothing loaded
+        # and nothing waits on a multi-second model load.  The in-process copy
+        # is still available to RemoteBackend as a fallback, which loads it
+        # through __reranker_model_or_load only if the service fails.
+        if service_enabled() and self._reranker_model is None:
+            return None
 
         if self._reranker_model is None:
             if self.use_cached_models:

@@ -1,0 +1,546 @@
+"""
+backend.py
+----------
+
+Backend abstraction for the two model operations the search engine performs:
+embedding texts and reranking ``query``/``passage`` pairs.
+
+Two implementations
+-------------------
+``LocalBackend``
+    Loads the models in the engine process with ``sentence_transformers``.
+    This is the historical behaviour and stays the default: nothing changes
+    when the feature is off.
+
+``RemoteBackend``
+    Calls the standalone model service (``sse_models``) over HTTP.  The models
+    then live outside the engine, so they can sit on a GPU box, scale per
+    operation and reload without restarting the engine.
+
+Both return the same shapes, so ``MilvusHandler`` does not care which one it
+has.  ``build_backend()`` decides from the environment.
+
+Why a fallback rather than a hard failure
+-----------------------------------------
+Reranking is an enhancement: a search that skips it still returns results, one
+that raises returns nothing.  When the service is unreachable the
+``RemoteBackend`` therefore degrades to the local backend (when a fallback is
+configured) and, failing that, reports the failure to the caller, which is
+already built to treat a missing rerank as non-fatal.  A short circuit-breaker
+cooldown keeps a dead service from adding a timeout to every single query.
+"""
+
+from __future__ import annotations
+
+import os
+import threading
+import time
+from typing import Any, Callable, Iterable, List, Optional, Sequence
+
+from sse_api.core.constants import get_logger
+
+# ----------------------------------------------------------------------
+# environment
+# ----------------------------------------------------------------------
+#: Master switch for the whole feature.  Off by default: the engine keeps
+#: loading its models in-process exactly as before.
+ENV_MODEL_SERVICE_ENABLED = "SSE_MODEL_SERVICE_ENABLED"
+#: Base url of the model service, e.g. ``http://192.168.100.70:8280``.
+ENV_MODEL_SERVICE_URL = "SSE_MODEL_SERVICE_URL"
+#: Shared secret sent as ``Authorization: Bearer`` (optional).
+ENV_MODEL_SERVICE_TOKEN = "SSE_MODEL_SERVICE_TOKEN"
+#: Overall request timeout.  A remote embed/rerank must never outlive the
+#: engine's own search budget by more than this.
+ENV_MODEL_SERVICE_TIMEOUT = "SSE_MODEL_SERVICE_TIMEOUT_SECONDS"
+#: Separate connect timeout: a service that is simply not there should be
+#: recognised in milliseconds, not after the full read timeout.
+ENV_MODEL_SERVICE_CONNECT_TIMEOUT = "SSE_MODEL_SERVICE_CONNECT_TIMEOUT_SECONDS"
+#: Explicit model names to send to the service.  When unset, the engine's
+#: configured model path is resolved against configs/embedders.json and
+#: configs/rerankers.json to find the right name.
+ENV_MODEL_SERVICE_EMBED_MODEL = "SSE_MODEL_SERVICE_EMBED_MODEL"
+ENV_MODEL_SERVICE_RERANK_MODEL = "SSE_MODEL_SERVICE_RERANK_MODEL"
+#: Fall back to in-process models when the service fails.
+ENV_MODEL_SERVICE_FALLBACK_LOCAL = "SSE_MODEL_SERVICE_FALLBACK_LOCAL"
+#: Seconds to stop calling the service after a failure (circuit breaker).
+ENV_MODEL_SERVICE_COOLDOWN = "SSE_MODEL_SERVICE_COOLDOWN_SECONDS"
+#: How many consecutive failures trip the breaker.
+ENV_MODEL_SERVICE_FAILURE_THRESHOLD = "SSE_MODEL_SERVICE_FAILURE_THRESHOLD"
+
+DEFAULT_TIMEOUT_SECONDS = 30.0
+DEFAULT_CONNECT_TIMEOUT_SECONDS = 3.0
+DEFAULT_COOLDOWN_SECONDS = 30.0
+DEFAULT_FAILURE_THRESHOLD = 3
+
+
+class ModelBackendError(Exception):
+    """A model operation could not be completed by any available backend."""
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+# ----------------------------------------------------------------------
+# protocol
+# ----------------------------------------------------------------------
+class ModelBackend:
+    """
+    Operations the engine needs from an embedder and a reranker.
+
+    ``embed`` returns one vector per input text, in input order.
+    ``rerank_scores`` returns one score per input text, in input order — the
+    caller sorts, so the backend never reorders or drops a candidate.
+    """
+
+    def embed(
+        self, texts: Sequence[str], normalize: Optional[bool] = None
+    ) -> List[List[float]]:
+        raise NotImplementedError
+
+    def rerank_scores(self, query: str, texts: Sequence[str]) -> List[float]:
+        raise NotImplementedError
+
+    def describe(self) -> str:
+        """Short human-readable summary for the logs."""
+        return self.__class__.__name__
+
+
+# ----------------------------------------------------------------------
+# local
+# ----------------------------------------------------------------------
+class LocalBackend(ModelBackend):
+    """
+    In-process backend wrapping already-loaded model objects.
+
+    It takes zero-argument callables that return the model rather than the
+    models themselves: ``MilvusHandler`` loads an embedder eagerly and a
+    reranker lazily (only when a query asks for reranking), and the backend
+    must not disturb that ordering.
+    """
+
+    def __init__(
+        self,
+        embedder_provider: Optional[Callable[[], Any]] = None,
+        reranker_provider: Optional[Callable[[], Any]] = None,
+        normalize_embeddings: bool = True,
+        label: str = "local",
+    ) -> None:
+        self._embedder_provider = embedder_provider
+        self._reranker_provider = reranker_provider
+        self._normalize_embeddings = normalize_embeddings
+        self._label = label
+        self._logger = get_logger()
+
+    def embed(
+        self, texts: Sequence[str], normalize: Optional[bool] = None
+    ) -> List[List[float]]:
+        import torch
+
+        if self._embedder_provider is None:
+            raise ModelBackendError("no embedder model configured")
+
+        model = self._embedder_provider()
+        if model is None:
+            raise ModelBackendError("embedder model is not loaded")
+
+        do_normalize = (
+            self._normalize_embeddings if normalize is None else bool(normalize)
+        )
+        with torch.no_grad():
+            vectors = model.encode(
+                sentences=list(texts),
+                normalize_embeddings=do_normalize,
+                show_progress_bar=False,
+            )
+        return [[float(value) for value in row] for row in vectors]
+
+    def rerank_scores(self, query: str, texts: Sequence[str]) -> List[float]:
+        if self._reranker_provider is None:
+            raise ModelBackendError("no reranker model configured")
+
+        model = self._reranker_provider()
+        if model is None:
+            raise ModelBackendError("reranker model is not loaded")
+
+        pairs = [[query, text] for text in texts]
+        scores = model.predict(pairs)
+        return [float(score) for score in scores]
+
+    def describe(self) -> str:
+        return f"local({self._label})"
+
+
+# ----------------------------------------------------------------------
+# remote
+# ----------------------------------------------------------------------
+class RemoteBackend(ModelBackend):
+    """
+    Backend that calls the standalone model service over HTTP.
+
+    Failures are counted; once ``failure_threshold`` consecutive failures have
+    happened the backend opens its circuit for ``cooldown_seconds`` and goes
+    straight to the fallback instead of paying a timeout on every query.  With
+    no fallback configured the error is raised to the caller.
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        embed_model: str,
+        rerank_model: Optional[str] = None,
+        api_token: Optional[str] = None,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
+        cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS,
+        failure_threshold: int = DEFAULT_FAILURE_THRESHOLD,
+        fallback: Optional[ModelBackend] = None,
+        session: Any = None,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._embed_model = embed_model
+        self._rerank_model = rerank_model
+        self._api_token = api_token or ""
+        self._timeout = (connect_timeout, timeout)
+        self._cooldown = cooldown_seconds
+        self._failure_threshold = failure_threshold
+        self._fallback = fallback
+
+        self._logger = get_logger()
+        self._session = session
+        self._lock = threading.Lock()
+        self._failures = 0
+        self._circuit_open_until = 0.0
+        # Failures are logged once per state change, not once per query: a dead
+        # service under live traffic would otherwise flood the log.
+        self._last_error_logged = False
+
+    # ------------------------------------------------------------------
+    @property
+    def circuit_open(self) -> bool:
+        return time.monotonic() < self._circuit_open_until
+
+    def _http(self):
+        if self._session is None:
+            import requests
+
+            self._session = requests.Session()
+        return self._session
+
+    def _headers(self) -> dict:
+        headers = {"Content-Type": "application/json"}
+        if self._api_token:
+            headers["Authorization"] = f"Bearer {self._api_token}"
+        return headers
+
+    def _record_success(self) -> None:
+        with self._lock:
+            if self._failures:
+                self._logger.info("model service recovered: %s", self._base_url)
+            self._failures = 0
+            self._circuit_open_until = 0.0
+            self._last_error_logged = False
+
+    def _record_failure(self, message: str) -> None:
+        with self._lock:
+            self._failures += 1
+            if self._failures >= self._failure_threshold:
+                self._circuit_open_until = time.monotonic() + self._cooldown
+                self._failures = 0
+            if not self._last_error_logged:
+                self._last_error_logged = True
+                self._logger.warning(
+                    "model service call failed (%s); using %s",
+                    message,
+                    "local fallback" if self._fallback else "no fallback",
+                )
+
+    def _call(self, path: str, payload: dict) -> dict:
+        """POST to the service, translating transport and HTTP errors."""
+        url = f"{self._base_url}{path}"
+        try:
+            response = self._http().post(
+                url, json=payload, headers=self._headers(), timeout=self._timeout
+            )
+        except Exception as exc:  # requests.* — connection/timeout problems
+            raise ModelBackendError(f"{url} unreachable: {exc}") from exc
+
+        if response.status_code == 404:
+            # Unknown model name is a configuration error, not a service
+            # outage.  It still opens the circuit (see _is_config_error): the
+            # answer cannot change between two queries, so repeating the call
+            # only adds latency to every search.
+            raise ModelBackendError(
+                f"model service rejected the model: {self._detail(response)}"
+            )
+        if response.status_code in (401, 403):
+            raise ModelBackendError(
+                f"model service refused the token: {self._detail(response)}"
+            )
+        if response.status_code >= 400:
+            raise ModelBackendError(
+                f"{url} responded {response.status_code}: {self._detail(response)}"
+            )
+
+        try:
+            return response.json()
+        except Exception as exc:  # malformed body
+            raise ModelBackendError(f"{url} returned a non-JSON body") from exc
+
+    @staticmethod
+    def _detail(response: Any) -> str:
+        try:
+            body = response.json()
+        except Exception:
+            return (response.text or "")[:200]
+        if isinstance(body, dict):
+            return str(body.get("detail") or body)[:200]
+        return str(body)[:200]
+
+    def _is_config_error(self, error: ModelBackendError) -> bool:
+        """
+        True when retrying cannot possibly help.
+
+        A rejected model name or token is a misconfiguration: the service will
+        answer the same way to the next call, so the circuit opens immediately
+        instead of after ``failure_threshold`` identical round-trips.
+        """
+        text = str(error)
+        return "rejected the model" in text or "refused the token" in text
+
+    # ------------------------------------------------------------------
+    def embed(
+        self, texts: Sequence[str], normalize: Optional[bool] = None
+    ) -> List[List[float]]:
+        payload = {
+            "model": self._embed_model,
+            "texts": list(texts),
+        }
+        if normalize is not None:
+            payload["normalize"] = bool(normalize)
+        data = self._run("/v1/embed", payload)
+        vectors = data.get("embeddings")
+        if not isinstance(vectors, list) or len(vectors) != len(texts):
+            raise ModelBackendError(
+                "model service returned an unexpected embedding payload"
+            )
+        return [list(map(float, row)) for row in vectors]
+
+    def rerank_scores(self, query: str, texts: Sequence[str]) -> List[float]:
+        if not self._rerank_model:
+            raise ModelBackendError(
+                "no reranker model name configured for the service"
+            )
+
+        payload = {
+            "model": self._rerank_model,
+            "query": query,
+            "documents": list(texts),
+        }
+        data = self._run("/v1/rerank", payload)
+        results = data.get("results")
+        if not isinstance(results, list):
+            raise ModelBackendError(
+                "model service returned an unexpected rerank payload"
+            )
+
+        # The service returns hits sorted best-first with their original index;
+        # rebuild the input order so the caller's own sort stays authoritative.
+        scores: List[Optional[float]] = [None] * len(texts)
+        for hit in results:
+            index = hit.get("index")
+            if isinstance(index, int) and 0 <= index < len(texts):
+                scores[index] = float(hit.get("score", 0.0))
+        if any(score is None for score in scores):
+            raise ModelBackendError(
+                "model service returned scores for only part of the candidates"
+            )
+        return [float(score) for score in scores]  # type: ignore[arg-type]
+
+    def _run(self, path: str, payload: dict) -> dict:
+        if self.circuit_open:
+            return self._degrade(
+                ModelBackendError("model service circuit is open"), path, payload
+            )
+        try:
+            data = self._call(path, payload)
+        except ModelBackendError as exc:
+            if self._is_config_error(exc):
+                self._open_circuit()
+            else:
+                self._record_failure(str(exc))
+            return self._degrade(exc, path, payload)
+        self._record_success()
+        return data
+
+    def _open_circuit(self) -> None:
+        with self._lock:
+            self._circuit_open_until = time.monotonic() + self._cooldown
+
+    def _degrade(self, error: ModelBackendError, path: str, payload: dict) -> dict:
+        if self._fallback is None:
+            raise error
+        # The fallback answers locally, so nothing more is sent to the service.
+        if path == "/v1/embed":
+            return {"embeddings": self._fallback.embed(payload["texts"])}
+        return {
+            "results": [
+                {"index": index, "score": score}
+                for index, score in enumerate(
+                    self._fallback.rerank_scores(
+                        payload["query"], payload["documents"]
+                    )
+                )
+            ]
+        }
+        if path == "/v1/embed":
+            return {"embeddings": self._fallback.embed(payload["texts"])}
+        return {
+            "results": [
+                {"index": index, "score": score}
+                for index, score in enumerate(
+                    self._fallback.rerank_scores(
+                        payload["query"], payload["documents"]
+                    )
+                )
+            ]
+        }
+
+    def describe(self) -> str:
+        return f"remote({self._base_url}, embed={self._embed_model})"
+
+
+# ----------------------------------------------------------------------
+# factory
+# ----------------------------------------------------------------------
+def service_enabled() -> bool:
+    """True when the engine should reach models through the model service."""
+    return _env_bool(ENV_MODEL_SERVICE_ENABLED, False) and bool(
+        os.environ.get(ENV_MODEL_SERVICE_URL, "").strip()
+    )
+
+
+def resolve_model_name(kind: str, model_path: Optional[str]) -> Optional[str]:
+    """
+    Map a model *path* back to its catalog *name*.
+
+    The engine configures collections by filesystem path while the model
+    service addresses models by the name in ``configs/embedders.json`` /
+    ``configs/rerankers.json``.  Looking the path up in the already-loaded
+    config gives the right name without a second mapping to maintain.  The
+    directory name is the fallback when a path is not in the catalog.
+    """
+    if not model_path:
+        return None
+
+    try:  # imported lazily: pulls Django settings, which must stay optional here
+        from sse_api.engine.core.config.models_config import (
+            ALL_AVAILABLE_EMBEDDERS_MODELS,
+            ALL_AVAILABLE_RERANKERS_MODELS,
+        )
+    except Exception:  # pragma: no cover - config layer unavailable
+        catalog = {}
+    else:
+        catalog = (
+            ALL_AVAILABLE_EMBEDDERS_MODELS
+            if kind == "embedder"
+            else ALL_AVAILABLE_RERANKERS_MODELS
+        )
+
+    normalized = os.path.normpath(model_path)
+    for name, entry in catalog.items():
+        entry_path = entry.get("path")
+        if entry_path and os.path.normpath(entry_path) == normalized:
+            return name
+
+    return os.path.basename(normalized) or None
+
+
+def build_backend(
+    embedder_provider: Optional[Callable[[], Any]] = None,
+    reranker_provider: Optional[Callable[[], Any]] = None,
+    embedder_model_path: Optional[str] = None,
+    reranker_model_path: Optional[str] = None,
+    normalize_embeddings: bool = True,
+) -> ModelBackend:
+    """
+    Build the backend the environment asks for.
+
+    With the feature off (the default) this returns a :class:`LocalBackend`
+    wrapping the given providers, which is exactly the pre-existing behaviour.
+    With it on, a :class:`RemoteBackend` is returned; it keeps the local
+    providers as an optional fallback so a service outage degrades latency and
+    quality rather than breaking search.
+    """
+    local = LocalBackend(
+        embedder_provider=embedder_provider,
+        reranker_provider=reranker_provider,
+        normalize_embeddings=normalize_embeddings,
+    )
+
+    if not service_enabled():
+        return local
+
+    base_url = os.environ.get(ENV_MODEL_SERVICE_URL, "").strip().rstrip("/")
+    embed_model = os.environ.get(
+        ENV_MODEL_SERVICE_EMBED_MODEL
+    ) or resolve_model_name("embedder", embedder_model_path)
+    rerank_model = os.environ.get(
+        ENV_MODEL_SERVICE_RERANK_MODEL
+    ) or resolve_model_name("reranker", reranker_model_path)
+
+    if not embed_model:
+        # Nothing to address on the service side; better to stay local and say
+        # so than to send a request the service cannot serve.
+        get_logger().warning(
+            "%s is on but no embedder model name could be resolved for %s; "
+            "continuing with in-process models",
+            ENV_MODEL_SERVICE_ENABLED,
+            embedder_model_path,
+        )
+        return local
+
+    return RemoteBackend(
+        base_url=base_url,
+        embed_model=embed_model,
+        rerank_model=rerank_model,
+        api_token=os.environ.get(ENV_MODEL_SERVICE_TOKEN, "").strip(),
+        timeout=_env_float(ENV_MODEL_SERVICE_TIMEOUT, DEFAULT_TIMEOUT_SECONDS),
+        connect_timeout=_env_float(
+            ENV_MODEL_SERVICE_CONNECT_TIMEOUT, DEFAULT_CONNECT_TIMEOUT_SECONDS
+        ),
+        cooldown_seconds=_env_float(
+            ENV_MODEL_SERVICE_COOLDOWN, DEFAULT_COOLDOWN_SECONDS
+        ),
+        failure_threshold=_env_int(
+            ENV_MODEL_SERVICE_FAILURE_THRESHOLD, DEFAULT_FAILURE_THRESHOLD
+        ),
+        fallback=(
+            local if _env_bool(ENV_MODEL_SERVICE_FALLBACK_LOCAL, True) else None
+        ),
+    )
