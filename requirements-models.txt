@@ -1,0 +1,35 @@
+# =========================================================
+# Model service (src/sse_models) — standalone dependencies.
+#
+# Install this on the host that RUNS the model service. It is deliberately a
+# separate file from requirements.txt: the service does not import Django,
+# pymilvus or the engine, so a GPU inference host does not have to carry the
+# web/DB stack, and the engine host does not have to carry the models.
+#
+#   pip install -r requirements-models.txt
+#   python -m sse_models            # or: ./run.sh models
+#
+# The ENGINE side needs nothing extra: RemoteBackend talks HTTP over `requests`,
+# which the engine already depends on transitively (it is pinned here as well so
+# an engine host that only calls the service still has it).
+# =========================================================
+
+# --- HTTP layer ---
+fastapi>=0.109,<1.0
+uvicorn>=0.23,<1.0
+requests>=2.31,<3.0
+
+# --- model stack ---
+# Same packages the engine uses in-process; the service is the only place that
+# loads them once the feature is on.
+#
+# NOTE on sentence-transformers: models saved by a newer release may need it —
+# Qwen3-Reranker-0.6B, for example, ships its scoring head as a
+# `...cross_encoder.modules.logit_score.LogitScore` module that only
+# sentence-transformers >= 5.x understands. With an older release the model
+# still loads, but the scoring head is rebuilt with RANDOM weights and the
+# scores are meaningless. Check the load log for
+# "Some weights ... were not initialized" and upgrade if you see it.
+torch>=2.0
+sentence-transformers>=3.4
+transformers>=4.51
