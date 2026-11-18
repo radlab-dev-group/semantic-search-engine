@@ -87,6 +87,13 @@ pip install -r requirements-models.txt      # no Django, no pymilvus
 python -m sse_models                        # or ./run.sh models
 ```
 
+> **`.env` wins over the command line.** `run.sh` sources `.env` with `set -a`,
+> so a value already in `.env` (for example `SSE_MODELS_PORT=8280`, which the
+> template ships) overrides the same variable you pass in front of the command:
+> `SSE_MODELS_PORT=8331 ./run.sh models` still binds 8280. Edit the `.env`
+> line, or run `python -m sse_models` directly, when you want a one-off value.
+
+
 Everything is configured by environment variables (`sse_models/settings.py`):
 
 | Variable | Default | Meaning |

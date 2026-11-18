@@ -139,7 +139,7 @@ while (( $# > 0 )); do
     --collection)  shift; [[ $# -gt 0 ]] || { err "--collection requires a collection name"; exit 1; }; COSINE_COLLECTIONS+=("$1") ;;
     --index)       shift; [[ $# -gt 0 ]] || { err "--index requires a value (HNSW|IVF_FLAT)"; exit 1; }; COSINE_INDEX="$1" ;;
     -h|--help|help) CMD="help" ;;
-    all|setup|infra|init|cosine|config|start|up|down|clean|status) CMD="$1" ;;
+    all|setup|infra|init|cosine|config|start|up|down|clean|status|models) CMD="$1" ;;
     worker) CMD="$1" ;;
     *) warn "Unknown option: $1 (showing help)"; CMD="help" ;;
   esac
@@ -634,6 +634,17 @@ models() {
   step "Model service (embedder + reranker) → http://${SSE_MODELS_HOST:-0.0.0.0}:${SSE_MODELS_PORT:-8280}/docs"
   [[ -d "$API_DIR/src/sse_models" ]] || { err "Missing src/sse_models/"; exit 1; }
   [[ "$NO_VENV" == "1" ]] || activate_venv
+  # The service is a separate deliverable: it needs its own dependencies
+  # (fastapi, uvicorn) plus the model stack, which are NOT in the engine's
+  # requirements.txt.  Check before starting, so the user reads this instead of
+  # a ModuleNotFoundError traceback out of half-imported code.
+  if ! python -c "import fastapi, uvicorn" >/dev/null 2>&1; then
+    err "The model service needs dependencies this interpreter ($(command -v python)) does not have."
+    err "  Install them:     pip install -r requirements-models.txt"
+    err "  Or leave the venv (system python): ./run.sh models --no-venv"
+    exit 1
+  fi
+
   log "role=${SSE_MODELS_ROLE:-all} warm_models=${SSE_MODELS_WARM_MODELS:-0} config=$CONFIG_DIR"
   ( cd "$API_DIR" && PYTHONPATH="$API_DIR/src" SSE_CONFIG_DIR="$CONFIG_DIR" python -m sse_models )
 }
