@@ -4,7 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
-| [Unreleased](#unreleased) | Lexical-only search: a `search_with_options` request may answer from the full-text leg alone (`"lexical_only": true`), with no embedding of the query and no vector store round trip, and report the rank of the text index as its `score_scale` (`"fts"`). The option is validated by the API, understood by `sse_lib.SearchOptions`, and takes precedence over `hybrid_search` |
+| [0.1.8](#018) | Standalone model service (`src/sse_models`) with `POST /v1/embed` / `POST /v1/rerank`, run with `./run.sh models` or `./run-models.sh`: the engine can delegate embedding and reranking to it (`SSE_MODEL_SERVICE_ENABLED`) with a circuit breaker and in-process fallback, or run inference on another machine entirely. Keyword filters in search (`options.keywords` with `keywords_match: "and"` / `"any"`), lexical-only search (`"lexical_only": true` answers from the full-text leg alone, `score_scale: "fts"`), a `POST update_knowledge_quality` endpoint with monotonic per-document upvote/downvote counters, and `model_embedder` / `model_reranker` in `GET collections` |
 | [0.1.7](#017) | Deletion of user chats: `POST delete_chat` (also accepted as `DELETE`, `chat_id` / `chat_ids[]`), `ChatDeletionController`, and `sse_lib.SSEClient.delete_chat` (`endpoints.DELETE_CHAT`). Deleting a collection also removes messages and states of its chats cleanly. Chat history (`GET chats` and `GET get_chat_by_hash`) now serializes messages with `DeepMessageSerializer` (including `state` with RAG responses, answers, and citations) and `collection_name` |
 | [0.1.6](#016) | Conversational RAG with memory: the generator sees the previous questions **and** answers, follow-up questions are rewritten into standalone retrieval queries (new `POST rewrite_query`), answers carry numbered source citations (`citations`, per-chat numbering, `answer_source`/`rewritten_query` in the reply) and short commands ("make it a table", "shorten", "translate") reuse the previous sources without a new search. Every search hit and citation carries the chunk's identity and position (`text_id`, `document_id`, `char_start`, `char_end`); `GET document_content?text_id=` opens exactly the chunk's page with a `highlight`. `sse_lib`: `rewrite_query()`, `generative_answer_with_citations()`, `document_content(text_id=...)` and the new reply/citation fields |
 | [0.1.5](#015) | `./run.sh start` now runs the REST API on **gunicorn** (`src/sse_api/run-rest-api-gunicorn.sh`, the same environment and port `8271` as `run-api.sh`; flags `--port`, `--bind`, `--workers`). `./run.sh down` stops **every** SSE process (worker, API) and `./run.sh status` lists them; the bundled Milvus moves to `v3.0.5`. Default chunking of a collection: **400 tokens** per chunk with a **60-token overlap** (was 500 with no overlap) |
@@ -16,25 +16,111 @@ All notable changes to the Semantic Search Engine are documented in this file.
 | [0.0.1](#001) | Initial version |
 
 
-## [Unreleased]
+## [0.1.8]
 
 ### Added
+
+#### API — model service (embedding / reranking)
+- `src/sse_models`: embedding and reranking as a separate process, so
+  inference can run on another machine (a GPU box), scale per operation,
+  and reload a model without restarting the engine. One service, two
+  endpoints — `POST /v1/embed` (texts to vectors) and `POST /v1/rerank`
+  (query plus candidates to relevance scores, answered best-first with the
+  `index` of each document in the request restored) — plus `GET /v1/models`
+  (the served catalog with load state), `GET /healthz` and `GET /readyz`.
+  Models are addressed by name, never by path: a request sends
+  `google/embeddinggemma-300m` and the service resolves it against
+  `configs/embedders.json` / `configs/rerankers.json`; nothing can ask it
+  to load an arbitrary directory. Roles (`all` / `embed` / `rerank`) let
+  one host serve both operations or split them across hosts, and a
+  per-model inference lock keeps a shared model from being asked twice at
+  once.
+- Run it with `./run.sh models` (venv by default, `--no-venv` to use the
+  current interpreter; fails fast when a dependency of the service is
+  missing) or `./run-models.sh` (tries the interpreters in turn until one
+  can import the service, applies its flags after `.env`, so a flag always
+  wins; `--host`, `--port`, `--role`, `--warm`, `--dry-run`, `--config-dir`,
+  `--token`). Dependencies live in `requirements-models.txt` — no Django,
+  no pymilvus.
+- `ModelBackend` (`engine/core/models/backend.py`): the engine's embedding
+  and reranking go through a small interface with two implementations —
+  `LocalBackend`, the in-process models (the historical behaviour), and
+  `RemoteBackend`, HTTP to the model service with a connect/read timeout
+  split, a circuit breaker (`SSE_MODEL_SERVICE_FAILURE_THRESHOLD` +
+  `SSE_MODEL_SERVICE_COOLDOWN_SECONDS`) and degrade-to-fallback: a dead
+  service costs one timeout, not one per query, and a rejected model or
+  token opens the circuit immediately. `build_backend()` is feature-flagged:
+  `SSE_MODEL_SERVICE_ENABLED` off (the default) returns `LocalBackend`, and
+  with it on the model name is resolved from the collection's path via the
+  already-loaded config catalog, so there is no second mapping to maintain.
+- `MilvusHandler` delegates `prepare_embeddings` and
+  `_rerank_search_results` to the backend; with the service on, the eager
+  model loads are skipped (the models live in the other process) and the
+  `torch` / `sentence_transformers` imports move out of module level, so an
+  engine that delegates inference never loads the model stack at import
+  time.
+- Configuration (`.env`, all optional, off by default): for the engine
+  `SSE_MODEL_SERVICE_ENABLED`, `SSE_MODEL_SERVICE_URL`,
+  `SSE_MODEL_SERVICE_TOKEN`, `SSE_MODEL_SERVICE_TIMEOUT_SECONDS`,
+  `SSE_MODEL_SERVICE_CONNECT_TIMEOUT_SECONDS`,
+  `SSE_MODEL_SERVICE_FALLBACK_LOCAL`, `SSE_MODEL_SERVICE_FAILURE_THRESHOLD`,
+  `SSE_MODEL_SERVICE_COOLDOWN_SECONDS`; for the service process
+  `SSE_MODELS_HOST`, `SSE_MODELS_PORT`, `SSE_MODELS_ROLE`,
+  `SSE_MODELS_API_TOKEN`, `SSE_MODELS_WARM_MODELS`,
+  `SSE_MODELS_RERANK_MAX_DOCUMENTS`, `SSE_MODELS_LOG_LEVEL`. Per-model
+  placement is the `device` key of the config catalog
+  (`cpu` / `cuda` / `cuda:1` ...; `CUDA_VISIBLE_DEVICES` remaps the
+  indices, so `cuda:1` is the Nth GPU in that list, not GPU number N).
+
+#### API — keyword filters
+- `options.keywords`: a list of nonempty strings that replaces `query_str`
+  **only in the PostgreSQL full-text leg**. Each entry is parsed as a plain
+  `SearchQuery`, so `["pool timeout", "TypeError"]` means
+  `(pool AND timeout) OR TypeError` after language-dependent tokenization —
+  keywords are lexical terms, not exact-string or path filters. The vector
+  branch, the reranker question and the RRF merge are unchanged: the
+  keywords steer which candidates the FTS leg contributes, nothing else.
+- `options.keywords_match`: `"and"` (omitted, the default) requires every
+  keyword entry to match; `"any"` requires at least one. Any other value —
+  `"all"`, `"or"`, `"AND"`, an empty string, `null` — is rejected by
+  validation, even when hybrid search is off. The boolean match is enforced
+  with the FTS `@@` operator before `SearchRank` scores the candidates,
+  because a rank is a score, not a match constraint.
+- `keywords` and `keywords_match` are persisted in
+  `UserQuery.query_options` alongside `query_str`; no schema migration.
+
+#### API — knowledge quality update
+- **`POST update_knowledge_quality`** (`collection_name`, `document_name`,
+  `upvotes`, `downvotes`) — owner-only update of the monotonic quality
+  counters in a document's `metadata_json`: every request adds to the
+  counters, never replaces them, and no arbitrary metadata is writable
+  through the endpoint. The write is row-locked and transactional, so
+  concurrent updates of the same document cannot lose each other, and the
+  counters persist across re-indexing without any re-embedding.
 
 #### API — lexical-only search
 - A `search_with_options` request may now answer from the full-text leg
   alone: `"lexical_only": true` in `options` skips the embedding of the
   query and the vector store entirely and ranks the chunks with the
-  Postgres full-text rank, which a request answers better than a cosine
-  when it is literal — an exception class, an identifier, a config key.
-  The answer reports `score_scale: "fts"`, the one scale the rest of the
-  pipeline did not already use, and a reranker over a lexical search is a
-  reranker: it overwrites the scale it is given.
+  Postgres full-text rank, which answers a literal question better than a
+  cosine when it is literal — an exception class, an identifier, a config
+  key. The answer reports `score_scale: "fts"`, the one scale the rest of
+  the pipeline did not already use, and a reranker over a lexical search is
+  a reranker: it overwrites the scale it is given.
 - The option is a boolean of the search options like every other switch,
   so `"true"` that arrives as a string is not a string the controller has
   to guess at. It takes precedence over `hybrid_search`, because asking
   for both is asking to skip the vectors.
 
+#### API — collections
+- `GET collections` reports `model_embedder` and `model_reranker` of each
+  collection — the models its vectors were built with, which is what a
+  client needs to know before it moves the collection to another index.
+
 #### `sse_lib`
+- `SearchOptions.keywords` and `SearchOptions.keywords_match`: the client
+  sends keyword filters the same way it sends any other search option, and
+  says nothing when it did not set them.
 - `SearchOptions.lexical_only`: the client asks for it the same way it
   asks for `hybrid_search`, and says nothing when it did not set it.
 
@@ -44,6 +130,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
   and a reranker over any of them `"reranker"`.  The new scale is clamped
   to `[0, 1]` like a raw rank, because a Postgres `SearchRank` is already
   on that scale and there is nothing to squash.
+
 
 ## [0.1.7]
 

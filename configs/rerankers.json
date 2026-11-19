@@ -10,7 +10,7 @@
       "name": "qwen/Qwen3-Reranker-0.6",
       "path": "/mnt/data2/llms/models/community/qwen/Qwen3-Reranker-0.6B",
       "max_model_length": 32000,
-      "device": "cpu"
+      "device": "cuda:1"
     },
     {
       "name": "BAAI/bge-reranker-v2-m3",
@@ -20,8 +20,8 @@
     }
   ],
   "active_models": [
-    "radlab/polish-cross-encoder",
     "qwen/Qwen3-Reranker-0.6",
-    "BAAI/bge-reranker-v2-m3"
+    "BAAI/bge-reranker-v2-m3",
+    "radlab/polish-cross-encoder"
   ]
 }
