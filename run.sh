@@ -18,6 +18,8 @@
 #   ./run.sh worker          # run the Celery worker (indexing queue) in the foreground
 #   ./run.sh models          # run the model service (embedder + reranker) in the
 #                            # foreground → SSE_MODELS_HOST:PORT (see src/sse_models/)
+#                            # see also ./run-models.sh — it picks an interpreter that
+#                            # has the model stack, and its flags beat .env
 #   ./run.sh down            # stop ALL the SSE processes (worker, API) and remove the containers;
 #                            # THE DATA VOLUMES ARE KEPT
 #   ./run.sh clean           # like down, but it also removes the volumes (postgres_data, milvus_data, rabbitmq_data)
@@ -26,6 +28,7 @@
 #
 # Flags:
 #   --no-venv        do not create/use a venv (use the system python/pip)
+#                    also leaves a venv activated in the calling shell
 #   --no-infra       skip starting PG/Milvus/RabbitMQ (assume they are already running)
 #   --no-init        skip the migrations/initialization (step 6)
 #   --skip-server    in "all": do not start the server after the setup (exit after the initialization)
@@ -186,6 +189,29 @@ activate_venv() {
       return 0
     fi
   done
+}
+
+# "--no-venv" must also leave a venv that the calling shell has activated.
+# Skipping activate_venv is not enough: the inherited PATH still keeps
+# "$VIRTUAL_ENV/bin" in front, so "python" stays the venv interpreter and the
+# flag changes nothing — the user then reads "leave the venv: --no-venv",
+# runs it, and gets the very same error again.
+leave_venv() {
+  [[ -n "${VIRTUAL_ENV:-}" ]] || return 0
+  local venv="$VIRTUAL_ENV"
+  local venv_bin="$venv/bin"
+  PATH=":$PATH:"
+  # the loop: two neighbouring copies of the entry share one colon, so a single
+  # substitution would leave one of them behind
+  while [[ "$PATH" == *":$venv_bin:"* ]]; do
+    PATH="${PATH//:$venv_bin:/:}"
+  done
+  PATH="${PATH#:}"
+  PATH="${PATH%:}"
+  export PATH
+  unset VIRTUAL_ENV
+  hash -r 2>/dev/null || true
+  log "--no-venv: left the venv activated by your shell ($venv); python is now $(command -v python || echo 'not found')"
 }
 
 # The processes of the SSE: the worker of the indexing queue and the API server.
@@ -737,7 +763,7 @@ help() {
 # ---------- dispatch ----------
 load_env
 apply_celery_defaults
-[[ "$NO_VENV" == "1" ]] || activate_venv
+if [[ "$NO_VENV" == "1" ]]; then leave_venv; else activate_venv; fi
 case "$CMD" in
   all)
     setup

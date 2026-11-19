@@ -87,6 +87,19 @@ pip install -r requirements-models.txt      # no Django, no pymilvus
 python -m sse_models                        # or ./run.sh models
 ```
 
+`./run-models.sh` is a launcher for people who do not want to remember which
+interpreter has the stack: it tries the project venv and the system python
+until one imports `fastapi`/`uvicorn`, and it applies its flags *after* `.env`,
+so they win over the file.
+
+```bash
+./run-models.sh                             # interpreter and port from .env
+./run-models.sh --port 8281 --role rerank   # flags override .env
+./run-models.sh --warm                      # load the models before binding
+./run-models.sh --dry-run                   # show what would run
+./run-models.sh --help                      # every flag and its variable
+```
+
 > **`.env` wins over the command line.** `run.sh` sources `.env` with `set -a`,
 > so a value already in `.env` (for example `SSE_MODELS_PORT=8280`, which the
 > template ships) overrides the same variable you pass in front of the command:
