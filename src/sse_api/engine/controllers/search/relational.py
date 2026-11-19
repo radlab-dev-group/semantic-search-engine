@@ -1,5 +1,7 @@
 from collections import defaultdict
 
+from sse_api.data.core.knowledge_extensions import build_fts_query
+
 from django.contrib.postgres.search import SearchVector, SearchQuery, SearchRank
 from sse_api.data.models import CollectionOfDocuments, DocumentPageText, Document
 from sse_api.data.controllers.chunk_offsets import chunk_offsets_for_texts
@@ -310,6 +312,8 @@ class DBTextSearchController:
         filters: dict = None,
         language: str = None,
         only_used_to_search: bool = True,
+        keywords: list[str] | None = None,
+        keywords_match: str = "and",
     ) -> list:
         """
         Perform a full-text search in PostgreSQL using FTS functionality.
@@ -329,6 +333,11 @@ class DBTextSearchController:
         only_used_to_search : bool, default True
             Limit to the chunks of the documents enabled in the search
             (``Document.use_in_search=True``).
+
+        keywords : list[str], optional
+            Replace query_str for FTS. Each entry is parsed as a plain query.
+        keywords_match : str, default "and"
+            AND between entries; "any" uses OR. No effect without keywords.
 
         Returns
         -------
@@ -365,7 +374,15 @@ class DBTextSearchController:
             "text_str", weight="A", config=lang_config
         ) + SearchVector("text_str_clear", weight="B", config=lang_config)
 
-        query = SearchQuery(query_str, config=lang_config)
+        query = build_fts_query(
+            query_str, keywords, keywords_match, lang_config, SearchQuery
+        )
+        if keywords:
+            # SearchRank is a score, not a boolean match constraint. Enforce
+            # the requested AND/OR via @@ before ranking keyword candidates.
+            queryset = queryset.annotate(keyword_vector=vector).filter(
+                keyword_vector=query
+            )
 
         results = (
             queryset.annotate(rank=SearchRank(vector, query))

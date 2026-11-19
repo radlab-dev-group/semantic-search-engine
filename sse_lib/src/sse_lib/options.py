@@ -49,6 +49,9 @@ class SearchOptions:
     categories: Optional[List[str]] = None
     documents: Optional[List[str]] = None
     relative_paths: Optional[List[str]] = None
+    keywords: Optional[List[str]] = None
+    #: AND by omission; "any" ORs the plain queries of keyword entries.
+    keywords_match: Optional[str] = None
     relative_path_contains: Optional[List[str]] = None
     metadata_filters: Optional[List[Dict[str, Any]]] = None
     templates: Optional[int] = None
@@ -58,6 +61,10 @@ class SearchOptions:
     rerank_max_results: Optional[int] = None
     return_with_factored_fields: Optional[bool] = None
     hybrid_search: Optional[bool] = None
+    #: Run the full-text leg alone: no embedding of the query, no vector store.
+    #: Answers a literal question -- an exception class, an identifier -- and
+    #: wins over ``hybrid_search`` when both are given.
+    lexical_only: Optional[bool] = None
     min_similarity: Optional[float] = None
     rrf_k: Optional[int] = None
     use_and_operator: Optional[bool] = None

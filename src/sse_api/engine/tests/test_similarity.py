@@ -70,9 +70,12 @@ from sse_api.engine.controllers.search.semantic import (  # noqa: E402
 )
 from sse_api.engine.core.search_engine import (  # noqa: E402
     SCORE_SCALE_COSINE,
+    SCORE_SCALE_FTS,
     SCORE_SCALE_RAW,
     SCORE_SCALE_RERANKER,
     SCORE_SCALE_RRF,
+    normalize_relevance,
+    retrieval_score_scale,
     SearchEngineCore,
     get_accumulated_docs_by_rank_perc,
     normalize_relevance,
@@ -674,3 +677,50 @@ def test_search_engine_core_stats_use_the_rrf_scale_for_hybrid_results():
     # the shares of the *displayed* (filtered) documents sum up to 1.0
     total = sum(res["score_weighted_scaled"] for res in stats.values())
     assert math.isclose(total, 1.0, rel_tol=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Lexical-only search: the full-text leg alone
+# ---------------------------------------------------------------------------
+
+
+def test_lexical_only_reports_the_fts_scale():
+    """
+    A search that ran the text index alone is read as a text-index search.
+
+    The scale is how a consumer tells the score of a hit: a reranker logit
+    and a cosine similarity must not be printed as if they were a full-text
+    rank, and a full-text rank must not be printed as if it were a cosine.
+    """
+    assert retrieval_score_scale(lexical_only=True) == SCORE_SCALE_FTS
+    # Reranking overwrites what it is given, so it wins over the leg that ran.
+    assert retrieval_score_scale(rerank=True, lexical_only=True) == (
+        SCORE_SCALE_RERANKER
+    )
+    # A plain vector search still reports a cosine, not a full-text rank.
+    assert retrieval_score_scale() == SCORE_SCALE_COSINE
+
+
+def test_lexical_only_normalizes_the_rank_it_was_given():
+    """
+    A Postgres SearchRank is already on [0, 1], so it is clamped, not
+    re-mapped: unlike a reranker logit there is nothing to squash.
+    """
+    assert normalize_relevance(0.42, SCORE_SCALE_FTS) == 0.42
+    assert normalize_relevance(-0.1, SCORE_SCALE_FTS) == 0.0
+    assert normalize_relevance(1.5, SCORE_SCALE_FTS) == 1.0
+
+
+def test_the_lexical_only_option_is_valid_search_option():
+    """
+    The endpoint accepts the option and coerces it to a boolean, the same way
+    it already does for every other search switch: a "true" that arrives as a
+    string must not reach the controller as a string.
+    """
+    from sse_api.core.validation import search_options
+
+    value = search_options({"lexical_only": "true"})
+    assert value["lexical_only"] is True
+    # An option the endpoint does not know is not silently dropped by this
+    # function: it is passed through, and a missing key stays missing.
+    assert "lexical_only" not in search_options({"max_results": 5})

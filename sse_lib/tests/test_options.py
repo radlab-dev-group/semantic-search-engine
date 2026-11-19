@@ -49,6 +49,16 @@ class SearchOptionsTest(unittest.TestCase):
         options = SearchOptions(hybrid_search=False)
         self.assertEqual(json.loads(options.to_json()), {"hybrid_search": False})
 
+    def test_lexical_only_is_sent_when_set(self):
+        """
+        A client that answers from the text index alone says so in the payload,
+        and says nothing when it did not set the switch: an unset option is not
+        a false, it is absence.
+        """
+        options = SearchOptions(lexical_only=True)
+        self.assertEqual(json.loads(options.to_json()), {"lexical_only": True})
+        self.assertNotIn("lexical_only", SearchOptions().to_dict())
+
 
 class IndexingOptionsTest(unittest.TestCase):
     def test_all_keys_required_by_the_server_are_present(self):

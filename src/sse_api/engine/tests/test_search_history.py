@@ -151,7 +151,9 @@ class SearchHistoryApiTests(TestCase):
         self.assertEqual(second["answers"][0]["generation_time"], 1.2)
 
     def test_list_search_history_filtered_by_collection(self):
-        request = self.factory.get("/api/search_history", {"collection_name": "col1"})
+        request = self.factory.get(
+            "/api/search_history", {"collection_name": "col1"}
+        )
         force_authenticate(request, user=self.user1)
         response = ListOfSearchHistory.as_view()(request)
 
@@ -193,9 +195,7 @@ class SearchHistoryApiTests(TestCase):
             entry["detailed_results"]["0"]["text_str"],
             "Semantic search uses embeddings.",
         )
-        self.assertEqual(
-            entry["generated_answer"], "Semantic search finds meaning."
-        )
+        self.assertEqual(entry["generated_answer"], "Semantic search finds meaning.")
         self.assertEqual(
             entry["generated_answer_translated"],
             "Wyszukiwanie semantyczne znajduje znaczenie.",

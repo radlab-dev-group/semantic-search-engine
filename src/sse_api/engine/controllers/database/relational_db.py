@@ -780,9 +780,7 @@ def _delete_collection_chats(collection: CollectionOfDocuments) -> int:
 
     chat_model = apps.get_model("chat", "Chat")
     chat_ids = list(
-        chat_model.objects.filter(collection=collection).values_list(
-            "pk", flat=True
-        )
+        chat_model.objects.filter(collection=collection).values_list("pk", flat=True)
     )
     if not chat_ids:
         return 0

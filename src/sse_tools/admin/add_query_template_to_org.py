@@ -41,14 +41,9 @@ def main(argv=None):
         if isinstance(kc_config.default_organisation, dict)
         else str(kc_config.default_organisation or "RadLab")
     )
-    organisation = sys_controller.get_organisation(
-        organisation_name=org_name
-    )
+    organisation = sys_controller.get_organisation(organisation_name=org_name)
     if organisation is None:
-        raise Exception(
-            f"Organisation {org_name} "
-            f"not found in database!"
-        )
+        raise Exception(f"Organisation {org_name} " f"not found in database!")
 
     print(
         f"Found organisation {organisation.name} "

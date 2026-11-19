@@ -73,13 +73,15 @@ class UploadMetadataTests(EndpointInputMixin, TestCase):
                     return SimpleNamespace(
                         load=lambda **options: None,
                         documents=[
-                            SimpleNamespace(as_dict={
-                                "filepath": str(paths[0]),
-                                "relative_filepath": self.name,
-                                "category": "reader category",
-                                "options": {"reader_option": True},
-                                "pages": [],
-                            })
+                            SimpleNamespace(
+                                as_dict={
+                                    "filepath": str(paths[0]),
+                                    "relative_filepath": self.name,
+                                    "category": "reader category",
+                                    "options": {"reader_option": True},
+                                    "pages": [],
+                                }
+                            )
                         ],
                     )
 
@@ -92,7 +94,9 @@ class UploadMetadataTests(EndpointInputMixin, TestCase):
                     )
                     self.assertTrue(response.data["status"], response.data)
                     job = IndexingJob.objects.latest("pk")
-                    self.assertEqual(job.request_payload["file_metadata"], self.metadata)
+                    self.assertEqual(
+                        job.request_payload["file_metadata"], self.metadata
+                    )
                     if asynchronous:
                         dispatch.assert_called_once()
                         indexing_pipeline.run_prepare(
@@ -108,7 +112,10 @@ class UploadMetadataTests(EndpointInputMixin, TestCase):
 
     def test_invalid_metadata_rejected_before_storage_or_dispatch(self):
         for metadata in (
-            "{", "null", "[]", "{}",
+            "{",
+            "null",
+            "[]",
+            "{}",
             json.dumps({"missing.txt": {"category": "doc", "options": {}}}),
             json.dumps({self.name: {"category": [], "options": {}}}),
         ):
@@ -133,9 +140,11 @@ class UploadMetadataTests(EndpointInputMixin, TestCase):
                 SimpleNamespace(
                     as_dict={
                         "filepath": str(path),
-                        "relative_filepath": "nested/report.txt"
-                        if path.parent.name == "nested"
-                        else "other/report.txt",
+                        "relative_filepath": (
+                            "nested/report.txt"
+                            if path.parent.name == "nested"
+                            else "other/report.txt"
+                        ),
                         "category": "",
                         "options": {},
                         "pages": [],

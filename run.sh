@@ -16,6 +16,10 @@
 #   ./run.sh start|up        # run the API server (gunicorn, src/sse_api/run-rest-api-gunicorn.sh)
 #                            # in the foreground → http://0.0.0.0:8271/api/ (step 7)
 #   ./run.sh worker          # run the Celery worker (indexing queue) in the foreground
+#   ./run.sh models          # run the model service (embedder + reranker) in the
+#                            # foreground → SSE_MODELS_HOST:PORT (see src/sse_models/)
+#                            # see also ./run-models.sh — it picks an interpreter that
+#                            # has the model stack, and its flags beat .env
 #   ./run.sh down            # stop ALL the SSE processes (worker, API) and remove the containers;
 #                            # THE DATA VOLUMES ARE KEPT
 #   ./run.sh clean           # like down, but it also removes the volumes (postgres_data, milvus_data, rabbitmq_data)
@@ -24,6 +28,7 @@
 #
 # Flags:
 #   --no-venv        do not create/use a venv (use the system python/pip)
+#                    also leaves a venv activated in the calling shell
 #   --no-infra       skip starting PG/Milvus/RabbitMQ (assume they are already running)
 #   --no-init        skip the migrations/initialization (step 6)
 #   --skip-server    in "all": do not start the server after the setup (exit after the initialization)
@@ -78,7 +83,7 @@ API_DIR="$ROOT_DIR"
 CONFIG_DIR="$ROOT_DIR/configs"
 VENV_DIR="$ROOT_DIR/.venv"
 PY_PREFERRED="python3.11"
-MILVUS_IMAGE="milvusdb/milvus:v3.0.5"
+MILVUS_IMAGE="milvusdb/milvus:v3.0.6"
 
 export PYTHONPATH="${ROOT_DIR}/src:${ROOT_DIR}/sse_lib/src:${PYTHONPATH:-}"
 export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-sse_api.config.settings}"
@@ -137,7 +142,7 @@ while (( $# > 0 )); do
     --collection)  shift; [[ $# -gt 0 ]] || { err "--collection requires a collection name"; exit 1; }; COSINE_COLLECTIONS+=("$1") ;;
     --index)       shift; [[ $# -gt 0 ]] || { err "--index requires a value (HNSW|IVF_FLAT)"; exit 1; }; COSINE_INDEX="$1" ;;
     -h|--help|help) CMD="help" ;;
-    all|setup|infra|init|cosine|config|start|up|down|clean|status) CMD="$1" ;;
+    all|setup|infra|init|cosine|config|start|up|down|clean|status|models) CMD="$1" ;;
     worker) CMD="$1" ;;
     *) warn "Unknown option: $1 (showing help)"; CMD="help" ;;
   esac
@@ -184,6 +189,29 @@ activate_venv() {
       return 0
     fi
   done
+}
+
+# "--no-venv" must also leave a venv that the calling shell has activated.
+# Skipping activate_venv is not enough: the inherited PATH still keeps
+# "$VIRTUAL_ENV/bin" in front, so "python" stays the venv interpreter and the
+# flag changes nothing — the user then reads "leave the venv: --no-venv",
+# runs it, and gets the very same error again.
+leave_venv() {
+  [[ -n "${VIRTUAL_ENV:-}" ]] || return 0
+  local venv="$VIRTUAL_ENV"
+  local venv_bin="$venv/bin"
+  PATH=":$PATH:"
+  # the loop: two neighbouring copies of the entry share one colon, so a single
+  # substitution would leave one of them behind
+  while [[ "$PATH" == *":$venv_bin:"* ]]; do
+    PATH="${PATH//:$venv_bin:/:}"
+  done
+  PATH="${PATH#:}"
+  PATH="${PATH%:}"
+  export PATH
+  unset VIRTUAL_ENV
+  hash -r 2>/dev/null || true
+  log "--no-venv: left the venv activated by your shell ($venv); python is now $(command -v python || echo 'not found')"
 }
 
 # The processes of the SSE: the worker of the indexing queue and the API server.
@@ -628,6 +656,25 @@ worker() {
   ( cd "$API_DIR" && SSE_CONFIG_DIR="$CONFIG_DIR" celery "${CELERY_WORKER_ARGS[@]}" )
 }
 
+models() {
+  step "Model service (embedder + reranker) → http://${SSE_MODELS_HOST:-0.0.0.0}:${SSE_MODELS_PORT:-8280}/docs"
+  [[ -d "$API_DIR/src/sse_models" ]] || { err "Missing src/sse_models/"; exit 1; }
+  [[ "$NO_VENV" == "1" ]] || activate_venv
+  # The service is a separate deliverable: it needs its own dependencies
+  # (fastapi, uvicorn) plus the model stack, which are NOT in the engine's
+  # requirements.txt.  Check before starting, so the user reads this instead of
+  # a ModuleNotFoundError traceback out of half-imported code.
+  if ! python -c "import fastapi, uvicorn" >/dev/null 2>&1; then
+    err "The model service needs dependencies this interpreter ($(command -v python)) does not have."
+    err "  Install them:     pip install -r requirements-models.txt"
+    err "  Or leave the venv (system python): ./run.sh models --no-venv"
+    exit 1
+  fi
+
+  log "role=${SSE_MODELS_ROLE:-all} warm_models=${SSE_MODELS_WARM_MODELS:-0} config=$CONFIG_DIR"
+  ( cd "$API_DIR" && PYTHONPATH="$API_DIR/src" SSE_CONFIG_DIR="$CONFIG_DIR" python -m sse_models )
+}
+
 down() {
   step "Stop: stopping and removing the PG + Milvus + RabbitMQ containers (the volumes are kept)"
   stop_worker
@@ -716,7 +763,7 @@ help() {
 # ---------- dispatch ----------
 load_env
 apply_celery_defaults
-[[ "$NO_VENV" == "1" ]] || activate_venv
+if [[ "$NO_VENV" == "1" ]]; then leave_venv; else activate_venv; fi
 case "$CMD" in
   all)
     setup
@@ -735,6 +782,7 @@ case "$CMD" in
   config) config ;;
   start|up) start ;;
   worker) worker ;;
+  models) models ;;
   down)   down ;;
   clean)  clean ;;
   status) status ;;

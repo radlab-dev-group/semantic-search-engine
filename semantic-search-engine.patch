@@ -1,0 +1,548 @@
+diff --git a/README-pl.md b/README-pl.md
+index f76891d..967eb6d 100644
+--- a/README-pl.md
++++ b/README-pl.md
+@@ -120,6 +120,66 @@ przeszukiwaniem wyszukiwarki semantycznej. Słownik ten posiada pola:
+   Wyniki z podobieństwem poniżej tego progu są odrzucane, dlatego zapytanie
+   może zwrócić pusty zbiór wyników.
+ 
++
++### Słowa kluczowe: `keywords` i `keywords_match`
++
++`options.keywords` jest opcjonalną listą niepustych napisów. Gdy lista jest
++niepusta, zastępuje `query_str` **wyłącznie w gałęzi PostgreSQL FTS**. Embedding
++zapytania i cross-encoder nadal korzystają z `query_str`. Nie powstaje trzecia
++lista wyników.
++
++`options.keywords_match` dopuszcza dokładnie dwie wartości:
++
++* brak pola lub `"and"` — AND pomiędzy wpisami listy keywords;
++* `"any"` — OR pomiędzy wpisami listy keywords.
++
++Domyślny tryb to **AND**. Nie ma automatycznej zmiany na OR dla długiej listy.
++Inne wartości (np. `"all"`, `"or"`, `"AND"`, pusty napis lub `null`) są odrzucane
++przez walidację. Boolean FTS jest sprawdzany przed rankingiem `SearchRank`.
++Każdy wpis jest bezpiecznie parsowany przez `SearchQuery(..., search_type="plain")`:
++przy `keywords=["pool timeout", "TypeError"]` i `keywords_match="any"` otrzymamy
++`(pool AND timeout) OR TypeError`, po analizie językowej PostgreSQL. Jeśli OR ma
++łączyć pojedyncze słowa, należy podać je jako osobne elementy listy.
++
++```json
++{
++  "collection_name": "MyCollection",
++  "query_str": "Napraw timeout podczas pobierania połączenia z puli",
++  "options": {
++    "hybrid_search": true,
++    "keywords": ["ConnectionTimeoutError", "acquire", "pool"],
++    "keywords_match": "any",
++    "rerank_results": true,
++    "max_results": 15
++  }
++}
++```
++
++| Opcje | Semantycznie | FTS | Łączenie |
++|---|---|---|---|
++| Hybrid, brak/puste keywords | `query_str` | `query_str`, dotychczasowe plain FTS | RRF |
++| Hybrid, keywords, brak trybu lub `and` | `query_str` | AND pomiędzy keywords | RRF |
++| Hybrid, keywords, tryb `any` | `query_str` | OR pomiędzy keywords | RRF |
++| `hybrid_search: false` | `query_str` | Nie jest uruchamiany | Bez RRF |
++
++RRF nadaje obu gałęziom takie same wagi; przy włączonym rerankerze końcowa
++kolejność jest następnie ustalana względem `query_str`. Bez niepustej listy
++keywords tryb `any` nie zmienia zwykłego FTS po `query_str`. Niepoprawny enum
++jest jednak odrzucany również przy wyłączonym hybrid.
++
++Keywords podlegają tokenizacji, normalizacji i usuwaniu stop-słów zgodnie z
++konfiguracją językową PostgreSQL. Nie są literalnym dopasowaniem całego napisu
++ani filtrem ścieżki. Wymagane ograniczenia dokumentów należy wyrażać filtrami.
++`keywords_match` nie jest tym samym co `use_and_operator` — ten drugi parametr
++łączy rodziny filtrów dokumentów, a nie słowa wyszukiwania.
++
++Historia pozostaje w tym samym rekordzie `UserQuery`: `query_str` w
++`query_str_prompt`, a przesłane `keywords` i `keywords_match` w istniejącym
++JSONField `query_options`. Nie trzeba wykonywać migracji schematu bazy.
++W zaktualizowanym kliencie Python można użyć
++`SearchOptions(keywords=[...], keywords_match="any")` lub słownika opcji.
++
++
+ W polu `stats` (statystyki na poziomie dokumentu) każdy wynik z chunka jest
+ najpierw normalizowany do przedziału `[0, 1]` -- w zależności od etapu
+ wyszukiwania jest to podobieństwo cosine, wartość RRF lub logit
+diff --git a/README.md b/README.md
+index 4af3933..3d49a03 100644
+--- a/README.md
++++ b/README.md
+@@ -614,6 +614,7 @@ each app.
+ | `GET`  | `/api/collections/`            | List collections visible to the user, with the counters of their documents.      |
+ | `POST` | `/api/upload_and_index_files/` | Upload files (multipart) and trigger indexing.                                  |
+ | `POST` | `/api/search_with_options/`    | Perform a **Hybrid Search** (vector + text) with rich filtering options.        |
++| `POST` | `/api/update_knowledge_quality/` | Owner-only monotonic knowledge quality counters; updates existing document metadata without re-embedding. |
+ | `POST` | `/api/generative_answer/`      | Generate a RAG answer for a previously stored query response (optionally with numbered `citations`). |
+ | `POST` | `/api/rewrite_query/`          | Rewrite a follow-up question into a standalone retrieval query.                 |
+ | `GET`  | `/api/question_templates/`     | List available query‑template collections.                                      |
+@@ -871,6 +872,57 @@ The `search_with_options` endpoint expects a JSON payload with:
+ }
+ ```
+ 
++#### Keywords and lexical matching
++
++`options.keywords` optionally replaces `query_str` **only in PostgreSQL full-text
++search**. It does not add a third retrieval branch or change the embedding or
++reranker question. `options.keywords_match` accepts exactly `"and"` or `"any"`:
++
++- omitted or `"and"`: all keyword entries must match (AND);
++- `"any"`: at least one keyword entry must match (OR).
++
++Other values, including `"all"`, `"or"`, `"AND"` and `null`, are rejected as invalid
++API input. The default remains AND for backward compatibility. Keyword matching
++is enforced with the FTS boolean match operator before applying `SearchRank`.
++Each entry is parsed as a **plain** PostgreSQL query, not raw `tsquery` syntax:
++`["pool timeout", "TypeError"]` with `"any"` means `(pool AND timeout) OR TypeError`
++after language-dependent tokenization and normalization. Punctuation, stop words
++and paths are processed by PostgreSQL; keywords are not exact-string/path filters.
++Use a single-word entry per alternative if OR between individual words is desired.
++
++```json
++{
++  "collection_name": "MyCollection",
++  "query_str": "Fix timeout when acquiring an async database connection",
++  "options": {
++    "hybrid_search": true,
++    "keywords": ["ConnectionTimeoutError", "acquire", "pool"],
++    "keywords_match": "any",
++    "rerank_results": true,
++    "max_results": 15
++  }
++}
++```
++
++| Options | Vector branch | FTS branch | Merge |
++|---|---|---|---|
++| Hybrid, keywords omitted/empty | `query_str` | `query_str`, historical plain query | RRF |
++| Hybrid, keywords, mode omitted/`and` | `query_str` | keyword entries joined by AND | RRF |
++| Hybrid, keywords, mode `any` | `query_str` | keyword entries joined by OR | RRF |
++| `hybrid_search: false` | `query_str` | Not run; keywords/mode have no search effect | No RRF |
++
++The two branches contribute equally to RRF. If reranking is enabled, the
++cross-encoder subsequently ranks merged candidates against `query_str`.
++Without nonempty keywords, `keywords_match` does not alter the historical plain
++FTS query. Validation of the enum still applies, even when hybrid search is off.
++
++`query_str` is persisted in `UserQuery.query_str_prompt`; supplied `keywords`
++and `keywords_match` are persisted in the existing JSON `UserQuery.query_options`.
++No database schema migration is needed. In the Python client, use the updated
++`SearchOptions(keywords=[...], keywords_match="any")`, or pass an options mapping.
++`keywords_match` is independent of `use_and_operator`, which combines document
++filter families, not lexical terms.
++
+ Key concepts:
+ 
+ - **Categories** – map to the `category` field of `Document`.
+diff --git a/src/sse_api/core/validation.py b/src/sse_api/core/validation.py
+index 9a2fec3..07085bc 100644
+--- a/src/sse_api/core/validation.py
++++ b/src/sse_api/core/validation.py
+@@ -136,6 +136,7 @@ def search_options(value):
+         "documents_names",
+         "relative_paths",
+         "relative_path_contains",
++        "keywords",
+     ):
+         if key in value and value[key] is not None:
+             if not isinstance(value[key], list):
+@@ -148,6 +149,20 @@ def search_options(value):
+             value["templates"] = [identifier(item) for item in templates]
+         else:
+             value["templates"] = identifier(templates)
++    if "keywords_match" in value:
++        from sse_api.data.core.knowledge_extensions import keyword_match_mode
++        value["keywords_match"] = keyword_match_mode(value["keywords_match"])
++    groups = value.get("metadata_filter_groups", [])
++    if not isinstance(groups, list) or len(groups) > 8:
++        raise ValueError("Expected up to eight metadata filter groups")
++    for group in groups:
++        if not isinstance(group, list) or not 1 <= len(group) <= 32:
++            raise ValueError("Expected nonempty metadata filter group")
++        for expr in group:
++            if (not isinstance(expr, dict) or expr.get("operator") not in
++                    ("eq", "ne", "in", "hse", "gt", "lt", "ge", "le")
++                    or not isinstance(expr.get("field"), dict) or len(expr["field"]) != 1):
++                raise ValueError("Invalid metadata expression")
+     return value
+ 
+ 
+diff --git a/src/sse_api/data/api.py b/src/sse_api/data/api.py
+index 037e883..8ebe34a 100644
+--- a/src/sse_api/data/api.py
++++ b/src/sse_api/data/api.py
+@@ -1014,3 +1014,34 @@ class SetDocumentsUseInSearch(APIView):
+             error_name=None,
+             response_body=result.as_dict(),
+         )
++
++
++class UpdateKnowledgeQuality(APIView):
++    """Monotonic quality counters; never permit arbitrary metadata updates."""
++    required_params = ["collection_name", "document_name", "upvotes", "downvotes"]
++    input_validators = {"collection_name": required_text, "document_name": required_text}
++
++    @required_params_exists(required_params=required_params)
++    @get_organisation_user
++    @get_default_language
++    def post(self, language, organisation_user, request, *args, **kwargs):
++        from django.db import transaction
++        params = request_params(request)
++        up, down = params.get("upvotes"), params.get("downvotes")
++        if any(type(v) is not int or v < 0 or v > 10**12 for v in (up, down)):
++            return error_response(INVALID_PARAMS, language)
++        collection = CollectionOfDocuments.objects.filter(
++            name=params["collection_name"], created_by=organisation_user).first()
++        if collection is None:
++            return error_response(COLLECTION_NOT_FOUND, language)
++        with transaction.atomic():
++            documents = list(Document.objects.select_for_update().filter(
++                collection=collection, name=params["document_name"]))
++            if not documents:
++                return error_response(DOCUMENT_NOT_FOUND, language)
++            for document in documents:
++                from sse_api.data.core.knowledge_extensions import merge_quality
++                document.metadata_json = merge_quality(document.metadata_json, up, down)
++                document.save(update_fields=["metadata_json"])
++        return response_with_status(status=True, language=language,
++                                    error_name=None, response_body={"updated": len(documents)})
+diff --git a/src/sse_api/data/urls.py b/src/sse_api/data/urls.py
+index 0c3b184..3606769 100644
+--- a/src/sse_api/data/urls.py
++++ b/src/sse_api/data/urls.py
+@@ -15,10 +15,13 @@ from sse_api.data.api import (
+     DeleteCollection,
+     SetDocumentsUseInSearch,
+     IndexingStatus,
++    UpdateKnowledgeQuality,
+ )
+ from sse_api.core.constants import prepare_api_url
+ 
+ urlpatterns = [
++    path(prepare_api_url("update_knowledge_quality"), UpdateKnowledgeQuality.as_view(),
++         name="update_knowledge_quality"),
+     path(
+         prepare_api_url("new_collection"),
+         NewCollection.as_view(),
+diff --git a/src/sse_api/engine/controllers/search/relational.py b/src/sse_api/engine/controllers/search/relational.py
+index bb8d7be..70c6d3a 100644
+--- a/src/sse_api/engine/controllers/search/relational.py
++++ b/src/sse_api/engine/controllers/search/relational.py
+@@ -1,5 +1,7 @@
+ from collections import defaultdict
+ 
++from sse_api.data.core.knowledge_extensions import build_fts_query
++
+ from django.contrib.postgres.search import SearchVector, SearchQuery, SearchRank
+ from sse_api.data.models import CollectionOfDocuments, DocumentPageText, Document
+ from sse_api.data.controllers.chunk_offsets import chunk_offsets_for_texts
+@@ -310,6 +312,8 @@ class DBTextSearchController:
+         filters: dict = None,
+         language: str = None,
+         only_used_to_search: bool = True,
++        keywords: list[str] | None = None,
++        keywords_match: str = "and",
+     ) -> list:
+         """
+         Perform a full-text search in PostgreSQL using FTS functionality.
+@@ -330,6 +334,11 @@ class DBTextSearchController:
+             Limit to the chunks of the documents enabled in the search
+             (``Document.use_in_search=True``).
+ 
++        keywords : list[str], optional
++            Replace query_str for FTS. Each entry is parsed as a plain query.
++        keywords_match : str, default "and"
++            AND between entries; "any" uses OR. No effect without keywords.
++
+         Returns
+         -------
+         list
+@@ -365,7 +374,15 @@ class DBTextSearchController:
+             "text_str", weight="A", config=lang_config
+         ) + SearchVector("text_str_clear", weight="B", config=lang_config)
+ 
+-        query = SearchQuery(query_str, config=lang_config)
++        query = build_fts_query(
++            query_str, keywords, keywords_match, lang_config, SearchQuery
++        )
++        if keywords:
++            # SearchRank is a score, not a boolean match constraint. Enforce
++            # the requested AND/OR via @@ before ranking keyword candidates.
++            queryset = queryset.annotate(keyword_vector=vector).filter(
++                keyword_vector=query
++            )
+ 
+         results = (
+             queryset.annotate(rank=SearchRank(vector, query))
+diff --git a/src/sse_api/engine/controllers/search/semantic.py b/src/sse_api/engine/controllers/search/semantic.py
+index 46f4c15..5b6ddd0 100644
+--- a/src/sse_api/engine/controllers/search/semantic.py
++++ b/src/sse_api/engine/controllers/search/semantic.py
+@@ -18,6 +18,8 @@ The module is used by the web application to answer user questions
+ against a collection of documents.
+ """
+ 
++from sse_api.data.core.knowledge_extensions import lexical_query, intersect_filter_groups
++
+ import tqdm
+ import json
+ import pandas as pd
+@@ -648,6 +650,12 @@ class DBSemanticSearchController:
+                     only_used_to_search=True,
+                 )
+             )
++            relative_doc_names = list(set(relative_doc_names) | set(
++                self.__filter_documents_based_on_metadata(
++                    collection=collection,
++                    metadata_filters=[{"operator": "in", "field": {"path_prefixes": prefix}}
++                                      for prefix in relative_path_contains],
++                    use_and_operator=False)))
+             was_filter_option = True
+             if not len(relative_doc_names) and use_and_operator:
+                 return {}, {}, []
+@@ -710,6 +718,16 @@ class DBSemanticSearchController:
+             if not len(metadata_doc_names) and use_and_operator:
+                 return {}, {}, []
+ 
++        groups = search_params.get("metadata_filter_groups") or []
++        if groups:
++            metadata_doc_names = intersect_filter_groups(groups, lambda group:
++                self.__filter_documents_based_on_metadata(
++                    collection=collection, metadata_filters=group,
++                    use_and_operator=False))
++            was_filter_option = True
++            if not metadata_doc_names:
++                return {}, {}, []
++
+         # Prepare OR/AND operator between all doc names from:
+         #  - document_names
+         #  - doc_names_from_cat
+@@ -817,7 +835,7 @@ class DBSemanticSearchController:
+ 
+         if hybrid_search:
+             postgres_results = textual_controller.search_texts(
+-                query_str=question_str,
++                query_str=lexical_query(question_str, search_params.get("keywords")),
+                 collection=collection,
+                 max_results=max_results,
+                 filters={
+@@ -826,6 +844,8 @@ class DBSemanticSearchController:
+                     "language": lang_str,
+                 },
+                 language=lang_str,
++                keywords=search_params.get("keywords"),
++                keywords_match=search_params.get("keywords_match", "and"),
+             )
+             texts_ids, texts_scores = self._rrf_merge(
+                 milvus_results=milvus_results,
+diff --git a/sse_lib/src/sse_lib/options.py b/sse_lib/src/sse_lib/options.py
+index 2f9dad3..0874f1e 100644
+--- a/sse_lib/src/sse_lib/options.py
++++ b/sse_lib/src/sse_lib/options.py
+@@ -49,6 +49,9 @@ class SearchOptions:
+     categories: Optional[List[str]] = None
+     documents: Optional[List[str]] = None
+     relative_paths: Optional[List[str]] = None
++    keywords: Optional[List[str]] = None
++    #: AND by omission; "any" ORs the plain queries of keyword entries.
++    keywords_match: Optional[str] = None
+     relative_path_contains: Optional[List[str]] = None
+     metadata_filters: Optional[List[Dict[str, Any]]] = None
+     templates: Optional[int] = None
+diff --git a/src/sse_api/data/core/knowledge_extensions.py b/src/sse_api/data/core/knowledge_extensions.py
+new file mode 100644
+index 0000000..606921c
+--- /dev/null
++++ b/src/sse_api/data/core/knowledge_extensions.py
+@@ -0,0 +1,53 @@
++"""Pure helpers for the version-one agentic knowledge contract."""
++
++
++def lexical_query(question, keywords):
++    return " ".join(keywords) if keywords else question
++
++
++def intersect_filter_groups(groups, resolve):
++    sets = [set(resolve(group)) for group in groups]
++    return list(set.intersection(*sets)) if sets else []
++
++
++def merge_quality(metadata, upvotes, downvotes):
++    if any(type(v) is not int or v < 0 or v > 10**12 for v in (upvotes, downvotes)):
++        raise ValueError("Invalid quality counter")
++    result = dict(metadata or {})
++    old_up = result.get("upvotes", 0)
++    old_down = result.get("downvotes", 0)
++    up = max(upvotes, old_up if type(old_up) is int and old_up >= 0 else 0)
++    down = max(downvotes, old_down if type(old_down) is int and old_down >= 0 else 0)
++    result.update(
++        upvotes=up,
++        downvotes=down,
++        times_used=up + down,
++        success_rate=(up + 1) / (up + down + 2),
++        confidence_score=(up + 1) / (up + down + 2),
++    )
++    return result
++
++
++def keyword_match_mode(value="and"):
++    """Accept exactly the public API's two modes; omission means AND."""
++    if not isinstance(value, str) or value not in ("and", "any"):
++        raise ValueError("keywords_match must be 'and' or 'any'")
++    return value
++
++
++def build_fts_query(query_str, keywords, keywords_match, config, query_factory):
++    """OR/AND between keyword entries, with plain FTS parsing inside each.
++
++    Never interpolate untrusted keywords into a raw tsquery. Without keywords
++    the historical query_str/plain behavior stays unchanged, even in any mode.
++    """
++    mode = keyword_match_mode(keywords_match)
++    if not keywords:
++        return query_factory(query_str, config=config, search_type="plain")
++    query = None
++    for keyword in keywords:
++        part = query_factory(keyword, config=config, search_type="plain")
++        query = (
++            part if query is None else (query | part if mode == "any" else query & part)
++        )
++    return query
+diff --git a/src/sse_api/data/tests/test_keywords_match.py b/src/sse_api/data/tests/test_keywords_match.py
+new file mode 100644
+index 0000000..b14dd7e
+--- /dev/null
++++ b/src/sse_api/data/tests/test_keywords_match.py
+@@ -0,0 +1,65 @@
++"""Boolean keyword composition and API enum validation, without a DB query."""
++
++from unittest import TestCase
++
++from sse_api.core.validation import search_options
++from sse_api.data.core.knowledge_extensions import build_fts_query
++
++
++class Query:
++    def __init__(self, value, **kwargs):
++        self.value = value
++        self.kwargs = kwargs
++
++    def __or__(self, other):
++        return Query(("OR", self.value, other.value))
++
++    def __and__(self, other):
++        return Query(("AND", self.value, other.value))
++
++
++class KeywordsMatchTests(TestCase):
++    def test_default_mode_is_and(self):
++        options = search_options({"keywords": ["TypeError", "pool"]})
++        self.assertNotIn("keywords_match", options)
++        query = build_fts_query(
++            "ignored",
++            options["keywords"],
++            options.get("keywords_match", "and"),
++            "simple",
++            Query,
++        )
++        self.assertEqual(query.value, ("AND", "TypeError", "pool"))
++
++    def test_explicit_modes_compose_between_entries(self):
++        for mode, expected in (("and", "AND"), ("any", "OR")):
++            with self.subTest(mode=mode):
++                self.assertEqual(
++                    build_fts_query(
++                        "unused", ["pool timeout", "TypeError"], mode, "simple", Query
++                    ).value,
++                    (expected, "pool timeout", "TypeError"),
++                )
++
++    def test_no_keywords_preserves_plain_query(self):
++        for words in (None, []):
++            for mode in ("and", "any"):
++                query = build_fts_query("original query", words, mode, "simple", Query)
++                self.assertEqual(query.value, "original query")
++                self.assertEqual(query.kwargs["search_type"], "plain")
++
++    def test_invalid_enum_is_rejected(self):
++        for value in ("all", "or", "AND", "", None, True, [], {}):
++            with self.subTest(value=value), self.assertRaises(ValueError):
++                search_options({"keywords_match": value})
++
++    def test_real_django_query_uses_safe_plain_parameters(self):
++        from django.contrib.postgres.search import SearchQuery
++
++        for mode, operator in (("and", "AND"), ("any", "OR")):
++            query = build_fts_query(
++                "unused", ["foo | !bar", "pool timeout"], mode, "simple", SearchQuery
++            )
++            self.assertEqual(query.connector, "&&" if mode == "and" else "||")
++            self.assertEqual(query.lhs.function, "plainto_tsquery")
++            self.assertEqual(query.rhs.function, "plainto_tsquery")
+diff --git a/src/sse_api/data/tests/test_knowledge_quality.py b/src/sse_api/data/tests/test_knowledge_quality.py
+new file mode 100644
+index 0000000..28e3992
+--- /dev/null
++++ b/src/sse_api/data/tests/test_knowledge_quality.py
+@@ -0,0 +1,56 @@
++"""Integration coverage for the authenticated quality metadata endpoint."""
++
++from django.test import TestCase
++
++from sse_api.data.api import UpdateKnowledgeQuality
++from sse_api.data.models import CollectionOfDocuments, Document
++from sse_api.tests.input_support import EndpointInputMixin
++
++
++class KnowledgeQualityTests(EndpointInputMixin, TestCase):
++    def setUp(self):
++        super().setUp()
++        self.collection = CollectionOfDocuments.objects.create(
++            name="knowledge", display_name="Knowledge", created_by=self.profile
++        )
++        self.document = Document.objects.create(
++            collection=self.collection,
++            name="recipe.input_text",
++            path="recipe.input_text",
++            relative_path="recipe.input_text",
++            document_hash="abc",
++            category="recipe",
++            metadata_json={"paths": ["auth.py"]},
++        )
++
++    def request(self, **overrides):
++        body = dict(
++            collection_name="knowledge",
++            document_name="recipe.input_text",
++            upvotes=3,
++            downvotes=1,
++        )
++        body.update(overrides)
++        return self.invoke(UpdateKnowledgeQuality, body)
++
++    def test_updates_quality_and_preserves_other_metadata(self):
++        self.assertTrue(self.request().data["status"])
++        self.document.refresh_from_db()
++        self.assertEqual(self.document.metadata_json["times_used"], 4)
++        self.assertEqual(self.document.metadata_json["paths"], ["auth.py"])
++        self.assertAlmostEqual(self.document.metadata_json["success_rate"], 4 / 6)
++
++    def test_repeated_or_older_delivery_does_not_roll_back_votes(self):
++        self.request()
++        self.request(upvotes=1, downvotes=0)
++        self.document.refresh_from_db()
++        self.assertEqual(self.document.metadata_json["times_used"], 4)
++
++    def test_unknown_collection_or_document_is_denied(self):
++        self.assert_denial(self.request(collection_name="other"))
++        self.assert_denial(self.request(document_name="other"))
++
++    def test_invalid_counters_are_denied(self):
++        for value in (-1, True, "1", 1.5):
++            with self.subTest(value=value):
++                self.assert_denial(self.request(upvotes=value))

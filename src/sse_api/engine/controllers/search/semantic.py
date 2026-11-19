@@ -18,6 +18,11 @@ The module is used by the web application to answer user questions
 against a collection of documents.
 """
 
+from sse_api.data.core.knowledge_extensions import (
+    lexical_query,
+    intersect_filter_groups,
+)
+
 import tqdm
 import json
 import pandas as pd
@@ -573,6 +578,7 @@ class DBSemanticSearchController:
           "only_template_documents": true,
           "max_results": 40,
           "rerank_results": false,
+          "lexical_only": false,
           "return_with_factored_fields": false,
           "relative_path_contains": [
             "https://cam.waw.pl"
@@ -592,6 +598,10 @@ class DBSemanticSearchController:
             If ``True`` the detailed results are reformatted for UI display.
         ignore_question_lang_detect : bool, default False
             Skip language detection for the query.
+        lexical_only : bool, default False
+            Read out of ``search_params``. Answer from the full-text leg alone,
+            with no embedding and no vector search; the reported score scale is
+            then ``"fts"``. Takes precedence over ``hybrid_search``.
         organisation_user : OrganisationUser, optional
             The user performing the search.
         collection : CollectionOfDocuments, optional
@@ -646,6 +656,19 @@ class DBSemanticSearchController:
                     collection=collection,
                     texts=relative_path_contains,
                     only_used_to_search=True,
+                )
+            )
+            relative_doc_names = list(
+                set(relative_doc_names)
+                | set(
+                    self.__filter_documents_based_on_metadata(
+                        collection=collection,
+                        metadata_filters=[
+                            {"operator": "in", "field": {"path_prefixes": prefix}}
+                            for prefix in relative_path_contains
+                        ],
+                        use_and_operator=False,
+                    )
                 )
             )
             was_filter_option = True
@@ -710,6 +733,20 @@ class DBSemanticSearchController:
             if not len(metadata_doc_names) and use_and_operator:
                 return {}, {}, []
 
+        groups = search_params.get("metadata_filter_groups") or []
+        if groups:
+            metadata_doc_names = intersect_filter_groups(
+                groups,
+                lambda group: self.__filter_documents_based_on_metadata(
+                    collection=collection,
+                    metadata_filters=group,
+                    use_and_operator=False,
+                ),
+            )
+            was_filter_option = True
+            if not metadata_doc_names:
+                return {}, {}, []
+
         # Prepare OR/AND operator between all doc names from:
         #  - document_names
         #  - doc_names_from_cat
@@ -765,6 +802,13 @@ class DBSemanticSearchController:
         max_results = int(search_params.get("max_results", 50))
         hybrid_search = bool(search_params.get("hybrid_search", True))
         do_rerank = bool(search_params.get("rerank_results", False))
+        # Run the full-text leg alone. A vector search costs an embedding of
+        # the query and a round trip to the vector store; when the question is
+        # literal -- an exception class, a function name, a config key -- the
+        # text index answers it better and far cheaper. It wins over
+        # ``hybrid_search``, because asking for both is asking to skip the
+        # vectors.
+        lexical_only = bool(search_params.get("lexical_only", False))
         rerank_max_results = int(
             search_params.get("rerank_max_results", max_results * 2)
         )
@@ -785,65 +829,87 @@ class DBSemanticSearchController:
             )
             min_similarity = DEFAULT_MIN_SIMILARITY
 
-        milvus_max_results = max_results
-        if hybrid_search and do_rerank:
-            milvus_max_results = rerank_max_results
+        # The text leg asks the same question whether it is fused with the
+        # vectors or is the whole search on its own; one definition keeps the
+        # two from drifting apart.
+        fts_max_results = max_results
+        if lexical_only and do_rerank:
+            # A reranker only reorders what it is given, so the leg that feeds
+            # it reaches past the final count the way the vector leg does.
+            fts_max_results = rerank_max_results
 
-        milvus_results = self.search(
-            search_text=question_str,
-            max_results=milvus_max_results,
-            rerank_results=do_rerank if not hybrid_search else False,
-            language=lang_str,
-            return_with_factored_fields=bool(
-                search_params.get("return_with_factored_fields", False)
-            ),
-            search_in_documents=docs_to_search,
-            relative_paths=relative_paths,
-            min_similarity=min_similarity,
-        )[0]
-
-        # Prepare results to presents for user
-        texts_ids = []
-        texts_scores = []
-        # The cosine similarity of a chunk is reported only when the vector
-        # search is the single ranking criterion. In a hybrid search the
-        # ranking is decided by Reciprocal Rank Fusion, and chunks coming
-        # from the full-text side have no similarity at all — a cosine next
-        # to such a score would only be misleading.
-        vector_similarity = (
-            {} if hybrid_search else cosine_scores_by_text_id(milvus_results)
-        )
-        texts_similarity = None
-
-        if hybrid_search:
-            postgres_results = textual_controller.search_texts(
-                query_str=question_str,
+        def full_text_search():
+            return textual_controller.search_texts(
+                query_str=lexical_query(question_str, search_params.get("keywords")),
                 collection=collection,
-                max_results=max_results,
+                max_results=fts_max_results,
                 filters={
                     "document_names": docs_to_search,
                     "relative_paths": relative_paths,
                     "language": lang_str,
                 },
                 language=lang_str,
+                keywords=search_params.get("keywords"),
+                keywords_match=search_params.get("keywords_match", "and"),
             )
-            texts_ids, texts_scores = self._rrf_merge(
-                milvus_results=milvus_results,
-                postgres_results=postgres_results,
-                k=rrf_k,
-                max_results=rerank_max_results if do_rerank else max_results,
-            )
-        else:
-            if not len(milvus_results):
-                self._logger.warning("milvus_results is empty!")
+
+        # Prepare results to presents for user
+        texts_ids = []
+        texts_scores = []
+        texts_similarity = None
+
+        if lexical_only:
+            postgres_results = full_text_search()
+            if not len(postgres_results):
+                self._logger.warning("full-text search is empty!")
                 return {}, {}, []
 
-            for text_res in milvus_results:
-                texts_ids.append(int(text_res["metadata"]["external_text_id"]))
-                texts_scores.append(text_res["score"])
-            texts_similarity = [
-                vector_similarity.get(text_id) for text_id in texts_ids
-            ]
+            for text_id, rank in postgres_results:
+                texts_ids.append(int(text_id))
+                texts_scores.append(rank)
+        else:
+            milvus_max_results = max_results
+            if hybrid_search and do_rerank:
+                milvus_max_results = rerank_max_results
+
+            milvus_results = self.search(
+                search_text=question_str,
+                max_results=milvus_max_results,
+                rerank_results=do_rerank if not hybrid_search else False,
+                language=lang_str,
+                return_with_factored_fields=bool(
+                    search_params.get("return_with_factored_fields", False)
+                ),
+                search_in_documents=docs_to_search,
+                relative_paths=relative_paths,
+                min_similarity=min_similarity,
+            )[0]
+
+            # The cosine similarity of a chunk is reported only when the vector
+            # search is the single ranking criterion. In a hybrid search the
+            # ranking is decided by Reciprocal Rank Fusion, and chunks coming
+            # from the full-text side have no similarity at all — a cosine next
+            # to such a score would only be misleading.
+            if hybrid_search:
+                postgres_results = full_text_search()
+                texts_ids, texts_scores = self._rrf_merge(
+                    milvus_results=milvus_results,
+                    postgres_results=postgres_results,
+                    k=rrf_k,
+                    max_results=rerank_max_results if do_rerank else max_results,
+                )
+            else:
+                if not len(milvus_results):
+                    self._logger.warning("milvus_results is empty!")
+                    return {}, {}, []
+
+                vector_similarity = cosine_scores_by_text_id(milvus_results)
+                for text_res in milvus_results:
+                    texts_ids.append(int(text_res["metadata"]["external_text_id"]))
+                    texts_scores.append(text_res["score"])
+                texts_similarity = [
+                    vector_similarity.get(text_id) for text_id in texts_ids
+                ]
 
         if not len(texts_ids):
             self._logger.warning(
@@ -858,7 +924,7 @@ class DBSemanticSearchController:
             texts_similarity=texts_similarity,
         )
 
-        if hybrid_search and do_rerank:
+        if do_rerank and (hybrid_search or lexical_only):
             postgres_docs = self.rerank_results(
                 question_str=question_str,
                 results=postgres_docs,
@@ -866,7 +932,7 @@ class DBSemanticSearchController:
             )
 
         score_scale = retrieval_score_scale(
-            rerank=do_rerank, hybrid_search=hybrid_search
+            rerank=do_rerank, hybrid_search=hybrid_search, lexical_only=lexical_only
         )
         annotate_chunk_scores(postgres_docs, score_scale, rrf_k)
 

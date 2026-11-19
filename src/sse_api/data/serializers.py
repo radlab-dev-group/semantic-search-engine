@@ -35,6 +35,8 @@ class CollectionOfDocumentsSerializer(serializers.ModelSerializer):
             "name",
             "display_name",
             "description",
+            "model_embedder",
+            "model_reranker",
             "created_on",
             "metadata_json",
             "document_count",
