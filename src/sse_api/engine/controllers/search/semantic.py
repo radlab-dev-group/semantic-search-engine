@@ -53,12 +53,35 @@ from sse_api.engine.controllers.database.relational_db import RelationalDBContro
 from sse_api.engine.core.config.models_config import EmbeddingModelsConfig
 from sse_api.engine.core.protocols import VectorStoreProtocol
 from sse_api.engine.core.search_engine import (
+    DEFAULT_DENSE_WEIGHT,
+    HYBRID_CANDIDATE_POOL_FACTOR,
+    DEFAULT_LEXICAL_WEIGHT,
     annotate_chunk_scores,
     cosine_scores_by_text_id,
+    rrf_merge,
     prepare_documents_stats as compute_documents_stats,
     reformat_search_results_to_display as reformat_results,
     retrieval_score_scale,
 )
+
+
+def _fusion_weight(value, default: float) -> float:
+    """
+    Weight of a leg of the fusion, ``default`` when the value is unusable.
+
+    The weights arrive with the search options (a client, or the profile of
+    a collection), so they may be anything at all; a broken weight must
+    degrade to the default of the engine instead of failing the search.
+    """
+    if isinstance(value, bool) or value is None:
+        return default
+    try:
+        weight = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not 0.0 <= weight <= 1.0:
+        return default
+    return weight
 
 
 class DBSemanticSearchController:
@@ -484,9 +507,21 @@ class DBSemanticSearchController:
         )
         return milvus_search
 
-    def _rrf_merge(self, milvus_results, postgres_results, k=60, max_results=100):
+    def _rrf_merge(
+        self,
+        milvus_results,
+        postgres_results,
+        k=60,
+        max_results=100,
+        dense_weight=DEFAULT_DENSE_WEIGHT,
+        lexical_weight=DEFAULT_LEXICAL_WEIGHT,
+    ):
         """
-        Merge results using Reciprocal Rank Fusion.
+        Merge results using **weighted** Reciprocal Rank Fusion.
+
+        A thin call of :func:`sse_api.engine.core.search_engine.rrf_merge`;
+        the fusion of the protocol pipeline and of this controller is one
+        implementation, so a weight means the same thing on both paths.
 
         Parameters
         ----------
@@ -498,32 +533,24 @@ class DBSemanticSearchController:
             RRF constant.
         max_results : int, default 100
             Maximum number of merged results to return.
+        dense_weight : float, default 0.6
+            Weight of the vector leg.
+        lexical_weight : float, default 0.4
+            Weight of the full-text leg.
 
         Returns
         -------
         tuple
             (sorted_ids, sorted_scores)
         """
-        scores = {}
-
-        # Process Milvus results
-        for rank, hit in enumerate(milvus_results, 1):
-            try:
-                text_id = int(hit["metadata"]["external_text_id"])
-                scores[text_id] = scores.get(text_id, 0) + 1.0 / (k + rank)
-            except (KeyError, ValueError, TypeError):
-                continue
-
-        # Process Postgres results
-        for rank, (text_id, _) in enumerate(postgres_results, 1):
-            scores[text_id] = scores.get(text_id, 0) + 1.0 / (k + rank)
-
-        # Sort by RRF score
-        sorted_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)[
-            :max_results
-        ]
-
-        return sorted_ids, [scores[tid] for tid in sorted_ids]
+        return rrf_merge(
+            milvus_results,
+            postgres_results,
+            k=k,
+            max_results=max_results,
+            dense_weight=dense_weight,
+            lexical_weight=lexical_weight,
+        )
 
     def rerank_results(
         self, question_str: str, results: list, max_results: int
@@ -903,6 +930,14 @@ class DBSemanticSearchController:
             search_params.get("rerank_max_results", max_results * 2)
         )
         rrf_k = int(search_params.get("rrf_k", 60))
+        # Share of every leg in the fusion; the request (or the profile of
+        # the collection) decides, the defaults of the engine otherwise.
+        dense_weight = _fusion_weight(
+            search_params.get("dense_weight"), DEFAULT_DENSE_WEIGHT
+        )
+        lexical_weight = _fusion_weight(
+            search_params.get("lexical_weight"), DEFAULT_LEXICAL_WEIGHT
+        )
 
         # Cosine similarity cutoff. Accept a number in [0, 1]; anything else
         # (including booleans and non-numeric values) falls back to the default.
@@ -922,8 +957,19 @@ class DBSemanticSearchController:
         # The text leg asks the same question whether it is fused with the
         # vectors or is the whole search on its own; one definition keeps the
         # two from drifting apart.
+        #
+        # In a hybrid search the leg reaches as far as the vector leg does:
+        # a fusion ranks what both legs saw, and a text index limited to
+        # ``max_results`` loses every match from that position before the
+        # fusion happens, which quietly discards the identifier, the case
+        # number and the name the lexical leg is good at.
         fts_max_results = max_results
-        if lexical_only and do_rerank:
+        if hybrid_search:
+            fts_max_results = max(
+                rerank_max_results if do_rerank else max_results,
+                max_results * HYBRID_CANDIDATE_POOL_FACTOR,
+            )
+        elif lexical_only and do_rerank:
             # A reranker only reorders what it is given, so the leg that feeds
             # it reaches past the final count the way the vector leg does.
             fts_max_results = rerank_max_results
@@ -961,6 +1007,11 @@ class DBSemanticSearchController:
             milvus_max_results = max_results
             if hybrid_search and do_rerank:
                 milvus_max_results = rerank_max_results
+            if hybrid_search:
+                milvus_max_results = max(
+                    milvus_max_results,
+                    max_results * HYBRID_CANDIDATE_POOL_FACTOR,
+                )
 
             milvus_results = self.search(
                 search_text=question_str,
@@ -975,11 +1026,12 @@ class DBSemanticSearchController:
                 min_similarity=min_similarity,
             )[0]
 
-            # The cosine similarity of a chunk is reported only when the vector
-            # search is the single ranking criterion. In a hybrid search the
-            # ranking is decided by Reciprocal Rank Fusion, and chunks coming
-            # from the full-text side have no similarity at all — a cosine next
-            # to such a score would only be misleading.
+            # The cosine similarity of a chunk is a fact about the chunk and
+            # the query, not about the leg which found it, so it survives the
+            # fusion: the document statistics, the reranker and the RAG
+            # context keep a comparable score.  A chunk which only the text
+            # index found has no cosine and stays ``None``.
+            vector_similarity = cosine_scores_by_text_id(milvus_results)
             if hybrid_search:
                 postgres_results = full_text_search()
                 texts_ids, texts_scores = self._rrf_merge(
@@ -987,19 +1039,24 @@ class DBSemanticSearchController:
                     postgres_results=postgres_results,
                     k=rrf_k,
                     max_results=rerank_max_results if do_rerank else max_results,
+                    dense_weight=dense_weight,
+                    lexical_weight=lexical_weight,
                 )
             else:
                 if not len(milvus_results):
                     self._logger.warning("milvus_results is empty!")
                     return {}, {}, []
 
-                vector_similarity = cosine_scores_by_text_id(milvus_results)
                 for text_res in milvus_results:
                     texts_ids.append(int(text_res["metadata"]["external_text_id"]))
                     texts_scores.append(text_res["score"])
-                texts_similarity = [
-                    vector_similarity.get(text_id) for text_id in texts_ids
-                ]
+            texts_similarity = [
+                vector_similarity.get(text_id) for text_id in texts_ids
+            ]
+            if not any(value is not None for value in texts_similarity or []):
+                # Nothing came from the vectors: report no similarity at all
+                # rather than a list of nulls.
+                texts_similarity = None
 
         if not len(texts_ids):
             self._logger.warning(

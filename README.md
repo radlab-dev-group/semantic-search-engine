@@ -323,6 +323,49 @@ the input text of an **embedder**, the whole `query + text` pair of a **reranker
 
 The values are exposed by `GET embedders` / `GET rerankers` in `models_info`.
 
+#### `query_instruction`
+
+An **embedder** entry may declare `query_instruction`, the prefix the model
+wants in front of a *query*.  Asymmetric models — `BAAI/bge-m3`,
+`intfloat/multilingual-e5-*`, `google/embeddinggemma-*` — are trained with an
+instruction in front of a query and without one in front of a passage, so
+embedding a query exactly like a document costs retrieval quality on them.
+The engine applies the prefix when it embeds a query (`MilvusHandler.search`);
+an entry without the key means "no prefix", so a plain
+sentence-transformer is not instructed.
+
+### Hybrid search
+
+A search runs **two legs** and fuses them: the vector leg (Milvus, cosine
+similarity) and the full-text leg (PostgreSQL, `SearchRank`).  The fusion is
+**weighted Reciprocal Rank Fusion** — each leg contributes
+`weight / (k + rank)` — with the weights decided per search:
+
+| Option (of `options`) | Default | Meaning |
+|-----------------------|---------|---------|
+| `dense_weight` | `0.6` | Share of the vector leg in the fusion |
+| `lexical_weight` | `0.4` | Share of the full-text leg in the fusion |
+| `rrf_k` | `60` | Reciprocal Rank Fusion constant |
+
+Only the ratio of the two weights matters, so `0.6 / 0.4` and `6 / 4` fuse the
+same way.  A collection pins its own weights with
+`POST set_collection_options`; a request which names no weight gets the weight
+of the collection, then the default of the engine.
+
+The two legs are **balanced**: each of them contributes `max_results * 10`
+candidates to the fusion, and the document filter of the request reaches both
+legs — a search restricted to one document does not spend the candidate pool
+of its full-text leg on the rest of the collection.  The **cosine similarity**
+of a chunk is reported in a hybrid search as well: it is a fact about the
+chunk and the query, not about the leg which found it, and the document
+statistics, the reranker and the RAG context keep a comparable score (a chunk
+which only the text index found carries `similarity: null`).
+
+The HNSW index of Milvus is tuned for recall: `M = 16`,
+`efConstruction = 128` at the build and `ef = 200` at the query.
+
+### Environment Variables (summary)
+
 ### Environment Variables (summary)
 
 | Variable                                                                                                | Meaning                                                     |

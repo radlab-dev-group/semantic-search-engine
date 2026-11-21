@@ -601,7 +601,14 @@ class _CapturingDataSource:
         self.scores = None
         self.texts = None
 
-    def fts_search(self, query_str, collection_id, max_results, language=None):
+    def fts_search(
+        self,
+        query_str,
+        collection_id,
+        max_results,
+        language=None,
+        filter_doc_names=None,
+    ):
         return list(self.fts_results)
 
     def get_text_for_id(
@@ -609,14 +616,16 @@ class _CapturingDataSource:
     ):
         self.scores = list(text_scores or [])
         self.similarity = list(text_similarity or []) if text_similarity else None
-        self.texts = [
-            _make_postgres_doc(
+        self.texts = []
+        for index, (text_id, score) in enumerate(zip(text_ids, self.scores)):
+            doc = _make_postgres_doc(
                 "doc101" if text_id <= 105 else "doc102",
                 score,
                 page=self.pages.get(text_id, 1),
             )
-            for text_id, score in zip(text_ids, self.scores)
-        ]
+            if self.similarity is not None and index < len(self.similarity):
+                doc["result"]["text"]["similarity"] = self.similarity[index]
+            self.texts.append(doc)
         return self.texts
 
 
@@ -661,14 +670,27 @@ def test_search_engine_core_stats_use_the_rrf_scale_for_hybrid_results():
         hybrid_search=True,
         rrf_k=60,
     )
-    # the fused scores, not the cosine ones, are handed over
-    assert math.isclose(ds.scores[0], 2.0 * top, rel_tol=1e-9)
-    # the ranking is decided by the fusion, so no cosine is reported
-    assert ds.similarity is None
+    # the fused scores, not the cosine ones, are handed over; with the
+    # default weights the two legs contribute 0.6 and 0.4 of a reciprocal
+    # rank
+    assert math.isclose(ds.scores[0], 0.6 * top + 0.4 * top, rel_tol=1e-9)
+    # the cosine similarity of a chunk is a fact about the chunk and the
+    # query, so it survives the fusion: the chunk the vector leg found keeps
+    # its cosine, the chunk only the text index found has none
+    assert math.isclose(ds.similarity[0], 0.95, rel_tol=1e-9)
     assert outcome["score_scale"] == "rrf"
-    assert outcome["stats"]["doc101"]["similarity"] is None
+    # doc101 holds five of the ten vector hits, so its mean cosine is their
+    # mean; the document the text index alone found keeps no cosine at all
+    assert math.isclose(
+        outcome["stats"]["doc101"]["similarity"],
+        (0.95 + 0.9 + 0.85 + 0.8 + 0.75) / 5,
+        rel_tol=1e-9,
+    )
+    # doc102 was found by both legs as well: it keeps the mean of its own
+    # vector hits
+    assert math.isclose(outcome["stats"]["doc102"]["similarity"], 0.3, rel_tol=1e-9)
     chunk = outcome["detailed_results"][0]["result"]["text"]
-    assert chunk["similarity"] is None
+    assert math.isclose(chunk["similarity"], 0.95, rel_tol=1e-9)
     stats = outcome["stats"]
     # the fused scores are normalized onto [0, 1] before being weighted
     assert 0.0 < stats["doc101"]["score_normalized"] <= 1.0

@@ -74,8 +74,15 @@ class RelationalDataProtocol(Protocol):
         collection_id: int,
         max_results: int,
         language: Optional[str] = None,
+        filter_doc_names: Optional[List[str]] = None,
     ) -> List[Tuple[int, float]]:
-        """Full‑text search returning ``(text_id, rank)`` tuples."""
+        """Full‑text search returning ``(text_id, rank)`` tuples.
+
+        ``filter_doc_names`` restricts the lexical leg to the same documents
+        the vector leg is restricted to; without it the full-text search
+        spends its candidate pool on documents the caller has already
+        excluded.
+        """
 
     def get_text_for_id(
         self,

@@ -21,14 +21,34 @@ from sse_api.engine.core.protocols import VectorStoreProtocol
 # ---------------------------------------------------------------------------
 
 
+#: How many times more candidates each leg of a hybrid search contributes
+#: than the number of results the caller asked for.
+HYBRID_CANDIDATE_POOL_FACTOR = 10
+
+#: Default share of the vector search in a weighted rank fusion.
+DEFAULT_DENSE_WEIGHT = 0.6
+
+#: Default share of the full-text search in a weighted rank fusion.
+DEFAULT_LEXICAL_WEIGHT = 0.4
+
+
 def rrf_merge(
     milvus_results: list[dict],
     postgres_results: list[tuple[int, float]],
     k: int = 60,
     max_results: int = 100,
+    dense_weight: float = DEFAULT_DENSE_WEIGHT,
+    lexical_weight: float = DEFAULT_LEXICAL_WEIGHT,
 ) -> tuple[list[int], list[float]]:
     """
-    Merge results using Reciprocal Rank Fusion.
+    Merge results using **weighted** Reciprocal Rank Fusion.
+
+    A plain RRF sums the reciprocal ranks of the two legs with the same
+    weight, which quietly decides that a query about an identifier, a legal
+    case number or a class name is as semantic as it is lexical.  The two
+    weights make that decision explicit: each leg contributes
+    ``weight / (k + rank)``, the pair is normalized (only their ratio
+    matters), and a leg with a zero weight drops out of the ranking.
 
     Parameters
     ----------
@@ -40,25 +60,44 @@ def rrf_merge(
         RRF constant.
     max_results : int, default 100
         Maximum number of merged results to return.
+    dense_weight : float, default 0.6
+        Weight of the vector (dense) leg.
+    lexical_weight : float, default 0.4
+        Weight of the full-text (lexical) leg.
 
     Returns
     -------
     tuple[int list, float list]
         ``(sorted_ids, sorted_scores)``
+
+    Raises
+    ------
+    ValueError
+        When both weights are zero, or a weight is negative: such a fusion
+        has no ranking to produce, and answering with an empty list would
+        only hide the mistake.
     """
+    total_weight = dense_weight + lexical_weight
+    if total_weight <= 0.0:
+        raise ValueError("dense_weight and lexical_weight must not be both zero")
+    if dense_weight < 0.0 or lexical_weight < 0.0:
+        raise ValueError("dense_weight and lexical_weight must not be negative")
+    weight_dense = dense_weight / total_weight
+    weight_lexical = lexical_weight / total_weight
+
     scores: dict[int, float] = {}
 
     # Process Milvus results
     for rank, hit in enumerate(milvus_results, 1):
         try:
             text_id = int(hit["metadata"]["external_text_id"])
-            scores[text_id] = scores.get(text_id, 0) + 1.0 / (k + rank)
+            scores[text_id] = scores.get(text_id, 0) + weight_dense / (k + rank)
         except (KeyError, ValueError, TypeError):
             continue
 
     # Process Postgres results
     for rank, (text_id, _) in enumerate(postgres_results, 1):
-        scores[text_id] = scores.get(text_id, 0) + 1.0 / (k + rank)
+        scores[text_id] = scores.get(text_id, 0) + weight_lexical / (k + rank)
 
     # Sort by RRF score
     sorted_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)[
@@ -688,6 +727,9 @@ class SearchEngineCore:
         rrf_k: int = 60,
         hybrid_search: bool = True,
         min_similarity: float | None = None,
+        dense_weight: float = DEFAULT_DENSE_WEIGHT,
+        lexical_weight: float = DEFAULT_LEXICAL_WEIGHT,
+        candidate_pool_factor: int = HYBRID_CANDIDATE_POOL_FACTOR,
     ) -> dict:
         """
         Execute the full hybrid search pipeline.
@@ -712,6 +754,17 @@ class SearchEngineCore:
             Enable PostgreSQL full‑text search in addition to vector search.
         min_similarity : float | None, default None
             Optional cosine similarity cutoff for the vector search.
+        dense_weight : float, default 0.6
+            Weight of the vector leg in the rank fusion.
+        lexical_weight : float, default 0.4
+            Weight of the full-text leg in the rank fusion.
+        candidate_pool_factor : int, default 10
+            How many times more candidates each leg contributes than the
+            caller asked for results.  Both legs use the same factor: a
+            fusion ranks what both legs saw, and a lexical leg which sees
+            ``max_results`` while the vector leg sees ten times as much
+            loses every match from position ``max_results + 1`` onwards
+            before the fusion ever happens.
 
         Returns
         -------
@@ -722,10 +775,11 @@ class SearchEngineCore:
         metadata_filter = (
             {"filenames": filter_doc_names} if filter_doc_names else None
         )
+        pool_size = max(max_results, max_results * candidate_pool_factor)
 
         milvus_results = self._vector_store.search(
             query_text=query_text,
-            max_results=max_results * 10,
+            max_results=pool_size,
             metadata_filter=metadata_filter,
             min_similarity=min_similarity,
         )
@@ -736,26 +790,29 @@ class SearchEngineCore:
             postgres_fts_results = self._data_source.fts_search(
                 query_str=query_text,
                 collection_id=collection_id,
-                max_results=max_results,
+                max_results=pool_size,
                 language=language,
+                filter_doc_names=filter_doc_names,
             )
 
         # Step 3: RRF merge
         texts_scores: list[float] = []
         fused_with_fts = hybrid_search and bool(postgres_fts_results)
-        # A cosine similarity is reported only when the vector search is the
-        # single ranking criterion. In a hybrid search the ranking is decided
-        # by the fused ranks and full-text only chunks have no similarity,
-        # so a cosine next to such a score would be misleading.
-        vector_similarity = (
-            {} if fused_with_fts else cosine_scores_by_text_id(milvus_results)
-        )
+        # The cosine similarity of a chunk is a fact about the chunk and the
+        # query, not about the leg which found it: dropping it as soon as
+        # the full-text leg contributes anything would take the only
+        # comparable score away from the statistics, the reranker and the
+        # RAG context.  A chunk found by the full-text leg alone has no
+        # cosine and stays ``None``.
+        vector_similarity = cosine_scores_by_text_id(milvus_results)
         if fused_with_fts:
             texts_ids, texts_scores = rrf_merge(
                 milvus_results,
                 postgres_fts_results,
                 k=rrf_k,
-                max_results=max_results * 10,
+                max_results=pool_size,
+                dense_weight=dense_weight,
+                lexical_weight=lexical_weight,
             )
         else:
             texts_ids = [

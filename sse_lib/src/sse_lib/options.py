@@ -70,6 +70,11 @@ class SearchOptions:
     lexical_only: Optional[bool] = None
     min_similarity: Optional[float] = None
     rrf_k: Optional[int] = None
+    #: Share of the vector leg in the rank fusion of a hybrid search;
+    #: only the ratio with ``lexical_weight`` matters.
+    dense_weight: Optional[float] = None
+    #: Share of the full-text leg in the rank fusion of a hybrid search.
+    lexical_weight: Optional[float] = None
     use_and_operator: Optional[bool] = None
     #: Keys of this dict are merged into the payload; escape hatch for options
     #: that this release of the library does not know about yet.

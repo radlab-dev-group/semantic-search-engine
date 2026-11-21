@@ -4,7 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
-| [0.1.9](#019) | Search quality: the engine core no longer ships the ML stack (text cleaning, token counting and truncation move to the model service — `POST /v1/tokenize`, `/v1/truncate`, `/v1/denoise`), indexing embeds chunks with a document context header (document, category, path, section), the Milvus `filename` / `document_name` filter bug is fixed, short chunks (40+ characters) reach the index, texts are split on paragraph, code-fence and table boundaries, and every collection stores its own search profile and RAG model — `POST /api/v1/set_collection_options`, the `default_search_options` / `default_generation_options` of `GET collections`, and the search and generation endpoints fall back to the profile of the collection when the request names no value of its own |
+| [0.1.9](#019) | Search quality: the engine core no longer ships the ML stack (text cleaning, token counting and truncation move to the model service — `POST /v1/tokenize`, `/v1/truncate`, `/v1/denoise`), indexing embeds chunks with a document context header (document, category, path, section), the Milvus `filename` / `document_name` filter bug is fixed, short chunks (40+ characters) reach the index, texts are split on paragraph, code-fence and table boundaries, every collection stores its own search profile and RAG model (`POST /api/v1/set_collection_options`; the search and generation endpoints fall back to the profile when the request names no value), and the hybrid search is rebalanced: weighted RRF (`dense_weight` / `lexical_weight`), equal candidate pools for both legs, the document filter on the full-text leg, the cosine similarity surviving the fusion, per-model `query_instruction` for asymmetric embedders and HNSW tuned for recall |
 | [0.1.8](#018) | Standalone model service (`src/sse_models`) with `POST /v1/embed` / `POST /v1/rerank`, run with `./run.sh models` or `./run-models.sh`: the engine can delegate embedding and reranking to it (`SSE_MODEL_SERVICE_ENABLED`) with a circuit breaker and in-process fallback, or run inference on another machine entirely. Keyword filters in search (`options.keywords` with `keywords_match: "and"` / `"any"`), lexical-only search (`"lexical_only": true` answers from the full-text leg alone, `score_scale: "fts"`), a `POST update_knowledge_quality` endpoint with monotonic per-document upvote/downvote counters, and `model_embedder` / `model_reranker` in `GET collections` |
 | [0.1.7](#017) | Deletion of user chats: `POST delete_chat` (also accepted as `DELETE`, `chat_id` / `chat_ids[]`), `ChatDeletionController`, and `sse_lib.SSEClient.delete_chat` (`endpoints.DELETE_CHAT`). Deleting a collection also removes messages and states of its chats cleanly. Chat history (`GET chats` and `GET get_chat_by_hash`) now serializes messages with `DeepMessageSerializer` (including `state` with RAG responses, answers, and citations) and `collection_name` |
 | [0.1.6](#016) | Conversational RAG with memory: the generator sees the previous questions **and** answers, follow-up questions are rewritten into standalone retrieval queries (new `POST rewrite_query`), answers carry numbered source citations (`citations`, per-chat numbering, `answer_source`/`rewritten_query` in the reply) and short commands ("make it a table", "shorten", "translate") reuse the previous sources without a new search. Every search hit and citation carries the chunk's identity and position (`text_id`, `document_id`, `char_start`, `char_end`); `GET document_content?text_id=` opens exactly the chunk's page with a `highlight`. `sse_lib`: `rewrite_query()`, `generative_answer_with_citations()`, `document_content(text_id=...)` and the new reply/citation fields |
@@ -91,6 +91,37 @@ All notable changes to the Semantic Search Engine are documented in this file.
   missing from the endpoint catalog), `Collection.default_search_options` /
   `default_generation_options` / `default_generative_model`, and
   `SearchOptions.metadata_filter_groups` which the server reads.
+
+#### Weighted fusion of the hybrid search
+- The rank fusion of a hybrid search is now **weighted Reciprocal Rank
+  Fusion**: each leg contributes `weight / (k + rank)`.  `dense_weight`
+  (default 0.6) and `lexical_weight` (default 0.4) are options of a search
+  request and of the profile of a collection; only their ratio matters, a
+  zero weight drops the leg, and a fusion without any weight is refused with
+  a `ValueError` instead of silently ranking nothing.  Both implementations
+  (the protocol pipeline and the historical controller) call the same
+  `rrf_merge`, so a weight means the same thing everywhere.
+- The two legs of a hybrid search are **balanced**: each contributes
+  `max_results * 10` candidates (the constant
+  `HYBRID_CANDIDATE_POOL_FACTOR`), and the document filter of the request is
+  forwarded to the full-text leg (`fts_search(..., filter_doc_names=...)`),
+  so a search restricted to one document does not spend the candidate pool
+  of its lexical leg on the rest of the collection.
+- The **cosine similarity of a chunk survives the fusion**: it is a fact
+  about the chunk and the query, not about the leg which found it, so the
+  document statistics, the reranker and the RAG context keep a comparable
+  score in a hybrid search; a chunk which only the text index found carries
+  `similarity: null`.
+- **Query instruction of asymmetric embedders**: an entry of
+  `configs/embedders.json` may declare `query_instruction`, the prefix the
+  model wants in front of a query (`google/embeddinggemma-2` ships
+  `task: search result | query: `).  `MilvusHandler.search` applies it to
+  every query it embeds; an entry without the key means "no prefix", so a
+  plain sentence-transformer is not instructed.
+- The HNSW index of Milvus is tuned for recall: `M = 16`,
+  `efConstruction = 128` at the build, `ef = 200` at the query (was
+  `8 / 64 / 100`).
+- `sse_lib.SearchOptions` gains `dense_weight` and `lexical_weight`.
 
 ### Changed
 
