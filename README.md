@@ -629,6 +629,7 @@ each app.
 | `POST` | `/api/delete_documents/`       | Delete documents (`documents[]` names and/or `document_ids[]`) with their pages and chunks. |
 | `POST` | `/api/delete_collection/`      | Delete the whole collection with all of its content from both databases.        |
 | `POST` | `/api/set_documents_use_in_search/` | Enable/disable documents in the search (`use_in_search` flag).              |
+| `POST` | `/api/set_collection_options/` | Set the search / RAG profile of a collection (`search_options`, `generation_options`, `generative_model`). |
 | `GET`  | `/api/search_history/`           | Search history of the authenticated user (optionally one query by id), each entry with its `created_on`. |
 | `GET`  | `/api/get_search_history/`       | A single search history entry by its id.                                    |
 | `POST` | `/api/delete_search_history/`    | Delete stored queries (`query_ids[]` and/or `query_response_ids[]`) with their responses, answers and RAG states. |
@@ -747,6 +748,71 @@ consumer** of the vector collection, not only for the search of this engine.
 While disabled, its chunks are not returned by `search_with_options` —
 neither from the vector search nor from the full-text side.
 
+### The profile of a collection
+
+`POST set_collection_options` saves the **search** and the **RAG** profile of
+a collection, so a client does not have to repeat the same parameters in
+every request.  A call changes exactly the keys it sends, and only the
+**owner** of the collection may change it:
+
+```json
+{
+  "collection_name": "my-collection",
+  "search_options": {
+    "max_results": 15,
+    "hybrid_search": true,
+    "dense_weight": 0.6,
+    "lexical_weight": 0.4,
+    "rrf_k": 60,
+    "min_similarity": 0.35,
+    "max_chunks_per_document": 2
+  },
+  "generation_options": {
+    "generative_model": "google/gemma-4-12b-it",
+    "temperature": 0.2,
+    "repetition_penalty": 1.1,
+    "top_p": 0.9,
+    "top_k": 40,
+    "typical_p": 0.95,
+    "max_new_tokens": 2048
+  }
+}
+```
+
+`generative_model` is accepted alone (without `generation_options`) when only
+the model of the collection is to change.  The answer is the profile read
+back, completed with the defaults of the engine:
+
+```json
+{
+  "status": true,
+  "body": {
+    "collection_name": "my-collection",
+    "default_search_options": {"max_results": 15, "hybrid_search": true, "...": 0},
+    "default_generation_options": {"generative_model": "google/gemma-4-12b-it", "...": 0},
+    "default_generative_model": "google/gemma-4-12b-it"
+  }
+}
+```
+
+The profiles are also part of `GET collections` (`default_search_options` and
+`default_generation_options` of every collection), so a client can prefill a
+form from what the collection already uses.
+
+The endpoints fall back to the profile of the collection:
+
+* `search_with_options` — every option a request does not declare is read
+  from the collection (request value → collection → default of the engine);
+* `generative_answer` and the RAG of the chat — the answer is generated with
+  the model and the sampling parameters the collection saved, unless the
+  request names its own; a collection without a pinned model answers with
+  the model of the request or the default of the router.
+
+The sampling parameters accept the aliases `rep_penalty`, `topp`, `topk`,
+`typicalp` and `max_tokens`, and are checked against their ranges
+(`temperature` 0–2, `repetition_penalty` 0.1–10, `top_p` and `typical_p`
+(0, 1], `top_k` and `max_new_tokens` positive integers, weights in 0–1).
+
 ### Counters of a collection
 
 `GET collections` answers with every collection and how many documents it
@@ -825,6 +891,39 @@ tokenizer of the embedder, pointing at the chunks longer than declared. `--fix` 
 of the embedder, an impossible overlap corrected) and `--dry-run` only shows that plan. No text
 is ever re-split: chunks which are already in the database can be corrected by indexing them
 again, and `--collection NAME` / `--limit` / `--json` select and format the report.
+
+### What the embedder sees
+
+A chunk on its own does not know which document it comes from, and a query
+naming that document never reaches it. Before a chunk is embedded, indexing
+prepends a small **context header** to it
+(`data/core/context_enrichment.py`):
+
+```text
+Dokument: regulamin-stypendia.pdf | Kategoria: finanse | Ścieżka: docs/2024 | Sekcja: Wnioski
+
+Wnioski należy składać do 30 kwietnia każdego roku w sekretariacie.
+```
+
+* the header carries the **name** of the document, its **category**, the path
+  it was read from and the **section** of the chunk (a Markdown heading or a
+  short title line of the chunk itself), and is cut at 400 characters, so a
+  pathological document name cannot outgrow the text it explains;
+* the header is for the **embedder only** — PostgreSQL keeps the raw text,
+  the API displays the raw text, the reranker builds its own candidate, and
+  re-indexing an already enriched text never stacks a second header on it;
+* a chunk reaches the index from **40** characters on
+  (`MIN_CHUNK_CHAR_LEN` in `engine/core/constants.py`), so short definitions,
+  single legal articles and price-list positions are no longer dropped.
+
+`split_text_respecting_structure()` (same module as the chunking settings)
+splits a text without cutting a sentence, a Markdown table or a fenced code
+block: paragraphs, code fences and tables are the units which are packed into
+chunks, and a unit longer than a chunk is cut on a paragraph, then a line,
+then a sentence boundary.
+
+Collections indexed before the header existed keep their vectors as they are;
+they profit from the enrichment after their texts are indexed again.
 
 ### Search Options & Filters
 

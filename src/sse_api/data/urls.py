@@ -13,6 +13,7 @@ from sse_api.data.api import (
     DeleteTextsFromCollection,
     DeleteDocumentsFromCollection,
     DeleteCollection,
+    SetCollectionOptions,
     SetDocumentsUseInSearch,
     IndexingStatus,
     UpdateKnowledgeQuality,
@@ -84,6 +85,11 @@ urlpatterns = [
         prepare_api_url("set_documents_use_in_search"),
         SetDocumentsUseInSearch.as_view(),
         name="set_documents_use_in_search",
+    ),
+    path(
+        prepare_api_url("set_collection_options"),
+        SetCollectionOptions.as_view(),
+        name="set_collection_options",
     ),
     path(
         prepare_api_url("question_templates"),

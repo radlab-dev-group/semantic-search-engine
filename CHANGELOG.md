@@ -4,7 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
-| [0.1.9](#019) | Search quality, part one: the engine core no longer ships the ML stack (text cleaning, token counting and truncation move to the model service — `POST /v1/tokenize`, `/v1/truncate`, `/v1/denoise`), indexing embeds chunks with a document context header (document, category, path, section), the Milvus `filename` / `document_name` filter bug is fixed, short chunks (40+ characters) reach the index, and texts are split on paragraph, code-fence and table boundaries |
+| [0.1.9](#019) | Search quality: the engine core no longer ships the ML stack (text cleaning, token counting and truncation move to the model service — `POST /v1/tokenize`, `/v1/truncate`, `/v1/denoise`), indexing embeds chunks with a document context header (document, category, path, section), the Milvus `filename` / `document_name` filter bug is fixed, short chunks (40+ characters) reach the index, texts are split on paragraph, code-fence and table boundaries, and every collection stores its own search profile and RAG model — `POST /api/v1/set_collection_options`, the `default_search_options` / `default_generation_options` of `GET collections`, and the search and generation endpoints fall back to the profile of the collection when the request names no value of its own |
 | [0.1.8](#018) | Standalone model service (`src/sse_models`) with `POST /v1/embed` / `POST /v1/rerank`, run with `./run.sh models` or `./run-models.sh`: the engine can delegate embedding and reranking to it (`SSE_MODEL_SERVICE_ENABLED`) with a circuit breaker and in-process fallback, or run inference on another machine entirely. Keyword filters in search (`options.keywords` with `keywords_match: "and"` / `"any"`), lexical-only search (`"lexical_only": true` answers from the full-text leg alone, `score_scale: "fts"`), a `POST update_knowledge_quality` endpoint with monotonic per-document upvote/downvote counters, and `model_embedder` / `model_reranker` in `GET collections` |
 | [0.1.7](#017) | Deletion of user chats: `POST delete_chat` (also accepted as `DELETE`, `chat_id` / `chat_ids[]`), `ChatDeletionController`, and `sse_lib.SSEClient.delete_chat` (`endpoints.DELETE_CHAT`). Deleting a collection also removes messages and states of its chats cleanly. Chat history (`GET chats` and `GET get_chat_by_hash`) now serializes messages with `DeepMessageSerializer` (including `state` with RAG responses, answers, and citations) and `collection_name` |
 | [0.1.6](#016) | Conversational RAG with memory: the generator sees the previous questions **and** answers, follow-up questions are rewritten into standalone retrieval queries (new `POST rewrite_query`), answers carry numbered source citations (`citations`, per-chat numbering, `answer_source`/`rewritten_query` in the reply) and short commands ("make it a table", "shorten", "translate") reuse the previous sources without a new search. Every search hit and citation carries the chunk's identity and position (`text_id`, `document_id`, `char_start`, `char_end`); `GET document_content?text_id=` opens exactly the chunk's page with a `highlight`. `sse_lib`: `rewrite_query()`, `generative_answer_with_citations()`, `document_content(text_id=...)` and the new reply/citation fields |
@@ -59,6 +59,38 @@ All notable changes to the Semantic Search Engine are documented in this file.
   block longer than a chunk is cut on a paragraph, a line or a sentence
   boundary.  It is a pure helper, available to the parsers and to the
   `check_collection_chunking` audit.
+
+#### Search and RAG profile of a collection
+- Every collection now stores its own search hyperparameters
+  (`metadata_json["default_search_options"]`: `max_results`, `hybrid_search`,
+  `rerank_results`, `rerank_max_results`, `dense_weight`, `lexical_weight`,
+  `rrf_k`, `min_similarity`, `max_chunks_per_document`) and its RAG profile
+  (`metadata_json["default_generation_options"]`: `generative_model`,
+  `temperature`, `repetition_penalty`, `top_p`, `top_k`, `typical_p`,
+  `max_new_tokens`, `percentage_rank_mass`, `system_prompt`,
+  `answer_language`, `translate_answer`).
+- `POST /api/v1/set_collection_options` saves or updates the two profiles
+  (owner of the collection only; a call changes exactly the keys it sends).
+  `GET /api/v1/collections` answers with both profiles, completed with the
+  defaults of the engine, so a client always reads a complete set.
+- The endpoints fall back to the profile of the collection:
+  `search_with_options` fills every search option a request does not declare
+  from the collection (request value → collection → engine default), and
+  `generative_answer` and the conversational RAG answer with the model and
+  the sampling parameters the collection saved when the request does not name
+  its own.  The generation fallback fills only what the collection really
+  saved, so a deployment which never pinned a model keeps the answers it had.
+- `src/sse_api/core/validation.py`: `collection_search_options` and
+  `collection_generation_options` validate the profiles; the sampling
+  parameters get the same ranges and aliases in every place
+  (`rep_penalty` → `repetition_penalty`, `topp` → `top_p`, `topk` → `top_k`,
+  `typicalp` → `typical_p`, `max_tokens` → `max_new_tokens`).
+- `sse_lib`: `SSEClient.set_collection_options(...)` with explicit
+  keyword arguments for the sampling parameters, `SSEClient.
+  update_knowledge_quality(...)` (the `update_knowledge_quality` route was
+  missing from the endpoint catalog), `Collection.default_search_options` /
+  `default_generation_options` / `default_generative_model`, and
+  `SearchOptions.metadata_filter_groups` which the server reads.
 
 ### Changed
 

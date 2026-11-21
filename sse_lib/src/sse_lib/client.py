@@ -387,6 +387,60 @@ class SSEClient:
             metadata_json=metadata,
         )
 
+    def set_collection_options(
+        self,
+        collection: CollectionLike,
+        *,
+        search_options: Optional[Dict[str, Any]] = None,
+        generation_options: Optional[Dict[str, Any]] = None,
+        generative_model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        repetition_penalty: Optional[float] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        typical_p: Optional[float] = None,
+        max_new_tokens: Optional[int] = None,
+    ) -> Optional[Collection]:
+        """Save the search / RAG profile of a collection (``POST set_collection_options``).
+
+        Only the keys which are passed are changed; everything else keeps its
+        value.  ``search_options`` are the hyperparameters of the search
+        (``max_results``, ``hybrid_search``, ``rerank_results``,
+        ``dense_weight``, ``lexical_weight``, ``rrf_k``, ``min_similarity``,
+        ``max_chunks_per_document``, ...), ``generation_options`` the model and
+        its sampling parameters — the six explicit keyword arguments are a
+        shortcut for the keys of the same name inside ``generation_options``.
+
+        Returns the collection read back after the change, or ``None`` when it
+        is no longer visible to the user.
+        """
+        payload: Dict[str, Any] = {"collection_name": _name(collection)}
+        if search_options is not None:
+            payload["search_options"] = dict(search_options)
+
+        merged_generation: Dict[str, Any] = dict(generation_options or {})
+        for key, value in (
+            ("generative_model", generative_model),
+            ("temperature", temperature),
+            ("repetition_penalty", repetition_penalty),
+            ("top_p", top_p),
+            ("top_k", top_k),
+            ("typical_p", typical_p),
+            ("max_new_tokens", max_new_tokens),
+        ):
+            if value is not None:
+                merged_generation[key] = value
+        if merged_generation:
+            payload["generation_options"] = merged_generation
+
+        if len(payload) == 1:
+            raise SSEValueError(
+                "set_collection_options needs search_options or generation_options"
+            )
+
+        self.post(endpoints.SET_COLLECTION_OPTIONS, payload)
+        return self.get_collection(_name(collection))
+
     def list_collections(self) -> List[Collection]:
         """Collections visible to the authenticated user (``GET collections``)."""
         body = self.get(endpoints.COLLECTIONS)
@@ -404,6 +458,23 @@ class SSEClient:
     def collection_exists(self, name: str) -> bool:
         """Whether a collection with this name is visible to the user."""
         return self.get_collection(name) is not None
+
+    def rate_knowledge(
+        self, collection: CollectionLike, document: str, quality: str
+    ) -> Dict[str, Any]:
+        """Cast a knowledge-quality vote on a document (``POST update_knowledge_quality``).
+
+        ``quality`` is ``"good"`` or ``"bad"``; the server keeps a monotonic
+        counter per document, so the same vote delivered twice does not roll
+        the counter back.
+        """
+        payload = {
+            "collection_name": _name(collection),
+            "document_name": _require_text(document, "document"),
+            "quality": _require_text(quality, "quality"),
+        }
+        body = self.post(endpoints.UPDATE_KNOWLEDGE_QUALITY, payload)
+        return body if isinstance(body, dict) else {}
 
     def list_categories(self, collection: CollectionLike) -> List[str]:
         """Distinct categories of a collection (``GET categories``)."""

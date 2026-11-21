@@ -13,6 +13,8 @@ from sse_api.core.validation import (
     text_list,
     boolean,
     chunking,
+    collection_generation_options,
+    collection_search_options,
     indexing_options,
     texts,
 )
@@ -949,6 +951,72 @@ class DeleteCollection(APIView):
         )
 
     delete = post
+
+
+class SetCollectionOptions(APIView):
+    """
+    Set or update the search profile and the RAG profile of a collection:
+    the default hyperparameters of the search (``search_options``) and the
+    language model which answers about the collection (``generation_options``,
+    or its single key ``generative_model``).  The values are saved on the
+    collection in ``metadata_json`` and the engine fills whatever a request
+    does not declare itself from what is saved here.
+    """
+
+    required_params = ["collection_name"]
+    optional_params = ["search_options", "generation_options", "generative_model"]
+    input_validators = {
+        "collection_name": required_text,
+        "search_options": collection_search_options,
+        "generation_options": collection_generation_options,
+        "generative_model": optional_text,
+    }
+
+    @required_params_exists(
+        required_params=required_params, optional_params=optional_params
+    )
+    @get_organisation_user
+    @get_default_language
+    def post(self, language, organisation_user, request, *args, **kwargs):
+        params = request_params(request)
+        collection = get_owned_collection(
+            collection_name=params.get("collection_name"),
+            organisation_user=organisation_user,
+        )
+        if collection is None:
+            return response_with_status(
+                status=False, language=language, error_name=COLLECTION_NOT_FOUND
+            )
+
+        search_options = params.get("search_options")
+        if search_options is not None:
+            current = collection.default_search_options()
+            current.update(search_options)
+            collection.set_default_search_options(current)
+
+        generation_options = params.get("generation_options") or {}
+        if params.get("generative_model"):
+            generation_options["generative_model"] = params.get("generative_model")
+        if generation_options:
+            current = collection.default_generation_options()
+            current.update(generation_options)
+            collection.set_default_generation_options(current)
+
+        collection.save(update_fields=["metadata_json"])
+
+        return response_with_status(
+            status=True,
+            language=language,
+            error_name=None,
+            response_body={
+                "collection_name": collection.name,
+                "default_search_options": collection.search_options_with_defaults(),
+                "default_generation_options": (
+                    collection.generation_options_with_defaults()
+                ),
+                "default_generative_model": collection.default_generative_model,
+            },
+        )
 
 
 class SetDocumentsUseInSearch(APIView):

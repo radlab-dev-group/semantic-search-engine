@@ -36,7 +36,14 @@ def _as_count(value: Any) -> Optional[int]:
 
 @dataclass
 class Collection:
-    """A ``CollectionOfDocuments`` as returned by ``collections``."""
+    """A ``CollectionOfDocuments`` as returned by ``collections``.
+
+    ``default_search_options`` and ``default_generation_options`` are the
+    profiles of the collection: the hyperparameters of the search and the
+    language model (with its sampling parameters) which answers about it.
+    The server answers with a complete set, the defaults of the engine
+    already filled in.
+    """
 
     id: Optional[int] = None
     name: str = ""
@@ -46,6 +53,8 @@ class Collection:
     document_count: Optional[int] = None
     active_document_count: Optional[int] = None
     metadata_json: Dict[str, Any] = field(default_factory=dict)
+    default_search_options: Dict[str, Any] = field(default_factory=dict)
+    default_generation_options: Dict[str, Any] = field(default_factory=dict)
     raw: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -63,8 +72,18 @@ class Collection:
             document_count=_as_count(merged.get("document_count")),
             active_document_count=_as_count(merged.get("active_document_count")),
             metadata_json=metadata if isinstance(metadata, dict) else {},
+            default_search_options=_as_dict(merged.get("default_search_options")),
+            default_generation_options=_as_dict(
+                merged.get("default_generation_options")
+            ),
             raw=payload,
         )
+
+    @property
+    def default_generative_model(self) -> str:
+        """Language model saved on the collection, ``""`` when there is none."""
+        model = self.default_generation_options.get("generative_model")
+        return model if isinstance(model, str) else ""
 
     @property
     def document_count_or_zero(self) -> int:

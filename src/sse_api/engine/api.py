@@ -91,6 +91,12 @@ class SearchWithOptions(APIView):
                 response_body={},
             )
 
+        # What the request does not say, the collection decides: the saved
+        # profile of the collection fills every missing option, and the
+        # engine's own defaults fill what the collection does not declare.
+        if hasattr(collection, "apply_search_defaults"):
+            options_dict = collection.apply_search_defaults(options_dict)
+
         sse_engin_config_path = os.path.join(CONFIG_DIR, "milvus_config.json")
         results = SearchQueryController.new_query(
             query_str=query_str,
@@ -155,6 +161,16 @@ class GenerativeAnswerForQuestion(APIView):
                 error_name=RESPONSE_ACCESS_DENIED,
                 response_body={},
             )
+
+        # The collection answers with the model and the sampling parameters
+        # saved on it, unless the request names its own.
+        collection = getattr(
+            getattr(user_response, "user_query", None), "collection", None
+        )
+        if collection is not None and hasattr(
+            collection, "apply_generation_defaults"
+        ):
+            query_options = collection.apply_generation_defaults(query_options)
 
         gen_model_controller = GenerativeModelController(store_to_db=True)
         query_response = gen_model_controller.generative_answer_for_response(

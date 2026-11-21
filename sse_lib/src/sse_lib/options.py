@@ -54,6 +54,9 @@ class SearchOptions:
     keywords_match: Optional[str] = None
     relative_path_contains: Optional[List[str]] = None
     metadata_filters: Optional[List[Dict[str, Any]]] = None
+    #: Filter groups of metadata expressions: a group is a list of up to
+    #: three expressions combined with AND, the groups with OR.
+    metadata_filter_groups: Optional[List[List[Dict[str, Any]]]] = None
     templates: Optional[int] = None
     only_template_documents: Optional[bool] = None
     max_results: Optional[int] = None

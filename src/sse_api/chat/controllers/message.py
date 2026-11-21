@@ -176,6 +176,14 @@ class MessageLogicController:
         instruction_str = self._extract_instruction_from_message(message)
         options = dict(message.options or {})
         options.setdefault("system_prompt_with_enumerated_documents", True)
+        # The collection decides what the message does not say: the model
+        # which answers about it and its sampling parameters.
+        if hasattr(collection, "apply_generation_defaults"):
+            options = collection.apply_generation_defaults(options)
+        if hasattr(collection, "apply_search_defaults"):
+            search_options = collection.apply_search_defaults(message.search_options)
+        else:
+            search_options = message.search_options
         rag_context, previous_rag = self._prepare_rag_memory(
             message, history, collection
         )
@@ -230,7 +238,7 @@ class MessageLogicController:
         # Add new query to DB
         query_db_results_dict = SearchQueryController.new_query(
             query_str=question_str,
-            search_options_dict=message.search_options,
+            search_options_dict=search_options,
             collection=collection,
             organisation_user=organisation_user,
             sse_engin_config_path=sse_engin_config_path,
