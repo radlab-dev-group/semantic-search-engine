@@ -276,3 +276,138 @@ def test_success_resets_failures():
     backend._failures = 1
     backend.embed(["a"])
     assert backend._failures == 0
+
+
+# ----------------------------------------------------------------------
+# extractive QA
+# ----------------------------------------------------------------------
+def ok_extractive_qa():
+    return FakeResponse(
+        200,
+        {
+            "answers": [
+                {"answer": "Warszawa", "score": 0.9},
+                {"answer": "", "score": 0.1},
+            ],
+            "count": 2,
+        },
+    )
+
+
+def test_remote_extractive_qa_posts_expected_payload():
+    session = FakeSession([ok_extractive_qa()])
+    backend = _remote(session)
+    pairs = backend.extractive_qa("Stolica Polski?", ["tekst 1", "tekst 2"])
+    assert pairs == [("Warszawa", 0.9), ("", 0.1)]
+    call = session.calls[0]
+    assert call["url"] == "http://models:8280/v1/extractive_qa"
+    assert call["json"] == {
+        "question": "Stolica Polski?",
+        "contexts": ["tekst 1", "tekst 2"],
+    }
+
+
+def test_remote_extractive_qa_missing_answer_raises():
+    session = FakeSession(
+        [FakeResponse(200, {"answers": [{"answer": "x", "score": 0.5}]})]
+    )
+    backend = _remote(session)
+    with pytest.raises(b.ModelBackendError):
+        backend.extractive_qa("q", ["a", "b"])
+
+
+def test_remote_extractive_qa_falls_back_to_local_on_outage():
+    class Local:
+        def extractive_qa(self, question, texts):
+            return [(f"local:{t}", 0.5) for t in texts]
+
+    session = FakeSession([FakeResponse(503, {"detail": "service down"})])
+    backend = b.RemoteBackend(
+        base_url="http://models:8280",
+        embed_model="emb",
+        rerank_model="rrk",
+        fallback=Local(),
+        session=session,
+    )
+    assert backend.extractive_qa("q", ["a", "b"]) == [
+        ("local:a", 0.5),
+        ("local:b", 0.5),
+    ]
+
+
+def test_remote_extractive_qa_http_error_without_fallback_raises():
+    session = FakeSession([FakeResponse(500, {"detail": "boom"})])
+    backend = _remote(session)
+    with pytest.raises(b.ModelBackendError):
+        backend.extractive_qa("q", ["a"])
+
+
+def test_local_backend_extractive_qa_delegates_to_the_local_pipeline(monkeypatch):
+    class FakeLocalQA:
+        def __init__(self):
+            self.calls = []
+
+        def answer_locally(self, question, contexts):
+            self.calls.append((question, list(contexts)))
+            return [(c[:1], 0.8) for c in contexts]
+
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "sse_api.data.controllers.extractive_qa_local",
+        FakeLocalQA(),
+    )
+    backend = b.LocalBackend()
+    pairs = backend.extractive_qa("q", ["abc", "def"])
+    assert pairs == [("a", 0.8), ("d", 0.8)]
+
+
+def test_build_extractive_qa_client_off_by_default(monkeypatch):
+    monkeypatch.delenv(b.ENV_MODEL_SERVICE_ENABLED, raising=False)
+    assert b.build_extractive_qa_client() is None
+
+
+def test_build_extractive_qa_client_on(monkeypatch):
+    monkeypatch.setenv(b.ENV_MODEL_SERVICE_ENABLED, "1")
+    monkeypatch.setenv(b.ENV_MODEL_SERVICE_URL, "http://models:8280")
+    monkeypatch.setenv(b.ENV_MODEL_SERVICE_TOKEN, "sekret")
+
+    import requests
+
+    calls = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        calls["url"] = url
+        calls["json"] = json
+        calls["headers"] = headers
+        return FakeResponse(
+            200,
+            {"answers": [{"answer": "x", "score": 0.2}], "count": 1},
+        )
+
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    client = b.build_extractive_qa_client()
+    assert client is not None
+    assert client("q", ["abc"]) == [("x", 0.2)]
+    assert calls["url"] == "http://models:8280/v1/extractive_qa"
+    assert calls["json"] == {"question": "q", "contexts": ["abc"]}
+    assert calls["headers"]["Authorization"] == "Bearer sekret"
+
+
+def test_build_extractive_qa_client_reports_a_bad_payload(monkeypatch):
+    monkeypatch.setenv(b.ENV_MODEL_SERVICE_ENABLED, "1")
+    monkeypatch.setenv(b.ENV_MODEL_SERVICE_URL, "http://models:8280")
+
+    import requests
+
+    monkeypatch.setattr(
+        requests,
+        "post",
+        lambda url, json=None, headers=None, timeout=None: FakeResponse(
+            200, {"answers": [], "count": 0}
+        ),
+    )
+
+    client = b.build_extractive_qa_client()
+    with pytest.raises(b.ModelBackendError):
+        client("q", ["abc"])

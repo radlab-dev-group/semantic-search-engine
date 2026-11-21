@@ -48,6 +48,7 @@ codebase.
 | `POST /v1/tokenize` | count tokens with a catalog model's tokenizer (no weights loaded) | `model`, `texts[]` |
 | `POST /v1/truncate` | cut texts to a token budget, token-exact | `model`, `texts[]`, `max_tokens` |
 | `POST /v1/denoise` | clean a noisy text (OCR artefacts) with the T5 denoiser | `text`, `max_length?`, `batch_size?` |
+| `POST /v1/extractive_qa` | answer a question with a span of every retrieved passage | `question`, `contexts[]` |
 | `GET /v1/models` | catalog this instance serves, with load state | — |
 | `GET /healthz` | liveness; no model, no credentials | — |
 | `GET /readyz` | readiness; reports per-model load errors | — |
@@ -116,13 +117,14 @@ Everything is configured by environment variables (`sse_models/settings.py`):
 |---|---|---|
 | `SSE_MODELS_HOST` | `0.0.0.0` | bind address |
 | `SSE_MODELS_PORT` | `8280` | bind port |
-| `SSE_MODELS_ROLE` | `all` | `all` \| `embed` \| `rerank` \| `denoise`; endpoints outside the role answer 503 |
+| `SSE_MODELS_ROLE` | `all` | `all` \| `embed` \| `rerank` \| `denoise` \| `extractive_qa`; endpoints outside the role answer 503 |
 | `SSE_MODELS_API_TOKEN` | *(empty)* | when set, `/v1/*` requires `Authorization: Bearer`; health stays open |
 | `SSE_CONFIG_DIR` | `./configs` | where `embedders.json` / `rerankers.json` live |
 | `SSE_MODELS_WARM_MODELS` | `0` | preload every active model before binding the port |
 | `SSE_MODELS_RERANK_MAX_DOCUMENTS` | `256` | per-request candidate cap (413 above it) |
 | `SSE_MODELS_BATCH_SIZE` | *(unset)* | forward a batch size to the model; unset keeps the engine's own call shape |
 | `SSE_MODELS_DENOISE_MAX_MODEL_INPUT` | `256` | token window the denoiser feeds to T5 |
+| `SSE_MODELS_EXTRACTIVE_QA_MAX_CONTEXTS` | `64` | per-request passage cap for `/v1/extractive_qa` (413 above it) |
 | `SSE_MODELS_LOG_LEVEL` | `info` | logging level |
 
 The model catalog is the **same** `configs/embedders.json` and
@@ -274,6 +276,8 @@ Every inference call logs `model`, batch size, result count and server-side
 | Every query pays a timeout | service unreachable, fallback off | `SSE_MODEL_SERVICE_FALLBACK_LOCAL=1`, and check `SSE_MODEL_SERVICE_URL` reachability from the engine host |
 | First query after start is slow | lazy load | `SSE_MODELS_WARM_MODELS=1` |
 | `413` from `/v1/rerank` | more candidates than `SSE_MODELS_RERANK_MAX_DOCUMENTS` | narrow the candidate set — reranking hundreds of pairs is the cost you are trying to avoid |
+| `413` from `/v1/extractive_qa` | more passages than `SSE_MODELS_EXTRACTIVE_QA_MAX_CONTEXTS` | answer over a smaller candidate set — one pipeline pass per passage is the cost |
+| `extractive QA failed` / a passage answers empty | weights missing, no torch, or the CUDA device of the `extractive_qa` section is not there | check the `extractive_qa` section of `configs/models.json`; the model falls back to CPU when CUDA is absent, so an empty answer means it could not be loaded at all |
 
 ---
 
@@ -286,6 +290,11 @@ pytest src/sse_models/tests/test_api.py -q          # 21 tests, no ML stack need
 They run against fake embedder/reranker objects, so they cover the contract —
 status codes, auth, role gating, ordering, index mapping, `top_n`, limits —
 without loading a model. `test_registry.py` covers catalog handling, per-model
-`device` pass-through and the per-model inference lock. The engine side is covered by
-`src/sse_api/engine/tests/test_model_backend.py` (17 tests: the factory, name
-resolution, payload shapes, the circuit breaker and the fallback).
+`device` pass-through and the per-model inference lock; `test_extractive_qa.py`
+covers the extractive QA endpoint the same way (role gate, the per-passage
+answer in input order, the blank-passage shortcut, the passage limit and the
+model/config failures). The engine side is covered by
+`src/sse_api/engine/tests/test_model_backend.py` (payload shapes, the circuit
+breaker and the fallback) and
+`src/sse_api/engine/tests/test_extractive_qa_controller.py` (the controller's
+service / pipeline / local answer paths).

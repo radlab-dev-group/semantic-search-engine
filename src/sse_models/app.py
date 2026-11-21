@@ -8,6 +8,7 @@ Endpoints
 ---------
 ``POST /v1/embed``    embed a batch of texts
 ``POST /v1/rerank``   score ``query`` against ``documents``
+``POST /v1/extractive_qa`` answer a question over retrieved passages
 ``GET  /v1/models``   list the models this instance can serve
 ``GET  /healthz``     liveness (no model, no credentials)
 ``GET  /readyz``      readiness (reports load state per model)
@@ -44,6 +45,9 @@ from sse_models.schemas import (
     RerankResponse,
     DenoiseRequest,
     DenoiseResponse,
+    ExtractiveQAAnswer,
+    ExtractiveQARequest,
+    ExtractiveQAResponse,
     TokenizeRequest,
     TokenizeResponse,
     TruncateRequest,
@@ -452,6 +456,80 @@ def create_app(
             took_ms=round(took_ms, 3),
         )
 
+    # ------------------------------------------------------------------
+    # /v1/extractive_qa
+    # ------------------------------------------------------------------
+    @app.post(
+        "/v1/extractive_qa",
+        response_model=ExtractiveQAResponse,
+        response_model_exclude_none=True,
+        tags=["inference"],
+        dependencies=auth,
+        responses={
+            413: {"model": ErrorResponse, "description": "Too many passages"},
+            500: {"model": ErrorResponse, "description": "QA model unavailable"},
+            503: {"model": ErrorResponse, "description": "Role disabled here"},
+        },
+    )
+    def extractive_qa(payload: ExtractiveQARequest) -> ExtractiveQAResponse:
+        """Answer a question with a span of every retrieved passage.
+
+        The engine no longer holds the QA weights; it posts the question and
+        the passages it has just retrieved here.  One answer per passage, in
+        input order — the caller keeps its own ranking and decides which
+        passage answered best.
+        """
+        if not settings.extractive_qa_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    f"this instance serves role '{settings.role}', "
+                    "not extractive question answering"
+                ),
+            )
+        if not payload.question.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="question must not be empty",
+            )
+        if len(payload.contexts) > settings.extractive_qa_max_contexts:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=(
+                    f"{len(payload.contexts)} passages exceeds the limit of "
+                    f"{settings.extractive_qa_max_contexts}; answer over a "
+                    "smaller candidate set"
+                ),
+            )
+
+        bundle = _load_qa_model(registry)
+
+        from sse_models.extractive_qa import answer
+
+        start = time.perf_counter()
+        try:
+            with registry.inference_lock("qa_model", "qa_model"):
+                raw_answers = answer(bundle, payload.question, payload.contexts)
+        except Exception as exc:  # noqa: BLE001 - report, keep the server alive
+            logger.exception("extractive QA failed")
+            raise HTTPException(
+                status_code=500, detail=f"extractive QA failed: {exc}"
+            ) from exc
+        took_ms = (time.perf_counter() - start) * 1000.0
+        logger.info(
+            "extractive_qa contexts=%d took=%.1fms",
+            len(payload.contexts),
+            took_ms,
+        )
+        return ExtractiveQAResponse(
+            answers=[
+                ExtractiveQAAnswer(answer=text, score=score)
+                for text, score in raw_answers
+            ],
+            count=len(raw_answers),
+            took_ms=round(took_ms, 3),
+        )
+
     return app
 
 
@@ -495,5 +573,12 @@ def _load_tokenizer(registry: ModelRegistry, kind: str, name: str):
 def _load_denoiser(registry: ModelRegistry):
     try:
         return registry.denoiser()
+    except ModelConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+def _load_qa_model(registry: ModelRegistry):
+    try:
+        return registry.qa_model()
     except ModelConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

@@ -4,7 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
-| [0.1.9](#019) | Search quality: the engine core no longer ships the ML stack (text cleaning, token counting and truncation move to the model service — `POST /v1/tokenize`, `/v1/truncate`, `/v1/denoise`), indexing embeds chunks with a document context header (document, category, path, section), the Milvus `filename` / `document_name` filter bug is fixed, short chunks (40+ characters) reach the index, texts are split on paragraph, code-fence and table boundaries, every collection stores its own search profile and RAG model (`POST /api/v1/set_collection_options`; the search and generation endpoints fall back to the profile when the request names no value), the hybrid search is rebalanced: weighted RRF (`dense_weight` / `lexical_weight`), equal candidate pools for both legs, the document filter on the full-text leg, the cosine similarity surviving the fusion, per-model `query_instruction` for asymmetric embedders and HNSW tuned for recall, and the post-retrieval stage: the reranker sees the name of the document it scores, a bigger rerank pool, per-document chunk caps (MMR-style diversification), a logarithmic document mass and the stitching of neighbouring chunks into one passage for the RAG context; the evaluation gains the standard IR metrics (NDCG, MRR, Precision/Recall, AP/MAP) scored on every question and a grid-search tuner of the fusion weights, the RRF constant and the rerank switch |
+| [0.1.9](#019) | Search quality: the engine core no longer ships the ML stack (text cleaning, token counting and truncation move to the model service — `POST /v1/tokenize`, `/v1/truncate`, `/v1/denoise`), indexing embeds chunks with a document context header (document, category, path, section), the Milvus `filename` / `document_name` filter bug is fixed, short chunks (40+ characters) reach the index, texts are split on paragraph, code-fence and table boundaries, every collection stores its own search profile and RAG model (`POST /api/v1/set_collection_options`; the search and generation endpoints fall back to the profile when the request names no value), the hybrid search is rebalanced: weighted RRF (`dense_weight` / `lexical_weight`), equal candidate pools for both legs, the document filter on the full-text leg, the cosine similarity surviving the fusion, per-model `query_instruction` for asymmetric embedders and HNSW tuned for recall, and the post-retrieval stage: the reranker sees the name of the document it scores, a bigger rerank pool, per-document chunk caps (MMR-style diversification), a logarithmic document mass and the stitching of neighbouring chunks into one passage for the RAG context; the evaluation gains the standard IR metrics (NDCG, MRR, Precision/Recall, AP/MAP) scored on every question and a grid-search tuner of the fusion weights, the RRF constant and the rerank switch, and extractive question answering moving to the model service (`POST /v1/extractive_qa`) |
 | [0.1.8](#018) | Standalone model service (`src/sse_models`) with `POST /v1/embed` / `POST /v1/rerank`, run with `./run.sh models` or `./run-models.sh`: the engine can delegate embedding and reranking to it (`SSE_MODEL_SERVICE_ENABLED`) with a circuit breaker and in-process fallback, or run inference on another machine entirely. Keyword filters in search (`options.keywords` with `keywords_match: "and"` / `"any"`), lexical-only search (`"lexical_only": true` answers from the full-text leg alone, `score_scale: "fts"`), a `POST update_knowledge_quality` endpoint with monotonic per-document upvote/downvote counters, and `model_embedder` / `model_reranker` in `GET collections` |
 | [0.1.7](#017) | Deletion of user chats: `POST delete_chat` (also accepted as `DELETE`, `chat_id` / `chat_ids[]`), `ChatDeletionController`, and `sse_lib.SSEClient.delete_chat` (`endpoints.DELETE_CHAT`). Deleting a collection also removes messages and states of its chats cleanly. Chat history (`GET chats` and `GET get_chat_by_hash`) now serializes messages with `DeepMessageSerializer` (including `state` with RAG responses, answers, and citations) and `collection_name` |
 | [0.1.6](#016) | Conversational RAG with memory: the generator sees the previous questions **and** answers, follow-up questions are rewritten into standalone retrieval queries (new `POST rewrite_query`), answers carry numbered source citations (`citations`, per-chat numbering, `answer_source`/`rewritten_query` in the reply) and short commands ("make it a table", "shorten", "translate") reuse the previous sources without a new search. Every search hit and citation carries the chunk's identity and position (`text_id`, `document_id`, `char_start`, `char_end`); `GET document_content?text_id=` opens exactly the chunk's page with a `highlight`. `sse_lib`: `rewrite_query()`, `generative_answer_with_citations()`, `document_content(text_id=...)` and the new reply/citation fields |
@@ -191,15 +191,57 @@ All notable changes to the Semantic Search Engine are documented in this file.
   (`LLAMA_SERVICES_HOSTS`, whitespace or comma separated) instead of the
   source.
 
+#### Extractive question answering in the model service
+- Extracting an answer from the retrieved passages was the last operation
+  which loaded a HuggingFace `pipeline` inside the engine process.  It moves
+  to the model service as **`POST /v1/extractive_qa`**: the engine posts the
+  question together with the passages it has just retrieved and gets back one
+  `{answer, score}` per passage, in input order, so the caller keeps its own
+  ranking of which passage answered best.
+- `sse_models`: `src/sse_models/extractive_qa.py` (one pass per passage, a
+  blank passage answered without the model), the `qa_model()` loader of
+  `ModelRegistry` (lazy and cached, like the denoiser), schemas
+  `ExtractiveQARequest` / `ExtractiveQAResponse`, a per-model inference lock,
+  and the new **`extractive_qa` role** with setting
+  `SSE_MODELS_EXTRACTIVE_QA_MAX_CONTEXTS` (default 64, above it a request is
+  answered `413`).  The model comes from the `extractive_qa` section of
+  `configs/models.json` (`model_name`, `model_path`, `device`).
+- The forward pass is written against the model rather than requested as a
+  pipeline: **transformers v5 removed the `question-answering` pipeline**
+  (the `*ForQuestionAnswering` classes stay), so the service tokenises
+  `[CLS] question [SEP] context [SEP]`, takes the best `start <= end` pair of
+  the start/end logits and slices the span back out of the passage by its
+  character offsets, closing a cut which landed mid-word.  Same answers, no
+  dependency on a removed API and no pin to an old release.
+- Engine: `ModelBackend` gains `extractive_qa(question, contexts)` —
+  `RemoteBackend` calls the service (circuit breaker and local fallback like
+  every other operation), `LocalBackend` the in-process pipeline of the new
+  `sse_api/data/controllers/extractive_qa_local.py`.  `build_extractive_qa_client()`
+  is the standalone client, the mirror of `build_denoise_client()`.
+- `ExtractiveQAController` keeps its public shape (`run_extractive_qa` answers
+  a `search_results` dict the same way as before) but no longer loads a model:
+  it prefers the model service, falls back to the in-process pipeline when the
+  service is down, and answers with an empty answer and a score of `0.0` when
+  neither is available, so a search never fails on a missing QA model.  The
+  class had two near-identical copies; `controllers/models_logic/extractive.py`
+  now re-exports the one of `core/generative/extractive.py` under the
+  import path it has always had.
+- The `RemoteBackend` fallback covers the text operations it was missing: a
+  failed `count_tokens` / `truncate_texts` / `denoise_text` / `extractive_qa`
+  is answered by the local backend instead of falling into the rerank branch
+  (which also removes a block of unreachable code).
+
 ### Changed
 
 #### Dependencies of the engine
 - `requirements.txt` of the API image no longer installs
   `torch`, `transformers`, `sentence-transformers`, `sentencepiece` or
-  `spacy`; the engine core imports none of them at module level (the
-  extractive QA pipelines import `transformers` only on load).  Inference
-  and all heavy text operations live in the model service
-  (`requirements-models.txt` is the only model stack).
+  `spacy`; the engine core imports none of them at module level (an
+  in-process QA pipeline or T5 is loaded only by the explicit local fallbacks
+  of `sse_api/data/controllers/`).  Inference and all heavy text operations
+  live in the model service (`requirements-models.txt` is the only model
+  stack), including extractive question answering
+  (`POST /v1/extractive_qa`).
 - `Dockerfile.models` builds the inference image standalone.
 
 ### Fixed

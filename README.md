@@ -304,9 +304,20 @@ looks like:
     "model_name": "radlab/polish-denoiser-t5-base",
     "model_path": "/opt/models/denoiser/t5-base",
     "device": "cuda:0"
+  },
+  "extractive_qa": {
+    "model_name": "radlab/polish-qa-v2",
+    "model_path": "/opt/models/qa/best_model",
+    "device": "cuda:0"
   }
 }
 ```
+
+The two sections name the models which are **not** in the embedder / reranker
+catalogs: `denoiser` is the T5 text cleaner and `extractive_qa` the
+question-answering pipeline. Both are loaded by the model service —
+`POST /v1/denoise` and `POST /v1/extractive_qa` — and never by the engine
+itself unless it runs without the service.
 
 You can add new models by extending the JSON and updating `embedders.json` / `rerankers.json`
 accordingly.

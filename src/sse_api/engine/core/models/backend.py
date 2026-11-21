@@ -147,6 +147,17 @@ class ModelBackend:
         """Clean ``text`` (OCR artefacts, broken sentences) via the denoiser."""
         raise NotImplementedError
 
+    def extractive_qa(
+        self, question: str, contexts: Sequence[str]
+    ) -> List[Tuple[str, float]]:
+        """
+        Answer ``question`` with a span of every context.
+
+        Returns one ``(answer, score)`` pair per input context, in input
+        order; the caller keeps its own ranking of which passage answered.
+        """
+        raise NotImplementedError
+
     def describe(self) -> str:
         """Short human-readable summary for the logs."""
         return self.__class__.__name__
@@ -256,6 +267,17 @@ class LocalBackend(ModelBackend):
         from sse_api.data.controllers.denoiser import denoise_text_locally
 
         return denoise_text_locally(text)
+
+    def extractive_qa(
+        self, question: str, contexts: Sequence[str]
+    ) -> List[Tuple[str, float]]:
+        # The local QA pipeline is the engine's historical path: transformers
+        # arrives only when an answer is really extracted in this process.
+        from sse_api.data.controllers.extractive_qa_local import (
+            answer_locally,
+        )
+
+        return answer_locally(question, list(contexts))
 
     def describe(self) -> str:
         return f"local({self._label})"
@@ -493,6 +515,29 @@ class RemoteBackend(ModelBackend):
             )
         return cleaned
 
+    def extractive_qa(
+        self, question: str, contexts: Sequence[str]
+    ) -> List[Tuple[str, float]]:
+        data = self._run(
+            "/v1/extractive_qa",
+            {"question": question, "contexts": list(contexts)},
+        )
+        answers = data.get("answers")
+        if not isinstance(answers, list) or len(answers) != len(contexts):
+            raise ModelBackendError(
+                "model service returned an unexpected extractive QA payload"
+            )
+        pairs: List[Tuple[str, float]] = []
+        for entry in answers:
+            if not isinstance(entry, dict):
+                raise ModelBackendError(
+                    "model service returned an unexpected extractive QA answer"
+                )
+            pairs.append(
+                (str(entry.get("answer") or ""), float(entry.get("score") or 0.0))
+            )
+        return pairs
+
     def _run(self, path: str, payload: dict) -> dict:
         if self.circuit_open:
             return self._degrade(
@@ -519,18 +564,27 @@ class RemoteBackend(ModelBackend):
         # The fallback answers locally, so nothing more is sent to the service.
         if path == "/v1/embed":
             return {"embeddings": self._fallback.embed(payload["texts"])}
-        return {
-            "results": [
-                {"index": index, "score": score}
-                for index, score in enumerate(
-                    self._fallback.rerank_scores(
-                        payload["query"], payload["documents"]
+        if path == "/v1/extractive_qa":
+            return {
+                "answers": [
+                    {"answer": answer, "score": score}
+                    for answer, score in self._fallback.extractive_qa(
+                        payload["question"], payload["contexts"]
                     )
-                )
-            ]
-        }
-        if path == "/v1/embed":
-            return {"embeddings": self._fallback.embed(payload["texts"])}
+                ]
+            }
+        if path == "/v1/tokenize":
+            return {"token_counts": self._fallback.count_tokens(payload["texts"])}
+        if path == "/v1/truncate":
+            truncated, was_truncated = self._fallback.truncate_texts(
+                payload["texts"], payload["max_tokens"]
+            )
+            return {
+                "truncated_texts": truncated,
+                "was_truncated": was_truncated,
+            }
+        if path == "/v1/denoise":
+            return {"cleaned_text": self._fallback.denoise_text(payload["text"])}
         return {
             "results": [
                 {"index": index, "score": score}
@@ -630,6 +684,62 @@ def build_denoise_client() -> Optional[Callable[[str], str]]:
         return cleaned
 
     return _denoise
+
+
+def build_extractive_qa_client() -> (
+    Optional[Callable[[str, Sequence[str]], List[Tuple[str, float]]]]
+):
+    """
+    Build a ``(question, contexts) -> answers`` client for the model service.
+
+    Extractive QA is a model-service operation and the engine must not need
+    torch for it; this is the one place the HTTP shape of
+    ``POST /v1/extractive_qa`` is known on the engine side.  ``None`` means
+    "no service configured", and the caller decides what answering means then
+    (the in-process pipeline, or nothing).
+    """
+    if not service_enabled():
+        return None
+
+    base_url = os.environ.get(ENV_MODEL_SERVICE_URL, "").strip().rstrip("/")
+    api_token = os.environ.get(ENV_MODEL_SERVICE_TOKEN, "").strip()
+    timeout = _env_float(ENV_MODEL_SERVICE_TIMEOUT, DEFAULT_TIMEOUT_SECONDS)
+    connect_timeout = _env_float(
+        ENV_MODEL_SERVICE_CONNECT_TIMEOUT, DEFAULT_CONNECT_TIMEOUT_SECONDS
+    )
+
+    def _answer(question: str, contexts: Sequence[str]) -> List[Tuple[str, float]]:
+        import requests
+
+        headers = {"Content-Type": "application/json"}
+        if api_token:
+            headers["Authorization"] = f"Bearer {api_token}"
+
+        response = requests.post(
+            f"{base_url}/v1/extractive_qa",
+            json={"question": question, "contexts": list(contexts)},
+            headers=headers,
+            timeout=(connect_timeout, timeout),
+        )
+        if response.status_code >= 400:
+            raise ModelBackendError(
+                f"{base_url}/v1/extractive_qa responded {response.status_code}"
+            )
+        body = response.json()
+        answers = body.get("answers")
+        if not isinstance(answers, list) or len(answers) != len(contexts):
+            raise ModelBackendError(
+                "model service returned an unexpected extractive QA payload"
+            )
+        return [
+            (
+                str(entry.get("answer") or ""),
+                float(entry.get("score") or 0.0),
+            )
+            for entry in answers
+        ]
+
+    return _answer
 
 
 def resolve_model_name(kind: str, model_path: Optional[str]) -> Optional[str]:
