@@ -27,7 +27,6 @@ import tqdm
 import json
 import pandas as pd
 from django.db.models import QuerySet
-from transformers import AutoTokenizer
 
 from radlab_data.text.utils import TextUtils
 
@@ -118,6 +117,10 @@ class DBSemanticSearchController:
         self._milvus_handler: MilvusHandler | None = (
             None  # Legacy concrete (may be None)
         )
+        # Tokenizer of the embedder, loaded on first use only (and never when
+        # the model service performs embedding and truncation instead).
+        self._emb_tokenizer = None
+        self._embedder_model_path = None
 
         if vector_store is not None:
             # Protocol mode — no need to instantiate MilvusHandler.
@@ -129,7 +132,6 @@ class DBSemanticSearchController:
         embedder_device = ""
         embedder_model_path = None
         embedder_vector_size = -1
-        self.emb_tokenizer = None
         if embedder_model is not None and len(embedder_model):
             embedder_model_path = EmbeddingModelsConfig.get_embedder_path(
                 embedder_model
@@ -140,7 +142,7 @@ class DBSemanticSearchController:
             embedder_device = EmbeddingModelsConfig.get_embedder_device(
                 embedder_model
             )
-            self.emb_tokenizer = AutoTokenizer.from_pretrained(embedder_model_path)
+            self._embedder_model_path = embedder_model_path
 
         reranker_device = ""
         reranker_model_path = None
@@ -167,6 +169,59 @@ class DBSemanticSearchController:
 
         self._text_db_controller = RelationalDBController()
         self._template_controller = QueryTemplateController()
+
+    # ------------------------------------------------------------------
+    # embedding-side text preparation
+    # ------------------------------------------------------------------
+    @property
+    def emb_tokenizer(self):
+        """
+        Tokenizer of the embedder, loaded on first use.
+
+        ``transformers`` is imported here, not at module level: an engine
+        which delegates inference to the model service never loads it.
+        """
+        if self._emb_tokenizer is None and self._embedder_model_path:
+            from transformers import AutoTokenizer
+
+            self._emb_tokenizer = AutoTokenizer.from_pretrained(
+                self._embedder_model_path
+            )
+        return self._emb_tokenizer
+
+    def truncate_for_embedding(self, text: str) -> str:
+        """
+        Cut ``text`` to ``max_tokens_in_text`` tokens before embedding.
+
+        Through the model service when it is enabled (``POST /v1/truncate``,
+        the embedder's own tokenizer on the service side), otherwise with the
+        locally loaded tokenizer — the historical behaviour.
+        """
+        from sse_api.engine.core.models.backend import service_enabled
+
+        if service_enabled() and self._milvus_handler is not None:
+            truncated, was_truncated = (
+                self._milvus_handler.model_backend.truncate_texts(
+                    [text], self.max_tokens_in_text
+                )
+            )
+            if truncated and was_truncated and truncated[0] != text:
+                self._logger.debug(
+                    "chunk truncated to %d tokens before embedding",
+                    self.max_tokens_in_text,
+                )
+            return truncated[0] if truncated else text
+
+        tokenizer = self.emb_tokenizer
+        if tokenizer is None:
+            return text
+        text_tokens = tokenizer(text).input_ids
+        if len(text_tokens) <= self.max_tokens_in_text:
+            return text
+        return tokenizer.decode(
+            token_ids=text_tokens[: self.max_tokens_in_text],
+            skip_special_tokens=True,
+        )
 
     @staticmethod
     def prepare_controller_for_collection(
@@ -284,12 +339,9 @@ class DBSemanticSearchController:
                     "relative_path": text.page.document.relative_path,
                 }
 
-                text_tokens = self.emb_tokenizer(str_text_to_index).input_ids
-                if len(text_tokens) > self.max_tokens_in_text:
-                    str_text_to_index = self.emb_tokenizer.decode(
-                        token_ids=text_tokens[: self.max_tokens_in_text],
-                        skip_special_tokens=True,
-                    )
+                str_text_to_index = self.truncate_for_embedding(
+                    str_text_to_index
+                )
 
                 batch_texts.append(str_text_to_index)
                 batch_metadata.append(text_metadata)

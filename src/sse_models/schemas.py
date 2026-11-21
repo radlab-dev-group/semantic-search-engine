@@ -119,4 +119,75 @@ class ErrorResponse(BaseModel):
     detail: Optional[str] = None
 
 
+# ----------------------------------------------------------------------
+# /v1/tokenize, /v1/truncate
+# ----------------------------------------------------------------------
+class TokenizeRequest(BaseModel):
+    """Count the tokens of a batch of texts with a named model tokenizer."""
+
+    model: str = Field(
+        ..., description="Model name from the catalog (embedder or reranker)"
+    )
+    texts: List[str] = Field(
+        ..., min_length=1, description="Texts to count (at least one)"
+    )
+
+
+class TokenizeResponse(BaseModel):
+    model: str
+    token_counts: List[int]
+    max_length: int = Field(
+        ...,
+        description="Maximum model input length in tokens; 0 when unknown",
+    )
+    took_ms: float
+
+
+class TruncateRequest(BaseModel):
+    """Truncate texts to a token budget with a named model tokenizer."""
+
+    model: str = Field(
+        ..., description="Model name from the catalog (embedder or reranker)"
+    )
+    texts: List[str] = Field(
+        ..., min_length=1, description="Texts to truncate (at least one)"
+    )
+    max_tokens: int = Field(..., ge=1, description="Token budget for every text")
+
+
+class TruncateResponse(BaseModel):
+    model: str
+    truncated_texts: List[str]
+    was_truncated: List[bool]
+    took_ms: float
+
+
+# ----------------------------------------------------------------------
+# /v1/denoise
+# ----------------------------------------------------------------------
+class DenoiseRequest(BaseModel):
+    """Clean a noisy text (OCR artefacts, broken sentences)."""
+
+    text: str = Field(..., min_length=1, description="Text to denoise")
+    max_length: Optional[int] = Field(
+        None,
+        ge=1,
+        description="Model input window in tokens (model default when omitted)",
+    )
+    batch_size: Optional[int] = Field(
+        None,
+        ge=1,
+        description="Inference batch size (service default when omitted)",
+    )
+
+
+class DenoiseResponse(BaseModel):
+    cleaned_text: str
+    correctness_score: float = Field(
+        ...,
+        description="Similarity of the cleaned text to the input, in [0, 1]",
+    )
+    took_ms: float
+
+
 AnyModel = Any

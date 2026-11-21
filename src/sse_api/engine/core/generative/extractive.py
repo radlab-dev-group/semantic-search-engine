@@ -1,6 +1,7 @@
 """Extractive question‑answering using a HuggingFace pipeline."""
 
-from transformers import pipeline
+# ``transformers`` is imported inside ``load_model``: an extractive QA run is
+# the only thing which needs it, and the engine must import without it.
 
 
 class ExtractiveQAController:
@@ -49,6 +50,8 @@ class ExtractiveQAController:
         pipeline
             A ready‑to‑use question‑answering pipeline.
         """
+        from transformers import pipeline
+
         return pipeline("question-answering", model=model_path, device=self.device)
 
     def run_extractive_qa(self, question_str: str, search_results: dict) -> dict:

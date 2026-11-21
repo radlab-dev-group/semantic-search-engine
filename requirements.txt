@@ -17,12 +17,18 @@ xlsxwriter
 bs4
 
 # ml
-transformers
-torch
-sentencepiece
-spacy
-sentence_transformers
+# The engine core is inference-free by default: embedding, reranking,
+# tokenization and denoising are served by `sse_models` over HTTP (see
+# requirements-models.txt, installed on the model host only).  What stays
+# here is what the engine itself executes: language detection of queries
+# (radlab_data) and the text-similarity metric of the denoiser's correctness
+# score.
+#
+# An engine which still loads models in process (SSE_MODEL_SERVICE_ENABLED=0,
+# the historical default) installs BOTH files:
+#   pip install -r requirements.txt -r requirements-models.txt
 fasttext-langdetect
+Levenshtein
 # langchain
 # langchain-community
 openai
@@ -31,8 +37,6 @@ huggingface_hub
 # db
 pymilvus>=3.0
 psycopg2-binary
-
-Levenshtein
 
 # LLM Router
 # radlab-llm-router

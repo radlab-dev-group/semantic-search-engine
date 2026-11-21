@@ -42,6 +42,12 @@ from sse_models.schemas import (
     RerankHit,
     RerankRequest,
     RerankResponse,
+    DenoiseRequest,
+    DenoiseResponse,
+    TokenizeRequest,
+    TokenizeResponse,
+    TruncateRequest,
+    TruncateResponse,
 )
 from sse_models.settings import ModelServiceSettings
 
@@ -299,6 +305,153 @@ def create_app(
             took_ms=round(took_ms, 3),
         )
 
+    # ------------------------------------------------------------------
+    # /v1/tokenize and /v1/truncate
+    # ------------------------------------------------------------------
+    @app.post(
+        "/v1/tokenize",
+        response_model=TokenizeResponse,
+        response_model_exclude_none=True,
+        tags=["inference"],
+        dependencies=auth,
+        responses={
+            404: {"model": ErrorResponse, "description": "Unknown model name"},
+            500: {"model": ErrorResponse, "description": "Bad model config"},
+        },
+    )
+    def tokenize(payload: TokenizeRequest) -> TokenizeResponse:
+        """Count the tokens of every text, using the tokenizer of a model.
+
+        Only the tokenizer is loaded — counting tokens never pulls the model
+        weights into memory.
+        """
+        kind = _resolve_kind(registry, payload.model)
+        start = time.perf_counter()
+        tokenizer = _load_tokenizer(registry, kind, payload.model)
+        counts = [
+            len(tokenizer.encode(text, add_special_tokens=False))
+            for text in payload.texts
+        ]
+        took_ms = (time.perf_counter() - start) * 1000.0
+        logger.info(
+            "tokenize model=%s texts=%d took=%.1fms",
+            payload.model,
+            len(counts),
+            took_ms,
+        )
+        return TokenizeResponse(
+            model=payload.model,
+            token_counts=counts,
+            max_length=registry.max_length_of(kind, payload.model),
+            took_ms=round(took_ms, 3),
+        )
+
+    @app.post(
+        "/v1/truncate",
+        response_model=TruncateResponse,
+        response_model_exclude_none=True,
+        tags=["inference"],
+        dependencies=auth,
+        responses={
+            404: {"model": ErrorResponse, "description": "Unknown model name"},
+            500: {"model": ErrorResponse, "description": "Bad model config"},
+        },
+    )
+    def truncate(payload: TruncateRequest) -> TruncateResponse:
+        """Truncate texts to ``max_tokens`` (token-exact, model tokenizer)."""
+        kind = _resolve_kind(registry, payload.model)
+        start = time.perf_counter()
+        tokenizer = _load_tokenizer(registry, kind, payload.model)
+
+        truncated: List[str] = []
+        was_truncated: List[bool] = []
+        for text in payload.texts:
+            token_ids = tokenizer.encode(text, add_special_tokens=False)
+            if len(token_ids) <= payload.max_tokens:
+                truncated.append(text)
+                was_truncated.append(False)
+                continue
+            truncated.append(
+                tokenizer.decode(
+                    token_ids[: payload.max_tokens], skip_special_tokens=True
+                )
+            )
+            was_truncated.append(True)
+
+        took_ms = (time.perf_counter() - start) * 1000.0
+        logger.info(
+            "truncate model=%s texts=%d cut=%d took=%.1fms",
+            payload.model,
+            len(truncated),
+            sum(1 for flag in was_truncated if flag),
+            took_ms,
+        )
+        return TruncateResponse(
+            model=payload.model,
+            truncated_texts=truncated,
+            was_truncated=was_truncated,
+            took_ms=round(took_ms, 3),
+        )
+
+    # ------------------------------------------------------------------
+    # /v1/denoise
+    # ------------------------------------------------------------------
+    @app.post(
+        "/v1/denoise",
+        response_model=DenoiseResponse,
+        response_model_exclude_none=True,
+        tags=["inference"],
+        dependencies=auth,
+        responses={
+            500: {"model": ErrorResponse, "description": "Denoiser unavailable"},
+            503: {"model": ErrorResponse, "description": "Role disabled here"},
+        },
+    )
+    def denoise(payload: DenoiseRequest) -> DenoiseResponse:
+        """Clean a noisy text (OCR artefacts, broken sentences) with the T5 denoiser."""
+        if not settings.denoise_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"this instance serves role '{settings.role}', not denoising",
+            )
+        if not payload.text.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="text must not be empty",
+            )
+
+        bundle = _load_denoiser(registry)
+        max_model_input = payload.max_length or settings.denoise_max_model_input
+
+        from sse_models.denoising import denoise_text
+
+        start = time.perf_counter()
+        try:
+            with registry.inference_lock("denoiser", "denoiser"):
+                cleaned, score = denoise_text(
+                    bundle,
+                    payload.text,
+                    max_model_input=max_model_input,
+                    batch_size=payload.batch_size or settings.batch_size or 50,
+                )
+        except Exception as exc:  # noqa: BLE001 - report, keep the server alive
+            logger.exception("denoising failed")
+            raise HTTPException(
+                status_code=500, detail=f"denoising failed: {exc}"
+            ) from exc
+        took_ms = (time.perf_counter() - start) * 1000.0
+        logger.info(
+            "denoise chars=%d score=%.3f took=%.1fms",
+            len(payload.text),
+            score,
+            took_ms,
+        )
+        return DenoiseResponse(
+            cleaned_text=cleaned,
+            correctness_score=score,
+            took_ms=round(took_ms, 3),
+        )
+
     return app
 
 
@@ -308,5 +461,39 @@ def _load_model(registry: ModelRegistry, kind: str, name: str):
         return registry.get(kind, name)
     except ModelNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ModelConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+def _resolve_kind(registry: ModelRegistry, name: str) -> str:
+    """
+    Which catalog a model name lives in ("embedder" or "reranker").
+
+    A tokenizer request names a model, not a kind; the embedder catalog is
+    checked first because that is the model whose tokenizer matters for
+    chunking.
+    """
+    if registry.has_model("embedder", name):
+        return "embedder"
+    if registry.has_model("reranker", name):
+        return "reranker"
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"no model named '{name}' in the catalog",
+    )
+
+
+def _load_tokenizer(registry: ModelRegistry, kind: str, name: str):
+    try:
+        return registry.tokenizer_for(kind, name)
+    except ModelNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ModelConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+def _load_denoiser(registry: ModelRegistry):
+    try:
+        return registry.denoiser()
     except ModelConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

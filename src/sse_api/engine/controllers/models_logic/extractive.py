@@ -1,4 +1,10 @@
-from transformers import pipeline
+# ``transformers`` is imported inside ``load_model``: loading a QA pipeline
+# is the only thing which needs it, and importing the engine must not.
+#
+# Extractive QA over retrieved passages is the historical path; new
+# integrations answer through the generative model (``LLMRouterClient``) or
+# through a model-service endpoint, and this controller stays available for
+# callers which still pass their own ``qa_pipeline``.
 
 
 class ExtractiveQAController:
@@ -47,6 +53,8 @@ class ExtractiveQAController:
         pipeline
             A ready‑to‑use question‑answering pipeline.
         """
+        from transformers import pipeline
+
         return pipeline("question-answering", model=model_path, device=self.device)
 
     def run_extractive_qa(self, question_str: str, search_results: dict):

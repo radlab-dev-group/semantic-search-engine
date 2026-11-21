@@ -1,0 +1,52 @@
+# syntax=docker/dockerfile:1
+#
+# SSE model service — inference image (src/sse_models).
+#
+#   docker build -f Dockerfile.models -t sse-models:0.1.9 .
+#   docker run -p 8280:8280 -v $PWD/configs:/app/configs:ro \
+#       -e SSE_MODELS_ROLE=all sse-models:0.1.9
+#
+# The engine image (Dockerfile) does not carry the model stack; this one does,
+# and nothing else — no Django, no pymilvus, no database client.  A GPU host
+# runs it with --device /dev/nvidia0 (or the NVIDIA container runtime) and the
+# per-model `device` key of configs/embedders.json points at cuda.
+#
+# Runtime configuration (configs/*.json) is mounted, not baked in, exactly
+# like for the API image.
+
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+ENV SSE_CONFIG_DIR=/app/configs
+
+COPY requirements-models.txt ./requirements-models.txt
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+        ca-certificates \
+        curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install -r requirements-models.txt \
+    && rm -rf /root/.cache/pip
+
+# The service imports nothing from the engine, so only src/sse_models ships.
+COPY src/sse_models/ ./src/sse_models/
+ENV PYTHONPATH=/app/src
+
+# Run unprivileged; the catalog is mounted read-only.
+RUN groupadd --gid 10001 sse \
+    && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin sse \
+    && mkdir -p /app/configs \
+    && chown -R sse:sse /app
+USER sse
+
+EXPOSE 8280
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8280/healthz || exit 1
+
+CMD ["python", "-m", "sse_models"]
