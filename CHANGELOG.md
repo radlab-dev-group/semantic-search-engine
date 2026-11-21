@@ -4,7 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
-| [0.1.9](#019) | Search quality: the engine core no longer ships the ML stack (text cleaning, token counting and truncation move to the model service — `POST /v1/tokenize`, `/v1/truncate`, `/v1/denoise`), indexing embeds chunks with a document context header (document, category, path, section), the Milvus `filename` / `document_name` filter bug is fixed, short chunks (40+ characters) reach the index, texts are split on paragraph, code-fence and table boundaries, every collection stores its own search profile and RAG model (`POST /api/v1/set_collection_options`; the search and generation endpoints fall back to the profile when the request names no value), and the hybrid search is rebalanced: weighted RRF (`dense_weight` / `lexical_weight`), equal candidate pools for both legs, the document filter on the full-text leg, the cosine similarity surviving the fusion, per-model `query_instruction` for asymmetric embedders and HNSW tuned for recall |
+| [0.1.9](#019) | Search quality: the engine core no longer ships the ML stack (text cleaning, token counting and truncation move to the model service — `POST /v1/tokenize`, `/v1/truncate`, `/v1/denoise`), indexing embeds chunks with a document context header (document, category, path, section), the Milvus `filename` / `document_name` filter bug is fixed, short chunks (40+ characters) reach the index, texts are split on paragraph, code-fence and table boundaries, every collection stores its own search profile and RAG model (`POST /api/v1/set_collection_options`; the search and generation endpoints fall back to the profile when the request names no value), the hybrid search is rebalanced: weighted RRF (`dense_weight` / `lexical_weight`), equal candidate pools for both legs, the document filter on the full-text leg, the cosine similarity surviving the fusion, per-model `query_instruction` for asymmetric embedders and HNSW tuned for recall, and the post-retrieval stage: the reranker sees the name of the document it scores, a bigger rerank pool, per-document chunk caps (MMR-style diversification), a logarithmic document mass and the stitching of neighbouring chunks into one passage for the RAG context |
 | [0.1.8](#018) | Standalone model service (`src/sse_models`) with `POST /v1/embed` / `POST /v1/rerank`, run with `./run.sh models` or `./run-models.sh`: the engine can delegate embedding and reranking to it (`SSE_MODEL_SERVICE_ENABLED`) with a circuit breaker and in-process fallback, or run inference on another machine entirely. Keyword filters in search (`options.keywords` with `keywords_match: "and"` / `"any"`), lexical-only search (`"lexical_only": true` answers from the full-text leg alone, `score_scale: "fts"`), a `POST update_knowledge_quality` endpoint with monotonic per-document upvote/downvote counters, and `model_embedder` / `model_reranker` in `GET collections` |
 | [0.1.7](#017) | Deletion of user chats: `POST delete_chat` (also accepted as `DELETE`, `chat_id` / `chat_ids[]`), `ChatDeletionController`, and `sse_lib.SSEClient.delete_chat` (`endpoints.DELETE_CHAT`). Deleting a collection also removes messages and states of its chats cleanly. Chat history (`GET chats` and `GET get_chat_by_hash`) now serializes messages with `DeepMessageSerializer` (including `state` with RAG responses, answers, and citations) and `collection_name` |
 | [0.1.6](#016) | Conversational RAG with memory: the generator sees the previous questions **and** answers, follow-up questions are rewritten into standalone retrieval queries (new `POST rewrite_query`), answers carry numbered source citations (`citations`, per-chat numbering, `answer_source`/`rewritten_query` in the reply) and short commands ("make it a table", "shorten", "translate") reuse the previous sources without a new search. Every search hit and citation carries the chunk's identity and position (`text_id`, `document_id`, `char_start`, `char_end`); `GET document_content?text_id=` opens exactly the chunk's page with a `highlight`. `sse_lib`: `rewrite_query()`, `generative_answer_with_citations()`, `document_content(text_id=...)` and the new reply/citation fields |
@@ -122,6 +122,45 @@ All notable changes to the Semantic Search Engine are documented in this file.
   `efConstruction = 128` at the build, `ef = 200` at the query (was
   `8 / 64 / 100`).
 - `sse_lib.SearchOptions` gains `dense_weight` and `lexical_weight`.
+
+#### Contextual reranking and result diversity
+- The cross-encoder reranker is no longer **context-blind**: a candidate is
+  sent to it prefixed with the name of the document it comes from
+  (`Dokument: {name} | Treść: {text}`, the shape of the indexing
+  enrichment), so a query naming a document, a regulation or a product
+  matches a chunk which does not repeat the name inside itself
+  (`MilvusHandler._rerank_candidate`).
+- The **rerank pool grows**: the default number of candidates handed to the
+  reranker is now `max(50, max_results * 3)` (was `max_results * 2`), so a
+  relevant chunk which ranks 22nd after the fusion is still scored when the
+  answer shows ten results; the request option `rerank_max_results` and the
+  profile of a collection override it.
+- **Diversification of the results** (MMR in the spirit of, without the
+  pairwise similarity): a chunk of a document which is already represented
+  pays a fraction of the relevance range of the answer (the
+  `diversity_decay` of the new `engine.core.diversity`), and at most
+  `max_chunks_per_document` (default 2, a search option and a profile key)
+  chunks of one document are shown in front of the chunks of the others.
+  A skipped chunk is never dropped: the list is topped up with it, so a
+  search with exactly `max_results` results only reorders them.  The
+  document statistics are computed from the undiversified hits on purpose:
+  the mass of a document is its evidence, not a presentation rule.
+- The **document mass is saturated, not a product of the bulk**:
+  `score_weighted` is now `score_normalized * max(1, log2(1 + hits) *
+  log2(1 + pages_count))` (was `score_normalized * hits * pages_count`), so
+  a hundred-page manual with marginal hits no longer drowns a one-page
+  note which answers the question exactly in the selection of the
+  documents for the RAG context.
+- **Stitching of neighbouring chunks** before they are read by a model:
+  two hits of one document which follow each other in the text (the same
+  page with the next `text_number`, or the context attached to the later
+  hit being exactly the text of the earlier one) are joined into one
+  continuous passage in the RAG context and in the enumerated citations of
+  a conversational answer (`stitch_adjacent_chunks` in
+  `engine.core.search_engine`), so a sentence cut by the chunking window is
+  not cut twice.  A merged passage keeps the identity of its first part
+  (`text_id`, `char_start`) and the widest span it can prove.
+- `sse_lib.SearchOptions` gains `max_chunks_per_document`.
 
 ### Changed
 

@@ -746,3 +746,155 @@ def test_the_lexical_only_option_is_valid_search_option():
     # An option the endpoint does not know is not silently dropped by this
     # function: it is passed through, and a missing key stays missing.
     assert "lexical_only" not in search_options({"max_results": 5})
+
+
+# ---------------------------------------------------------------------------
+# Plan 05: the context-aware candidate of the cross-encoder
+# ---------------------------------------------------------------------------
+
+
+def _rerank_result(document_name=None, filename=None, text="tekst"):
+    metadata = {}
+    if document_name is not None:
+        metadata["document_name"] = document_name
+    if filename is not None:
+        metadata["filename"] = filename
+    return {
+        MilvusHandler.DB_FIELD_TEXT: text,
+        MilvusHandler.DB_FIELD_METADATA: metadata,
+    }
+
+
+def test_rerank_candidate_carrying_the_document_name():
+    """The cross-encoder scores a query against a text, and a chunk without
+    the name of its document is context-blind: the name is prepended in the
+    same shape the indexing enrichment uses."""
+    result = {
+        MilvusHandler.DB_FIELD_TEXT: "Gwarancja wynosi 24 miesi\u0104ce.",
+        MilvusHandler.DB_FIELD_METADATA: {"document_name": "regulamin.pdf"},
+    }
+    assert (
+        MilvusHandler._rerank_candidate(result)
+        == "Dokument: regulamin.pdf | Tre\u015b\u0107: Gwarancja wynosi 24 miesi\u0104ce."
+    )
+
+
+def test_rerank_candidate_falls_back_to_the_filename():
+    result = {
+        MilvusHandler.DB_FIELD_TEXT: "tekst",
+        MilvusHandler.DB_FIELD_METADATA: {"filename": "umowa.docx"},
+    }
+    assert (
+        MilvusHandler._rerank_candidate(result)
+        == "Dokument: umowa.docx | Tre\u015b\u0107: tekst"
+    )
+
+
+def test_rerank_candidate_without_a_document_name_stays_raw():
+    for metadata in (None, {}, {"other": "x"}):
+        result = {MilvusHandler.DB_FIELD_TEXT: "czysty tekst"}
+        result[MilvusHandler.DB_FIELD_METADATA] = metadata
+        assert MilvusHandler._rerank_candidate(result) == "czysty tekst"
+
+
+class _ScoringBackend:
+    """The only method the handler needs from the model backend."""
+
+    def __init__(self):
+        self.sent = None
+
+    def rerank_scores(self, query, texts):
+        self.sent = texts
+        return [0.1, 0.9]
+
+
+def test_rerank_search_results_sends_the_enriched_candidates():
+    """The handler sends the enriched candidate to the backend and orders
+    the hits by the scores the backend answers."""
+    handler = object.__new__(MilvusHandler)
+    backend = _ScoringBackend()
+    handler._model_backend = backend
+
+    results = [
+        _rerank_result(document_name="a.pdf", text="tekst A"),
+        _rerank_result(filename="b.pdf", text="tekst B"),
+    ]
+    reranked = MilvusHandler._rerank_search_results(
+        handler, "jakie sa warunki", [results]
+    )
+
+    assert backend.sent == [
+        "Dokument: a.pdf | Treść: tekst A",
+        "Dokument: b.pdf | Treść: tekst B",
+    ]
+    # the order of the answer is decided by the backend's scores
+    assert [hit[MilvusHandler.DB_FIELD_TEXT] for hit in reranked[0]] == [
+        "tekst B",
+        "tekst A",
+    ]
+    assert [hit["score"] for hit in reranked[0]] == [0.9, 0.1]
+
+
+# ---------------------------------------------------------------------------
+# Plan 05: the window of the rerank
+# ---------------------------------------------------------------------------
+
+
+def test_default_rerank_pool_reaches_past_the_final_count():
+    from sse_api.engine.controllers.search.semantic import (
+        MIN_RERANK_POOL,
+        default_rerank_pool,
+    )
+
+    # ten results in the answer, but the cross-encoder sees at least fifty
+    assert default_rerank_pool(10) == MIN_RERANK_POOL == 50
+    # and, for bigger answers, three times as many candidates as results
+    assert default_rerank_pool(40) == 120
+    assert default_rerank_pool(0) == MIN_RERANK_POOL
+
+
+# ---------------------------------------------------------------------------
+# Plan 05: the document mass is saturated, not a product of the bulk
+# ---------------------------------------------------------------------------
+
+
+def test_stats_single_hit_keeps_its_own_relevance():
+    """One hit on one page is its own relevance: the evidence factor of a
+    single hit is 1, not a fraction of it."""
+    stats = prepare_documents_stats([_make_postgres_doc("note", 0.98, page=1)])
+    normalized = normalize_relevance(0.98, SCORE_SCALE_COSINE)
+    assert math.isclose(stats["note"]["score_weighted"], normalized, rel_tol=1e-9)
+
+
+def test_stats_document_mass_grows_logarithmically_with_the_evidence():
+    """A hundred hits are not a hundred times more evidence than one: the
+    factor saturates on both the number of hits and the number of pages, so
+    a fat document cannot win by bulk alone."""
+    weak_manual = [
+        _make_postgres_doc("manual", 0.2, page=page) for page in range(1, 21)
+    ]
+    stats = prepare_documents_stats(weak_manual)
+    normalized = normalize_relevance(0.2, SCORE_SCALE_COSINE)
+    expected = normalized * math.log2(21) * math.log2(21)
+    assert math.isclose(stats["manual"]["score_weighted"], expected, rel_tol=1e-9)
+    # the old formula would have made it 0.6 * 20 * 20 = 240
+    assert stats["manual"]["score_weighted"] < 24.0
+
+
+def test_stats_fat_document_with_marginal_hits_stays_bounded():
+    """The case of the audit: a manual with five marginal hits against a
+    one-page note which answers the question exactly.  The note's mass is
+    no longer drowned by the product of the bulk of the manual."""
+    docs = [
+        _make_postgres_doc("note", 0.98, page=1),
+    ] + [_make_postgres_doc("manual", 0.2, page=page) for page in range(1, 101)]
+    stats = prepare_documents_stats(docs)
+    mass_of_the_manual = stats["manual"]["score_weighted"]
+    mass_of_the_note = stats["note"]["score_weighted"]
+    # the old formula would have made the manual 0.6 * 100 * 100 = 6000
+    # against the 0.99 of the note
+    assert mass_of_the_manual < 200.0
+    assert math.isclose(mass_of_the_note, 0.99, rel_tol=1e-9)
+    # the manual still wins on the sheer number of pages it answers on,
+    # which is honest evidence -- but it is bounded, not a product
+    assert mass_of_the_manual > mass_of_the_note

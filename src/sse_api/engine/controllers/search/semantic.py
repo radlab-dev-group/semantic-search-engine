@@ -52,6 +52,10 @@ from sse_api.engine.controllers.search.relational import DBTextSearchController
 from sse_api.engine.controllers.database.relational_db import RelationalDBController
 from sse_api.engine.core.config.models_config import EmbeddingModelsConfig
 from sse_api.engine.core.protocols import VectorStoreProtocol
+from sse_api.engine.core.diversity import (
+    DEFAULT_MAX_CHUNKS_PER_DOCUMENT,
+    apply_result_diversity,
+)
 from sse_api.engine.core.search_engine import (
     DEFAULT_DENSE_WEIGHT,
     HYBRID_CANDIDATE_POOL_FACTOR,
@@ -63,6 +67,41 @@ from sse_api.engine.core.search_engine import (
     reformat_search_results_to_display as reformat_results,
     retrieval_score_scale,
 )
+
+#: Default size of the rerank candidate pool: the engine looks at least at
+#: this many candidates for the cross-encoder, and at
+#: ``max_results * DEFAULT_RERANK_POOL_FACTOR`` when that is more.
+DEFAULT_RERANK_POOL_FACTOR = 3
+
+#: Never fewer candidates than this, whatever the requested ``max_results``.
+MIN_RERANK_POOL = 50
+
+
+def default_rerank_pool(max_results: int) -> int:
+    """
+    Default number of candidates handed to the cross-encoder.
+
+    A reranker only reorders what it is given, so the default window
+    reaches well past the final count: a chunk which ranks 22nd after the
+    fusion is still scored when the answer shows ten results.
+    """
+    return max(MIN_RERANK_POOL, max(max_results, 0) * DEFAULT_RERANK_POOL_FACTOR)
+
+
+def _max_chunks_per_document(value) -> int:
+    """
+    Chunk cap of one document in the presented results, at least one.
+
+    The cap comes from the search options and may be anything; a value
+    which is not a usable integer falls back to the default of the engine.
+    """
+    if isinstance(value, bool) or value is None:
+        return DEFAULT_MAX_CHUNKS_PER_DOCUMENT
+    try:
+        cap = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_CHUNKS_PER_DOCUMENT
+    return max(cap, 1)
 
 
 def _fusion_weight(value, default: float) -> float:
@@ -927,7 +966,7 @@ class DBSemanticSearchController:
         # vectors.
         lexical_only = bool(search_params.get("lexical_only", False))
         rerank_max_results = int(
-            search_params.get("rerank_max_results", max_results * 2)
+            search_params.get("rerank_max_results", default_rerank_pool(max_results))
         )
         rrf_k = int(search_params.get("rrf_k", 60))
         # Share of every leg in the fusion; the request (or the profile of
@@ -1083,6 +1122,21 @@ class DBSemanticSearchController:
         )
         annotate_chunk_scores(postgres_docs, score_scale, rrf_k)
 
+        # The order in which the results are shown is where the crowding
+        # hurts, so the diversification is the last thing which happens to
+        # them: a single document gets ``max_chunks_per_document`` chunks
+        # and a chunk of another document a chance to be seen.  The
+        # statistics are computed from the undiversified hits on purpose --
+        # the mass of a document is the evidence it offers, and the cap of
+        # a presentation rule says nothing about its relevance.
+        diversified_docs = apply_result_diversity(
+            postgres_docs,
+            max_results=max_results,
+            max_chunks_per_document=_max_chunks_per_document(
+                search_params.get("max_chunks_per_document")
+            ),
+        )
+
         results = {
             "query": question_str,
             "score_scale": score_scale,
@@ -1095,7 +1149,7 @@ class DBSemanticSearchController:
                 remove_under_hits=1,
                 remove_under_pages=1,
             ),
-            "detailed_results": postgres_docs,
+            "detailed_results": diversified_docs,
         }
 
         structured_results = None

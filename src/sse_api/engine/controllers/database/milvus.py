@@ -679,13 +679,34 @@ class MilvusHandler:
 
     # ----------------------------------------------------------------------------
 
+    @staticmethod
+    def _rerank_candidate(result: dict) -> str:
+        """
+        The candidate as the cross-encoder should see it.
+
+        A cross-encoder scores a ``query + text`` pair, and a chunk without
+        the name of its document is context-blind: for a query naming the
+        document (a product, a regulation, a contract), the match lives in
+        the name, not in the fragment.  The candidate is therefore prefixed
+        with the name of the document it comes from (``filename`` or
+        ``document_name`` of the metadata) in the same shape the indexing
+        enrichment uses, so the model sees a consistent presentation.  A
+        candidate without a document name is passed as it is.
+        """
+        raw_text = result.get(MilvusHandler.DB_FIELD_TEXT, "")
+        metadata = result.get(MilvusHandler.DB_FIELD_METADATA) or {}
+        document_name = metadata.get("document_name") or metadata.get("filename")
+        if not document_name:
+            return raw_text
+        return f"Dokument: {document_name} | Tre\u015b\u0107: {raw_text}"
+
     def _rerank_search_results(
         self, search_text: str, all_queries_results: list
     ) -> list:
         re_results = []
         for query_results in all_queries_results:
             candidate_texts = [
-                result[self.DB_FIELD_TEXT] for result in query_results
+                self._rerank_candidate(result) for result in query_results
             ]
             # The backend answers with one score per candidate, in the order
             # they were sent; the sort below stays the single place where the

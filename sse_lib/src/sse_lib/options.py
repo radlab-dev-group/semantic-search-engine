@@ -70,6 +70,10 @@ class SearchOptions:
     lexical_only: Optional[bool] = None
     min_similarity: Optional[float] = None
     rrf_k: Optional[int] = None
+    #: How many chunks of one document the answer may hold in front of the
+    #: chunks of the other documents; the rest is moved behind them, never
+    #: dropped.
+    max_chunks_per_document: Optional[int] = None
     #: Share of the vector leg in the rank fusion of a hybrid search;
     #: only the ratio with ``lexical_weight`` matters.
     dense_weight: Optional[float] = None

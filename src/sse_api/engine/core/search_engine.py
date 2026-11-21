@@ -14,6 +14,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sse_api.data.core.context_enrichment import build_enriched_chunk_text
 from sse_api.engine.core.constants import MIN_CHUNK_CHAR_LEN
+from sse_api.engine.core.diversity import (
+    DEFAULT_MAX_CHUNKS_PER_DOCUMENT,
+    apply_result_diversity,
+)
 from sse_api.engine.core.protocols import VectorStoreProtocol
 
 # ---------------------------------------------------------------------------
@@ -334,6 +338,16 @@ def _as_float(value: Any) -> Optional[float]:
     return similarity
 
 
+def _as_int(value: Any) -> Optional[int]:
+    """Return ``value`` as an int, or ``None`` when it is not a whole number."""
+    if isinstance(value, bool) or value is None:
+        return None
+    number = _as_float(value)
+    if number is None or number != int(number):
+        return None
+    return int(number)
+
+
 def annotate_chunk_scores(
     postgres_docs: list[dict],
     score_scale: str = SCORE_SCALE_COSINE,
@@ -413,8 +427,9 @@ def prepare_documents_stats(
         * ``score_normalized`` -- the same mean in ``[0, 1]``,
         * ``similarity`` -- mean cosine similarity of the hits, ``None``
           when none of them came from the vector search,
-        * ``score_weighted`` -- document mass, i.e.
-          ``score_normalized * hits * pages_count``,
+        * ``score_weighted`` -- document mass, i.e. ``score_normalized``
+          times a logarithmic evidence factor,
+          ``max(1, log2(1 + hits) * log2(1 + pages_count))``,
         * ``score_weighted_scaled`` -- share of the total mass; all shares
           sum up to ``1.0``,
         * ``weight_normalized`` -- mass relative to the best document, so
@@ -468,7 +483,18 @@ def prepare_documents_stats(
         # Document mass keeps the original intuition -- mean relevance times
         # the amount of evidence -- but is built from normalized scores, so
         # it is defined for every metric and can never be negative.
-        res["score_weighted"] = res["score_normalized"] * hits * res["pages_count"]
+        #
+        # The amount of evidence grows logarithmically. A linear product of
+        # ``hits * pages_count`` made a fat document win by bulk: a
+        # hundred-page manual with five marginal hits outweighed a one-page
+        # note which answered the question exactly, and the selection of the
+        # documents for the RAG context (``get_accumulated_docs_by_rank_perc``)
+        # filled the prompt with the manual. Two hits are more evidence than
+        # one and a hundred hits are not fifty times more of it, which is
+        # what a logarithm says; the ``max`` keeps a single hit at its own
+        # relevance instead of shrinking it.
+        evidence_factor = math.log2(1.0 + hits) * math.log2(1.0 + res["pages_count"])
+        res["score_weighted"] = res["score_normalized"] * max(1.0, evidence_factor)
 
     total_mass = sum(res["score_weighted"] for res in doc_stats.values())
     top_mass = max(
@@ -521,6 +547,169 @@ def filter_stats_to_display_results(
     }
 
 
+def _left_context_text(chunk: dict) -> str:
+    """
+    Text of the nearest left neighbour of a chunk, ``""`` when there is none.
+
+    The pipeline attaches the neighbours of every hit as context (see
+    ``DBTextSearchController.get_texts``): a list of dictionaries in the raw
+    shape with the nearest one last, and the text of that nearest one in the
+    display shape.  Two spellings, one reader.
+    """
+    context = chunk.get("left_context")
+    if isinstance(context, str):
+        return context
+    if isinstance(context, list) and context:
+        nearest = context[-1]
+        if isinstance(nearest, dict):
+            text = nearest.get("text_str")
+            if isinstance(text, str):
+                return text
+    return ""
+
+
+def _earliest_position(run: List[Tuple[int, int, int, dict]]) -> int:
+    """Where a run appeared first in the answer it was taken from."""
+    return min(entry[2] for entry in run)
+
+
+def _merge_stitched_run(
+    run: List[Tuple[int, int, int, dict]], separator: str
+) -> dict:
+    """
+    One block out of the neighbouring chunks of a run.
+
+    The block speaks with the identity of its first part in the text and
+    carries the widest span it can prove: ``char_end`` is kept only when
+    every part of the run knows its own end, otherwise the span of the
+    merged block is unknown.  The score is the best of the parts, so a
+    merged block never claims less relevance than its strongest chunk.
+    """
+    parts = [entry[3] for entry in run]
+    first = parts[0]
+    if len(parts) == 1:
+        return dict(first)
+    char_ends = [part.get("char_end") for part in parts]
+    scores = [
+        part.get("score")
+        for part in parts
+        if isinstance(part.get("score"), (int, float))
+        and not isinstance(part.get("score"), bool)
+    ]
+    merged = dict(
+        first,
+        text_str=separator.join(str(part.get("text_str") or "") for part in parts),
+        char_end=(
+            max(char_ends) if all(end is not None for end in char_ends) else None
+        ),
+    )
+    if scores:
+        merged["score"] = max(scores)
+    return merged
+
+
+def _are_adjacent_chunks(
+    previous: Tuple[int, int, int, dict], entry: Tuple[int, int, int, dict]
+) -> bool:
+    """
+    Whether two hits of one document follow each other in its text.
+
+    Two proofs are accepted, because a result list carries the position of a
+    chunk differently depending on how its document was read:
+
+    * the same page and the next ``text_number`` -- the chunks of a paged
+      document, where the numbering counts the chunks of one page;
+    * the context attached to the later hit being exactly the text of the
+      earlier one -- the proof of the readers without page metadata (txt,
+      md, html), which put every chunk on a page of its own so that the page
+      numbers say nothing about adjacency.
+
+    Anything else -- two chunks of a paged document on two neighbouring
+    pages, for instance -- leaves text between them which the search did not
+    return, and the chunks stay separate: a stitched block which is not
+    continuous misrepresents its source.
+    """
+    previous_page, previous_number, _, previous_part = previous
+    page_number, text_number, _, part = entry
+    if page_number == previous_page and text_number == previous_number + 1:
+        return True
+    left_context = _left_context_text(part)
+    if not left_context:
+        return False
+    return left_context == str(previous_part.get("text_str") or "")
+
+
+def stitch_adjacent_chunks(chunks: List[dict], separator: str = "\n") -> List[dict]:
+    """
+    Join the chunks of one document which follow each other in the text.
+
+    A chunking window cuts sentences in half, and a search which returns
+    two neighbouring chunks makes the model read two truncated fragments
+    with the same sentence broken twice.  Joined back together they are one
+    continuous passage: easier to read, cheaper in tokens, and closer to
+    the truth of the document.
+
+    Two chunks of one document are joined when the later one provably
+    follows the earlier one in the text: the same page with the next
+    ``text_number``, or the attached context of the later hit being exactly
+    the text of the earlier one.  Without one of those proofs what lies
+    between two hits is unknown and they stay separate.
+
+    The blocks come back in the order of the answer: a merged block stands
+    where the strongest of its parts stood -- the first one the answer
+    showed -- so the rank order survives the joining.
+
+    Parameters
+    ----------
+    chunks : list of dict
+        Results of one document or of many, in the display shape or in the
+        enumerated-document shape; both carry ``document_name``,
+        ``page_number``, ``text_number`` and ``text_str``.
+    separator : str, default "\n"
+        What is put between two joined chunks.
+
+    Returns
+    -------
+    list of dict
+        New dictionaries; the input and its dictionaries are not modified.
+        A chunk without a usable ``page_number`` and ``text_number`` is
+        copied as it is and never merged.
+    """
+    keyed: Dict[Any, List[Tuple[int, int, int, dict]]] = {}
+    blocks: List[Tuple[int, dict]] = []
+
+    for position, chunk in enumerate(chunks):
+        part = dict(chunk)
+        page_number = _as_int(chunk.get("page_number"))
+        text_number = _as_int(chunk.get("text_number"))
+        if page_number is None or text_number is None:
+            blocks.append((position, part))
+            continue
+        keyed.setdefault(chunk.get("document_name"), []).append(
+            (page_number, text_number, position, part)
+        )
+
+    for entries in keyed.values():
+        entries.sort(key=lambda entry: (entry[0], entry[1]))
+        run: List[Tuple[int, int, int, dict]] = [entries[0]]
+        for entry in entries[1:]:
+            previous = run[-1]
+            if _are_adjacent_chunks(previous, entry):
+                run.append(entry)
+                continue
+            blocks.append(
+                (
+                    _earliest_position(run),
+                    _merge_stitched_run(run, separator),
+                )
+            )
+            run = [entry]
+        blocks.append((_earliest_position(run), _merge_stitched_run(run, separator)))
+
+    blocks.sort(key=lambda block: block[0])
+    return [block for _, block in blocks]
+
+
 def convert_search_results_to_doc2answer(
     search_results: dict,
     which_docs: list | None,
@@ -538,13 +727,17 @@ def convert_search_results_to_doc2answer(
     use_doc_names_in_response : bool, default False
         Prefix each answer with its document name.
 
+    The neighbouring chunks of a document are stitched into one continuous
+    passage first (see :func:`stitch_adjacent_chunks`), so the model does
+    not read the same sentence cut in half twice.
+
     Returns
     -------
     dict
         ``{document_name: [answer strings]}``.
     """
     doc2answers: dict[str, list[str]] = {}
-    for _, result in search_results.items():
+    for result in stitch_adjacent_chunks(list(search_results.values())):
         doc_name = result["document_name"]
         if which_docs is not None and len(which_docs) and doc_name not in which_docs:
             continue
@@ -563,14 +756,23 @@ def convert_search_results_to_doc2answer(
 def convert_search_results_to_enumerated_documents(
     search_results: dict, which_docs: list | None = None
 ) -> list[dict]:
-    """Keep a deterministic, lossless mapping from citation numbers to chunks."""
-    documents = []
+    """
+    Keep a deterministic, lossless mapping from citation numbers to chunks.
+
+    A chunk is one citation, and a citation is one place the reader can
+    open; the numbering is therefore assigned after the stitching, to the
+    blocks the model is actually shown.  Neighbouring chunks of one
+    document make one block, cited as one source: the text of every chunk
+    is still in the prompt, the citation points at the passage they form
+    (``text_id`` and ``char_start`` of its first chunk, its span when the
+    span of all of them is known).
+    """
+    candidates = []
     for result in search_results.values():
         if which_docs is not None and result["document_name"] not in which_docs:
             continue
-        documents.append(
+        candidates.append(
             {
-                "n": len(documents) + 1,
                 "text_str": result["text_str"],
                 "document_name": result["document_name"],
                 **{
@@ -579,12 +781,21 @@ def convert_search_results_to_enumerated_documents(
                         "text_id",
                         "document_id",
                         "page_number",
+                        "text_number",
+                        "left_context",
                         "char_start",
                         "char_end",
                     )
                 },
             }
         )
+
+    documents = []
+    for document in stitch_adjacent_chunks(candidates):
+        for provenance in ("text_number", "left_context"):
+            document.pop(provenance, None)
+        document["n"] = len(documents) + 1
+        documents.append(document)
     return documents
 
 
@@ -730,6 +941,7 @@ class SearchEngineCore:
         dense_weight: float = DEFAULT_DENSE_WEIGHT,
         lexical_weight: float = DEFAULT_LEXICAL_WEIGHT,
         candidate_pool_factor: int = HYBRID_CANDIDATE_POOL_FACTOR,
+        max_chunks_per_document: int = DEFAULT_MAX_CHUNKS_PER_DOCUMENT,
     ) -> dict:
         """
         Execute the full hybrid search pipeline.
@@ -765,6 +977,10 @@ class SearchEngineCore:
             ``max_results`` while the vector leg sees ten times as much
             loses every match from position ``max_results + 1`` onwards
             before the fusion ever happens.
+        max_chunks_per_document : int, default 2
+            How many chunks of one document the answer may hold in front
+            of the chunks of the other documents; the rest of its chunks
+            is moved behind them, never dropped.
 
         Returns
         -------
@@ -854,11 +1070,21 @@ class SearchEngineCore:
         )
         filtered_stats = filter_stats_to_display_results(docs_stats)
 
+        # The statistics are computed from every hit and the presented
+        # results are diversified: the mass of a document is how much
+        # evidence it offers, while a chunk cap is a rule about how the
+        # answer is read, not about how relevant a document is.
+        diversified = apply_result_diversity(
+            texts_with_context,
+            max_results=max_results,
+            max_chunks_per_document=max_chunks_per_document,
+        )
+
         return {
             "query": query_text,
             "score_scale": score_scale,
             "stats": filtered_stats,
-            "detailed_results": texts_with_context,
+            "detailed_results": diversified,
         }
 
     def index_collection(self, collection_id: int) -> None:
