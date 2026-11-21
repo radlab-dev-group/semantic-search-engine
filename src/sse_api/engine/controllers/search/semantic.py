@@ -43,6 +43,7 @@ from sse_api.data.controllers.constants import (
     DEFAULT_MIN_SIMILARITY,
 )
 from sse_api.data.controllers.template import QueryTemplateController
+from sse_api.data.core.context_enrichment import build_enriched_chunk_text
 
 from sse_api.engine.models import UserQuery
 from sse_api.engine.controllers.database.milvus import MilvusHandler
@@ -173,6 +174,31 @@ class DBSemanticSearchController:
     # ------------------------------------------------------------------
     # embedding-side text preparation
     # ------------------------------------------------------------------
+    def _text_for_embedding(
+        self,
+        text: str,
+        document_name: str,
+        category: str | None = None,
+        relative_path: str | None = None,
+    ) -> str:
+        """
+        Text as the embedder should see it.
+
+        The chunk is enriched with a context header (document, category,
+        path and section) so that the vector carries the identity of the
+        document it belongs to.  The header is bounded and never stacked
+        on an already enriched text; the raw text is what gets stored,
+        displayed and re-indexed.
+        """
+        if not text:
+            return text
+        return build_enriched_chunk_text(
+            text,
+            document_name=document_name,
+            category=category,
+            relative_path=relative_path,
+        )
+
     @property
     def emb_tokenizer(self):
         """
@@ -335,13 +361,25 @@ class DBSemanticSearchController:
                     "external_document_id": str(text.page.document.pk),
                     "external_collection_id": collection.pk,
                     "text_language": text.language,
+                    # Both keys name the same document: ``filename`` is what
+                    # older collections store and ``document_name`` what the
+                    # indexing of SearchEngineCore writes, and the Milvus
+                    # filter accepts either of them.
                     "filename": text.page.document.name,
+                    "document_name": text.page.document.name,
                     "relative_path": text.page.document.relative_path,
                 }
 
-                str_text_to_index = self.truncate_for_embedding(
-                    str_text_to_index
+                document = text.page.document
+                # The vector carries the context of the document; the raw
+                # text stays what is stored and displayed.
+                str_text_to_index = self._text_for_embedding(
+                    str_text_to_index,
+                    document_name=document.name,
+                    category=getattr(document, "category", None),
+                    relative_path=getattr(document, "relative_path", None),
                 )
+                str_text_to_index = self.truncate_for_embedding(str_text_to_index)
 
                 batch_texts.append(str_text_to_index)
                 batch_metadata.append(text_metadata)

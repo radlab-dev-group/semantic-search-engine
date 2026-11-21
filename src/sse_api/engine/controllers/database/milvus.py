@@ -460,9 +460,7 @@ class MilvusHandler:
         :param texts: List of texts to prepare embeddings
         :return: List of prepared embeddings
         """
-        return self.model_backend.embed(
-            texts, normalize=self._normalize_embeddings
-        )
+        return self.model_backend.embed(texts, normalize=self._normalize_embeddings)
 
     def search(
         self,
@@ -770,7 +768,14 @@ class MilvusHandler:
 
         if "filenames" in metadata_filter and len(metadata_filter["filenames"]):
             in_docs_str = ", ".join([f'"{d}"' for d in metadata_filter["filenames"]])
-            out_filter_opts += f' and {md_field}["filename"] in [{in_docs_str}]'
+            # Chunks were indexed under either key: the ingestion pipeline
+            # writes "filename", SearchEngineCore.index_collection wrote
+            # "document_name" only.  A filter which checked a single key
+            # returned no hit for the collections of the other one.
+            out_filter_opts += (
+                f' and ({md_field}["filename"] in [{in_docs_str}]'
+                f' or {md_field}["document_name"] in [{in_docs_str}])'
+            )
 
         if "relative_paths" in metadata_filter and len(
             metadata_filter["relative_paths"]

@@ -8,6 +8,8 @@ only for type checking and impose zero overhead on implementations.
 
 from typing import List, Dict, Any, Tuple, Optional, Protocol
 
+from sse_api.engine.core.constants import MIN_CHUNK_CHAR_LEN
+
 
 class VectorStoreProtocol(Protocol):
     """Interface for vector‑store operations consumed by the search engine."""
@@ -46,7 +48,7 @@ class RelationalDataProtocol(Protocol):
     """Interface for relational data access consumed by the search engine."""
 
     def get_collection_chunks(
-        self, collection_id: int, min_char_len: int = 300
+        self, collection_id: int, min_char_len: int = MIN_CHUNK_CHAR_LEN
     ) -> Any:  # QuerySet — avoid importing django.db.models
         """Get all text chunks for a collection (used during indexing)."""
 

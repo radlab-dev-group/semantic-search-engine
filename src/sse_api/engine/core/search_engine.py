@@ -12,6 +12,8 @@ operate exclusively on plain Python dicts, lists and tuples.
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
+from sse_api.data.core.context_enrichment import build_enriched_chunk_text
+from sse_api.engine.core.constants import MIN_CHUNK_CHAR_LEN
 from sse_api.engine.core.protocols import VectorStoreProtocol
 
 # ---------------------------------------------------------------------------
@@ -815,24 +817,36 @@ class SearchEngineCore:
             return
 
         chunks = self._data_source.get_collection_chunks(
-            collection_id, min_char_len=300
+            collection_id, min_char_len=MIN_CHUNK_CHAR_LEN
         )
         texts: list[str] = []
         metadatas: list[dict[str, Any]] = []
 
         for chunk in chunks:
             # The data source returns ORM objects; access their attributes.
-            texts.append(chunk.text_str)
+            document = chunk.page.document
+            # The embedder sees the chunk with a context header; the vector
+            # store keeps the raw text for display and re-indexing.
+            texts.append(
+                build_enriched_chunk_text(
+                    chunk.text_str,
+                    document_name=document.name,
+                    category=getattr(document, "category", None),
+                    relative_path=getattr(document, "relative_path", None),
+                )
+            )
             metadatas.append(
                 {
                     "external_text_id": str(chunk.id),
-                    "external_document_id": str(chunk.page.document.pk),
+                    "external_document_id": str(document.pk),
                     "page_number": getattr(chunk, "page_number", 1),
                     "text_number": getattr(chunk, "text_number", 0),
-                    "document_name": chunk.page.document.name,
-                    "relative_path": getattr(
-                        chunk.page.document, "relative_path", ""
-                    ),
+                    # Both keys name the same document: the ingestion
+                    # pipeline writes "filename", this path wrote
+                    # "document_name", and a filter accepts either.
+                    "filename": document.name,
+                    "document_name": document.name,
+                    "relative_path": getattr(document, "relative_path", ""),
                     "text_language": getattr(chunk, "language", ""),
                 }
             )

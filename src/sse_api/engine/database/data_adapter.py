@@ -19,6 +19,7 @@ from sse_api.engine.database.milvus_impl import (
     MilvusHandler,
 )  # noqa: F401 — exposed for adapter usage
 from sse_api.engine.controllers.search.relational import DBTextSearchController
+from sse_api.engine.core.constants import MIN_CHUNK_CHAR_LEN
 
 
 class RelationalDataAdapter:
@@ -39,7 +40,7 @@ class RelationalDataAdapter:
     # ------------------------------------------------------------------
 
     def get_collection_chunks(
-        self, collection_id: int, min_char_len: int = 300
+        self, collection_id: int, min_char_len: int = MIN_CHUNK_CHAR_LEN
     ) -> list[DocumentPageText]:
         """Get all text chunks for a collection (used during indexing)."""
         coll = self._get_collection(collection_id)

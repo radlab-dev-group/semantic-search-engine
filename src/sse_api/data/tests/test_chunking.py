@@ -40,6 +40,7 @@ from sse_api.data.controllers.chunking import (
     declared_chunking,
     plan_chunking_fix,
     resolve_chunking,
+    split_text_respecting_structure,
 )
 from sse_api.data.core.constants import (
     CHUNKING_METADATA_KEY,
@@ -803,3 +804,90 @@ class CheckCollectionChunkingFixTests(CheckCollectionChunkingCommandTests):
         )
         entry = {e["collection"]: e for e in report}["declared-collection"]
         self.assertFalse(entry["fix"]["changed"])
+
+
+class StructureAwareSplitterTest(SimpleTestCase):
+    """``split_text_respecting_structure`` keeps structure units intact."""
+
+    def test_short_text_is_one_chunk(self):
+        chunks = split_text_respecting_structure("Krótki tekst.", max_chars=100)
+        self.assertEqual(chunks, ["Krótki tekst."])
+
+    def test_empty_text_has_no_chunks(self):
+        self.assertEqual(split_text_respecting_structure(""), [])
+        self.assertEqual(split_text_respecting_structure("   \n "), [])
+
+    def test_paragraphs_are_not_cut(self):
+        text = "\n\n".join(
+            f"Akapit numer {n} z trescia ktora preenchnia limit znaku."
+            for n in range(1, 6)
+        )
+        chunks = split_text_respecting_structure(text, max_chars=60, overlap_chars=0)
+        self.assertGreater(len(chunks), 1)
+        for chunk in chunks:
+            self.assertNotIn(
+                "Akapit numer 3 z trescia ktora preenchnia limit znaku.\n\nAkapit numer 4",
+                chunk,
+            )
+        # Every original paragraph survives in some chunk.
+        joined = "\n".join(chunks)
+        for n in range(1, 6):
+            self.assertIn(f"Akapit numer {n}", joined)
+
+    def test_code_fence_is_never_broken(self):
+        code = (
+            "```python\n" + "\n".join(f"value_{n} = {n}" for n in range(4)) + "\n```"
+        )
+        text = "Przed kodem.\n\n" + ("Wpelniacy tekst. " * 8) + "\n\n"
+        text += code + "\n\nPo kodzie."
+        chunks = split_text_respecting_structure(
+            text, max_chars=120, overlap_chars=0
+        )
+        holder = [chunk for chunk in chunks if "```python" in chunk]
+        self.assertEqual(len(holder), 1)
+        fence_block = holder[0].split("Po kodzie.")[0]
+        self.assertTrue(fence_block.rstrip().endswith("```"))
+        self.assertEqual(fence_block.count("```"), 2)
+
+    def test_code_block_bigger_than_a_chunk_is_still_returned(self):
+        code = "```\n" + "\n".join(f"value_{n} = {n}" for n in range(40)) + "\n```"
+        chunks = split_text_respecting_structure(code, max_chars=80, overlap_chars=0)
+        self.assertGreater(len(chunks), 1)
+        joined = "\n".join(chunks)
+        for n in range(40):
+            self.assertIn(f"value_{n} = {n}", joined)
+
+    def test_markdown_table_rows_stay_together(self):
+        table = "\n".join(
+            ["| kol1 | kol2 |", "|------|------|"]
+            + [f"| a{n} | b{n} |" for n in range(20)]
+        )
+        chunks = split_text_respecting_structure(
+            table, max_chars=100, overlap_chars=0
+        )
+        # The header row is never separated from its separator row.
+        for chunk in chunks:
+            if "| kol1 | kol2 |" in chunk:
+                self.assertIn("|------|------|", chunk)
+
+    def test_long_paragraph_is_cut_on_a_sentence(self):
+        sentence = "To jest zdanie testowe, ktore jest dosyc dlugie."
+        text = " ".join([sentence] * 10)
+        chunks = split_text_respecting_structure(
+            text, max_chars=100, overlap_chars=0
+        )
+        self.assertGreater(len(chunks), 1)
+        for chunk in chunks:
+            self.assertLessEqual(len(chunk), 120)
+
+    def test_overlap_repeats_the_end_of_the_previous_chunk(self):
+        text = "Akapit pierwszy.\n\n" + "B " * 200 + "\n\nAkapit ostatni."
+        without = split_text_respecting_structure(
+            text, max_chars=80, overlap_chars=0
+        )
+        with_overlap = split_text_respecting_structure(
+            text, max_chars=80, overlap_chars=10
+        )
+        self.assertGreater(len(with_overlap), 1)
+        self.assertEqual(with_overlap[0], without[0])
+        self.assertTrue(with_overlap[1].startswith(without[0][:10].strip()))
