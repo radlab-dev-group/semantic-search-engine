@@ -35,7 +35,7 @@ imports the engine in a process where those packages raise `ImportError`, so
 the boundary cannot quietly regress.
 
 File indexing reads the uploaded documents with the light core of
-`radlab_data` (≥ 0.1.1), which imports without `torch` or `transformers`,
+`radlab_data` (≥ 0.0.4, from PyPI), which imports without `torch` or `transformers`,
 and *token* chunking (`max_tokens_in_chunk`) is a model-service operation
 (`POST /v1/chunk`): the pages are cut with the tokenizer of the collection's
 embedder, on the model host.  No engine host therefore needs the model

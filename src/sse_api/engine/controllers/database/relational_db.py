@@ -37,7 +37,7 @@ def directory_file_reader(**options):
     ``radlab_data`` is an optional dependency of the engine: a host which
     only answers queries may not have it installed at all, so the import
     stays inside the call (and a test can hand out its own reader).  Since
-    ``radlab_data`` 0.1.1 its light core — document loaders, ``Document``,
+    ``radlab_data`` 0.0.4 its light core — document loaders, ``Document``,
     ``DirectoryFileReader`` — imports without the model stack; the only part
     that still needs it is token chunking, which loads the tokenizer from
     ``transformers`` on first use.

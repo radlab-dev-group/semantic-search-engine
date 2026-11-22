@@ -21,7 +21,6 @@ services:
       args:
         INSTALL_RADLAB_DATA: ${INSTALL_RADLAB_DATA:-0}
         INSTALL_LLM_ROUTER: ${INSTALL_LLM_ROUTER:-0}
-        RADLAB_DATA_REF: ${RADLAB_DATA_REF:-master}
         LLM_ROUTER_REF: ${LLM_ROUTER_REF:-master}
     image: sse-api:${SSE_IMAGE_TAG:-0.0.2}
     restart: unless-stopped

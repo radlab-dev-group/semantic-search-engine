@@ -19,8 +19,8 @@ INSTALLATION_MODE_NAME=${1:-all}
 
 if [[ "$INSTALLATION_MODE_NAME" == "dep" || "$INSTALLATION_MODE_NAME" == "all" ]]; then
   echo "📦 Installing dependencies"
-  echo "   🔧 installing radlab-data"
-  pip install git+https://github.com/radlab-dev-group/radlab-data.git --break-system-packages
+  echo "   🔧 installing radlab-data (from PyPI)"
+  pip install radlab-data --break-system-packages
   echo "   🔧 installing llm-router"
   pip install /mnt/data2/dev/develop/llm-router
 fi

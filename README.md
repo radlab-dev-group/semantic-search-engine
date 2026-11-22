@@ -161,7 +161,7 @@ semantic-search-engine/
 | **Milvus**                   | 2.3+                  | Vector database for semantic embeddings.                                                         |
 | **Django**                   | 4.x                   | Core web framework for the API layer.                                                            |
 | **boto3**                    | any                   | Required only if you enable AWS S3 storage.                                                      |
-| **radlab_data** package      | ≥ 0.1.1               | Reads and splits the uploaded files during indexing (light core: no `torch` / `transformers` at import time — see below).  |
+| **radlab_data** package      | ≥ 0.0.4 (PyPI)        | Reads and splits the uploaded files during indexing (light core: no `torch` / `transformers` at import time — see below).  |
 | **CUDA (optional)**          | 11+                   | If you want to run embeddings / LLMs on GPU.                                                     |
 | **Deepl API key** (optional) | –                     | Enables answer translation.                                                                      |
 
@@ -176,7 +176,7 @@ engine refuses no request when that service is down — it degrades to its
 in-process fallback when one is configured and to a plain answer otherwise.
 
 File indexing reads the uploaded documents with the light core of the
-`radlab_data` package (≥ 0.1.1): its document loaders, `Document`,
+`radlab_data` package (≥ 0.0.4, from PyPI): its document loaders, `Document`,
 `DirectoryFileReader` and `TextUtils` import without `torch` or
 `transformers`.  Token chunking is one of the service's operations too
 (`POST /v1/chunk`): the pages of an upload are cut with the tokenizer of the
