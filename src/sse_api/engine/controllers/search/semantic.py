@@ -25,6 +25,7 @@ from sse_api.data.core.knowledge_extensions import (
 
 import tqdm
 import json
+from typing import List
 import pandas as pd
 from django.db.models import QuerySet
 
@@ -180,10 +181,10 @@ class DBSemanticSearchController:
         self._milvus_handler: MilvusHandler | None = (
             None  # Legacy concrete (may be None)
         )
-        # Tokenizer of the embedder, loaded on first use only (and never when
-        # the model service performs embedding and truncation instead).
-        self._emb_tokenizer = None
-        self._embedder_model_path = None
+        # The embedder's tokenizer is the model service's concern
+        # (``POST /v1/truncate``); the engine keeps only the name of the
+        # model it addresses there.
+        self._embedder_model_name = None
 
         if vector_store is not None:
             # Protocol mode — no need to instantiate MilvusHandler.
@@ -205,7 +206,7 @@ class DBSemanticSearchController:
             embedder_device = EmbeddingModelsConfig.get_embedder_device(
                 embedder_model
             )
-            self._embedder_model_path = embedder_model_path
+            self._embedder_model_name = embedder_model
 
         reranker_device = ""
         reranker_model_path = None
@@ -261,55 +262,62 @@ class DBSemanticSearchController:
             relative_path=relative_path,
         )
 
-    @property
-    def emb_tokenizer(self):
-        """
-        Tokenizer of the embedder, loaded on first use.
-
-        ``transformers`` is imported here, not at module level: an engine
-        which delegates inference to the model service never loads it.
-        """
-        if self._emb_tokenizer is None and self._embedder_model_path:
-            from transformers import AutoTokenizer
-
-            self._emb_tokenizer = AutoTokenizer.from_pretrained(
-                self._embedder_model_path
-            )
-        return self._emb_tokenizer
-
     def truncate_for_embedding(self, text: str) -> str:
         """
         Cut ``text`` to ``max_tokens_in_text`` tokens before embedding.
 
-        Through the model service when it is enabled (``POST /v1/truncate``,
-        the embedder's own tokenizer on the service side), otherwise with the
-        locally loaded tokenizer — the historical behaviour.
+        The embedder's tokenizer lives with the embedder, so the cut is made
+        where the model is: through ``POST /v1/truncate`` of the model service
+        when it is enabled, and with the in-process backend otherwise (the
+        historical behaviour of a single-host deployment).  When neither can
+        count tokens the text goes through unchanged — the embedder truncates
+        on its own, and an indexing call must not fail on a missing tokenizer.
         """
-        from sse_api.engine.core.models.backend import service_enabled
-
-        if service_enabled() and self._milvus_handler is not None:
-            truncated, was_truncated = (
-                self._milvus_handler.model_backend.truncate_texts(
-                    [text], self.max_tokens_in_text
-                )
-            )
-            if truncated and was_truncated and truncated[0] != text:
+        truncated = self._truncate([text])
+        if truncated:
+            if truncated[0] != text:
                 self._logger.debug(
                     "chunk truncated to %d tokens before embedding",
                     self.max_tokens_in_text,
                 )
-            return truncated[0] if truncated else text
+            return truncated[0]
+        return text
 
-        tokenizer = self.emb_tokenizer
-        if tokenizer is None:
-            return text
-        text_tokens = tokenizer(text).input_ids
-        if len(text_tokens) <= self.max_tokens_in_text:
-            return text
-        return tokenizer.decode(
-            token_ids=text_tokens[: self.max_tokens_in_text],
-            skip_special_tokens=True,
-        )
+    def _truncate(self, texts: List[str]) -> List[str] | None:
+        """
+        The token-exact cut of ``texts``, ``None`` when no backend can count
+        tokens.  The service is preferred: its tokenizer is the tokenizer of
+        the model that will really embed the texts.
+        """
+        from sse_api.engine.core.models.backend import build_truncate_client
+
+        client = build_truncate_client(self._embedder_model_name)
+        if client is not None:
+            try:
+                truncated, _was_truncated = client(texts, self.max_tokens_in_text)
+                return truncated
+            except Exception as exc:  # dead service: try the local backend
+                self._logger.warning(
+                    "Model service truncation failed (%s); using the local "
+                    "backend",
+                    exc,
+                )
+
+        if self._milvus_handler is not None:
+            try:
+                truncated, _was_truncated = (
+                    self._milvus_handler.model_backend.truncate_texts(
+                        texts, self.max_tokens_in_text
+                    )
+                )
+                return truncated
+            except Exception as exc:  # no local model: leave the text as is
+                self._logger.warning(
+                    "Local truncation unavailable (%s); the embedder will "
+                    "truncate on its own",
+                    exc,
+                )
+        return None
 
     @staticmethod
     def prepare_controller_for_collection(

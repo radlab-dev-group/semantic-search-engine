@@ -7,9 +7,6 @@ from django.db.models import Count, Q, QuerySet
 from django.apps import apps
 from django.db import transaction
 
-from radlab_data.text.reader import DirectoryFileReader
-from radlab_data.text.document import Document as InputTextDocument
-
 from sse_api.system.models import OrganisationUser, OrganisationGroup
 from sse_api.data.models import (
     CollectionOfDocuments,
@@ -27,6 +24,28 @@ from sse_api.engine.controllers.models_logic.embedders_rerankers import (
 )
 from sse_api.engine.core.constants import MIN_CHUNK_CHAR_LEN
 from sse_api.core.utils import compute_text_hash
+
+
+def directory_file_reader(**options):
+    """
+    A reader of the files of an upload, imported when files are really read.
+
+    ``radlab_data`` imports ``transformers`` as soon as its loaders are
+    imported, and the engine — the API, the search, a worker which never
+    ingests a file — must stay importable on a host without the model stack.
+    A function rather than a module-level name, so that a test can hand out
+    its own reader.
+    """
+    from radlab_data.text.reader import DirectoryFileReader
+
+    return DirectoryFileReader(**options)
+
+
+def input_text_document(**options):
+    """A document of the input, see :func:`directory_file_reader`."""
+    from radlab_data.text.document import Document
+
+    return Document(**options)
 
 
 class RelationalDBController:
@@ -132,7 +151,7 @@ class RelationalDBController:
         :param file_metadata: Validated per-file category and metadata options
         :return: UploadedDocuments
         """
-        self.dir_reader = DirectoryFileReader(
+        self.dir_reader = directory_file_reader(
             main_dir_path=uploaded_document.dir_path,
             read_sub_dirs=True,
             processes_count=number_of_process,
@@ -207,7 +226,7 @@ class RelationalDBController:
         indexed_documents = []
         for doc_as_dict in texts:
             for page in doc_as_dict["pages"]:
-                doc_to_db = InputTextDocument(
+                doc_to_db = input_text_document(
                     file_path=doc_as_dict["filepath"] + ".input_text",
                     relative_file_path=doc_as_dict["relative_filepath"],
                     file_name=doc_as_dict["filepath"],

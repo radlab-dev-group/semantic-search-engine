@@ -22,6 +22,23 @@ It supports:
 | **config** | Global configuration, settings handling, and Django entry points.                                                | `settings.py`, `urls.py`, `wsgi.py`, `asgi.py`, `celery.py`             |
 | **core**   | Shared utilities (errors, validation, constants, AWS handler).                                                  | `errors.py`, `validation.py`, `constants.py`, `aws_handler.py`         |
 
+### Where the inference runs
+
+The API and the engine core hold no model weights and import no
+`torch`, `transformers` or `sentence-transformers` at module level: every
+inference operation — embedding, reranking, token counting, truncation,
+denoising, extractive QA — goes over HTTP to the model service
+(`src/sse_models`, `SSE_MODEL_SERVICE_ENABLED` / `SSE_MODEL_SERVICE_URL`),
+with the in-process models kept only as an explicit fallback of a
+single-host deployment.  `src/sse_api/engine/tests/test_import_boundaries.py`
+imports the engine in a process where those packages raise `ImportError`, so
+the boundary cannot quietly regress.
+
+The exception is **file indexing**: `radlab_data` reads and tokenizes the
+uploaded documents and imports `transformers` itself, so a host which ingests
+files installs the model stack (`requirements-models.txt`) as well.  A host
+which only answers searches does not.
+
 ## Quick Start
 
 1. **Clone the repository**
