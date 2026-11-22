@@ -143,6 +143,19 @@ class ModelBackend:
         """
         raise NotImplementedError
 
+    def chunk_texts(
+        self, texts: Sequence[str], max_tokens: int, overlap: int = 0
+    ) -> List[List[str]]:
+        """
+        Split texts into chunks of at most ``max_tokens`` tokens.
+
+        Returns one list of chunks per input text, in input order; a text
+        which fits the budget comes back as a single chunk.  Chunking is
+        measured in the tokens of the embedder, which is why it is a model
+        operation and not a string operation.
+        """
+        raise NotImplementedError
+
     def denoise_text(self, text: str) -> str:
         """Clean ``text`` (OCR artefacts, broken sentences) via the denoiser."""
         raise NotImplementedError
@@ -260,6 +273,27 @@ class LocalBackend(ModelBackend):
             )
             was_truncated.append(True)
         return truncated, was_truncated
+
+    def chunk_texts(
+        self, texts: Sequence[str], max_tokens: int, overlap: int = 0
+    ) -> List[List[str]]:
+        tokenizer = self._tokenizer()
+        step = max_tokens - max(0, min(overlap, max_tokens - 1))
+        chunked: List[List[str]] = []
+        for text in texts:
+            token_ids = tokenizer.encode(text, add_special_tokens=False)
+            if len(token_ids) <= max_tokens:
+                chunked.append([text])
+                continue
+            windows = [
+                tokenizer.decode(
+                    token_ids[position : position + max_tokens],
+                    skip_special_tokens=True,
+                )
+                for position in range(0, len(token_ids), step)
+            ]
+            chunked.append([window for window in windows if window] or [text])
+        return chunked
 
     def denoise_text(self, text: str) -> str:
         # The local denoiser is the engine's historical T5 path; it is kept
@@ -506,6 +540,34 @@ class RemoteBackend(ModelBackend):
             )
         return [str(text) for text in truncated], [bool(flag) for flag in flags]
 
+    def chunk_texts(
+        self, texts: Sequence[str], max_tokens: int, overlap: int = 0
+    ) -> List[List[str]]:
+        data = self._run(
+            "/v1/chunk",
+            {
+                "model": self._embed_model,
+                "texts": list(texts),
+                "max_tokens": int(max_tokens),
+                "overlap": int(overlap),
+            },
+        )
+        chunks = data.get("chunks")
+        if not isinstance(chunks, list) or len(chunks) != len(texts):
+            raise ModelBackendError(
+                "model service returned an unexpected chunk payload"
+            )
+        document_chunks: List[List[str]] = []
+        for entry in chunks:
+            if not isinstance(entry, list) or not all(
+                isinstance(part, str) for part in entry
+            ):
+                raise ModelBackendError(
+                    "model service returned an unexpected chunk of a text"
+                )
+            document_chunks.append([str(part) for part in entry])
+        return document_chunks
+
     def denoise_text(self, text: str) -> str:
         data = self._run("/v1/denoise", {"text": text})
         cleaned = data.get("cleaned_text")
@@ -582,6 +644,12 @@ class RemoteBackend(ModelBackend):
             return {
                 "truncated_texts": truncated,
                 "was_truncated": was_truncated,
+            }
+        if path == "/v1/chunk":
+            return {
+                "chunks": self._fallback.chunk_texts(
+                    payload["texts"], payload["max_tokens"], payload["overlap"]
+                )
             }
         if path == "/v1/denoise":
             return {"cleaned_text": self._fallback.denoise_text(payload["text"])}
@@ -802,6 +870,70 @@ def build_truncate_client(
         return [str(text) for text in truncated], [bool(flag) for flag in flags]
 
     return _truncate
+
+
+def build_chunk_client(
+    embed_model: Optional[str],
+) -> Optional[Callable[[Sequence[str], int, int], List[List[str]]]]:
+    """
+    Build a ``(texts, max_tokens, overlap) -> chunks`` client.
+
+    Token chunking is a model-service operation: the chunk size is counted in
+    the tokens of the embedder of the collection, and that tokenizer lives on
+    the service (``POST /v1/chunk``).  ``None`` means "no service configured
+    or no model to address" and the caller decides what chunking means then —
+    usually: the historical in-process chunker of the document reader.
+    """
+    if not service_enabled() or not embed_model:
+        return None
+
+    base_url = os.environ.get(ENV_MODEL_SERVICE_URL, "").strip().rstrip("/")
+    api_token = os.environ.get(ENV_MODEL_SERVICE_TOKEN, "").strip()
+    timeout = _env_float(ENV_MODEL_SERVICE_TIMEOUT, DEFAULT_TIMEOUT_SECONDS)
+    connect_timeout = _env_float(
+        ENV_MODEL_SERVICE_CONNECT_TIMEOUT, DEFAULT_CONNECT_TIMEOUT_SECONDS
+    )
+
+    def _chunk(
+        texts: Sequence[str], max_tokens: int, overlap: int = 0
+    ) -> List[List[str]]:
+        import requests
+
+        headers = {"Content-Type": "application/json"}
+        if api_token:
+            headers["Authorization"] = f"Bearer {api_token}"
+
+        response = requests.post(
+            f"{base_url}/v1/chunk",
+            json={
+                "model": embed_model,
+                "texts": list(texts),
+                "max_tokens": int(max_tokens),
+                "overlap": int(overlap),
+            },
+            headers=headers,
+            timeout=(connect_timeout, timeout),
+        )
+        if response.status_code >= 400:
+            raise ModelBackendError(
+                f"{base_url}/v1/chunk responded {response.status_code}"
+            )
+        body = response.json()
+        chunks = body.get("chunks")
+        if not isinstance(chunks, list) or len(chunks) != len(texts):
+            raise ModelBackendError(
+                "model service returned an unexpected chunk payload"
+            )
+        return [
+            (
+                [str(part) for part in entry]
+                if isinstance(entry, list)
+                else [str(entry)]
+            )
+            for entry in chunks
+        ]
+
+    return _chunk
 
 
 def resolve_model_name(kind: str, model_path: Optional[str]) -> Optional[str]:

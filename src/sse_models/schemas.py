@@ -163,6 +163,51 @@ class TruncateResponse(BaseModel):
 
 
 # ----------------------------------------------------------------------
+# /v1/chunk
+# ----------------------------------------------------------------------
+class ChunkRequest(BaseModel):
+    """
+    Split texts into chunks of a token budget, with the tokenizer of a model.
+
+    Token chunking belongs to the model host: only there is the tokenizer of
+    the embedder, and only its token counts make a chunk size mean what the
+    embedder can actually read.  The engine sends whole pages and gets back
+    the chunks of every one of them.
+    """
+
+    model: str = Field(
+        ..., description="Model name from the catalog (embedder or reranker)"
+    )
+    texts: List[str] = Field(
+        ..., min_length=1, description="Texts to chunk (at least one)"
+    )
+    max_tokens: int = Field(
+        ..., ge=2, description="Maximum number of tokens in one chunk"
+    )
+    overlap: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Tokens of the previous chunk repeated at the start of the next "
+            "one; must stay below max_tokens"
+        ),
+    )
+
+
+class ChunkResponse(BaseModel):
+    model: str
+    chunks: List[List[str]] = Field(
+        ...,
+        description=(
+            "Chunks of every input text, in input order; a text which fits "
+            "the budget comes back as a single chunk"
+        ),
+    )
+    chunk_counts: List[int]
+    took_ms: float
+
+
+# ----------------------------------------------------------------------
 # /v1/denoise
 # ----------------------------------------------------------------------
 class DenoiseRequest(BaseModel):

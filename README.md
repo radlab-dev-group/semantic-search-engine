@@ -178,11 +178,13 @@ in-process fallback when one is configured and to a plain answer otherwise.
 File indexing reads the uploaded documents with the light core of the
 `radlab_data` package (≥ 0.1.1): its document loaders, `Document`,
 `DirectoryFileReader` and `TextUtils` import without `torch` or
-`transformers`, so an API host which ingests files does **not** have to
-install the model stack either.  The only remaining exception is *token*
-chunking (`max_tokens_in_chunk`): `radlab_data` loads its tokenizer from
-`transformers` on first use, so a host that tokenizes uploads installs the
-model stack (or, going forward, delegates chunking to the model service).
+`transformers`.  Token chunking is one of the service's operations too
+(`POST /v1/chunk`): the pages of an upload are cut with the tokenizer of the
+embedder of the collection, on the model host, so **no** host of the engine
+installs the model stack — not the one which only answers queries, and not
+the one which ingests files.  Without a configured service the reader chunks
+with its own tokenizer instead, which is the only case in which an indexing
+host still installs the model stack.
 `src/sse_api/engine/tests/test_import_boundaries.py` guards the boundary: it
 imports the engine in a process where `torch`, `transformers` and
 `sentence-transformers` raise `ImportError`.

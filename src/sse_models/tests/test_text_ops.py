@@ -1,6 +1,6 @@
 """
 Tests for the text-operation endpoints of the model service:
-``/v1/tokenize``, ``/v1/truncate`` and ``/v1/denoise``.
+``/v1/tokenize``, ``/v1/truncate``, ``/v1/chunk`` and ``/v1/denoise``.
 
 As in ``test_api.py`` no real model is involved: a fake registry hands out a
 stub tokenizer and a stub denoiser bundle, so the contract (status codes,
@@ -91,7 +91,11 @@ def _client(**kwargs) -> TestClient:
             **kwargs.pop("env", {}),
         }
     )
-    return TestClient(create_app(settings=settings, registry=kwargs.pop("registry", FakeRegistry())))
+    return TestClient(
+        create_app(
+            settings=settings, registry=kwargs.pop("registry", FakeRegistry())
+        )
+    )
 
 
 def _auth() -> dict:
@@ -127,9 +131,7 @@ def test_tokenize_unknown_model_is_404():
 
 def test_tokenize_requires_auth():
     client = _client()
-    res = client.post(
-        "/v1/tokenize", json={"model": EMBED_MODEL, "texts": ["x"]}
-    )
+    res = client.post("/v1/tokenize", json={"model": EMBED_MODEL, "texts": ["x"]})
     assert res.status_code == 401
 
 
@@ -140,7 +142,11 @@ def test_truncate_cuts_to_token_budget():
     client = _client()
     res = client.post(
         "/v1/truncate",
-        json={"model": EMBED_MODEL, "texts": ["a b c d e", "short"], "max_tokens": 3},
+        json={
+            "model": EMBED_MODEL,
+            "texts": ["a b c d e", "short"],
+            "max_tokens": 3,
+        },
         headers=_auth(),
     )
     assert res.status_code == 200
@@ -162,6 +168,117 @@ def test_truncate_rejects_bad_budget():
 
 
 # ----------------------------------------------------------------------
+# /v1/chunk
+# ----------------------------------------------------------------------
+class WordTokenizer:
+    """Splits on whitespace; a token is one word, decoded back to that word."""
+
+    def __init__(self):
+        self._words: list[str] = []
+
+    def encode(self, text, add_special_tokens=False):
+        self._words = text.split()
+        return list(range(len(self._words)))
+
+    def decode(self, token_ids, skip_special_tokens=True):
+        return " ".join(self._words[index] for index in token_ids)
+
+
+class ChunkRegistry(FakeRegistry):
+    def tokenizer_for(self, kind, name):
+        if not self.has_model(kind, name):
+            raise ModelNotFoundError(f"no {kind} named {name}")
+        return WordTokenizer()
+
+
+def _chunk(texts, max_tokens, overlap=0, **kwargs):
+    client = _client(registry=ChunkRegistry(), **kwargs)
+    return client.post(
+        "/v1/chunk",
+        json={
+            "model": EMBED_MODEL,
+            "texts": texts,
+            "max_tokens": max_tokens,
+            "overlap": overlap,
+        },
+        headers=_auth(),
+    )
+
+
+def test_chunk_splits_a_text_into_windows():
+    res = _chunk(["a b c d e"], max_tokens=2)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["chunks"] == [["a b", "c d", "e"]]
+    assert body["chunk_counts"] == [3]
+
+
+def test_chunk_repeats_the_overlap_between_windows():
+    res = _chunk(["a b c d e"], max_tokens=2, overlap=1)
+    assert res.status_code == 200
+    assert res.json()["chunks"] == [["a b", "b c", "c d", "d e", "e"]]
+
+
+def test_chunk_keeps_a_text_fitting_the_budget_whole():
+    res = _chunk(["one two", "three"], max_tokens=5)
+    assert res.json()["chunks"] == [["one two"], ["three"]]
+    assert res.json()["chunk_counts"] == [1, 1]
+
+
+def test_chunk_keeps_the_input_order_of_its_texts():
+    res = _chunk(["a b c", "x y z", "q"], max_tokens=2)
+    assert res.json()["chunks"] == [["a b", "c"], ["x y", "z"], ["q"]]
+
+
+def test_chunk_ignores_special_tokens_of_a_budget():
+    client = _client()  # FakeTokenizer appends one special token per text
+    res = client.post(
+        "/v1/chunk",
+        json={
+            "model": EMBED_MODEL,
+            "texts": ["a b c"],
+            "max_tokens": 3,
+            "overlap": 0,
+        },
+        headers=_auth(),
+    )
+    # 3 words + the fake special token do not fit 3 tokens any more
+    assert res.status_code == 200
+    assert len(res.json()["chunks"][0]) == 2
+
+
+def test_chunk_requires_auth():
+    client = _client(registry=ChunkRegistry())
+    res = client.post(
+        "/v1/chunk",
+        json={"model": EMBED_MODEL, "texts": ["a b"], "max_tokens": 2},
+    )
+    assert res.status_code == 401
+
+
+def test_chunk_unknown_model_is_404():
+    client = _client(registry=ChunkRegistry())
+    res = client.post(
+        "/v1/chunk",
+        json={"model": "nope/none", "texts": ["a b"], "max_tokens": 2},
+        headers=_auth(),
+    )
+    assert res.status_code == 404
+
+
+def test_chunk_rejects_an_overlap_as_large_as_the_budget():
+    assert _chunk(["a b c"], max_tokens=2, overlap=2).status_code == 422
+
+
+def test_chunk_rejects_a_budget_below_two_tokens():
+    assert _chunk(["a b c"], max_tokens=1).status_code == 422
+
+
+def test_chunk_rejects_an_empty_batch():
+    assert _chunk([], max_tokens=4).status_code == 422
+
+
+# ----------------------------------------------------------------------
 # /v1/denoise
 # ----------------------------------------------------------------------
 def test_denoise_disabled_outside_roles():
@@ -174,7 +291,5 @@ def test_denoise_disabled_outside_roles():
 
 def test_denoise_rejects_blank_text():
     client = _client()
-    res = client.post(
-        "/v1/denoise", json={"text": "   "}, headers=_auth()
-    )
+    res = client.post("/v1/denoise", json={"text": "   "}, headers=_auth())
     assert res.status_code == 422

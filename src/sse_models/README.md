@@ -47,6 +47,7 @@ codebase.
 | `POST /v1/rerank` | query + candidates → relevance scores | `model`, `query`, `documents[]`, `top_n?`, `return_documents?`, `batch_size?` |
 | `POST /v1/tokenize` | count tokens with a catalog model's tokenizer (no weights loaded) | `model`, `texts[]` |
 | `POST /v1/truncate` | cut texts to a token budget, token-exact | `model`, `texts[]`, `max_tokens` |
+| `POST /v1/chunk` | split texts into token chunks with an overlap, token-exact | `model`, `texts[]`, `max_tokens`, `overlap?` |
 | `POST /v1/denoise` | clean a noisy text (OCR artefacts) with the T5 denoiser | `text`, `max_length?`, `batch_size?` |
 | `POST /v1/extractive_qa` | answer a question with a span of every retrieved passage | `question`, `contexts[]` |
 | `GET /v1/models` | catalog this instance serves, with load state | — |

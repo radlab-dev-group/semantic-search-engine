@@ -35,12 +35,12 @@ imports the engine in a process where those packages raise `ImportError`, so
 the boundary cannot quietly regress.
 
 File indexing reads the uploaded documents with the light core of
-`radlab_data` (≥ 0.1.1), which imports without `torch` or `transformers`;
-the only operation that still needs the model stack is *token* chunking
-(`max_tokens_in_chunk`), where the package loads its tokenizer from
-`transformers` on first use.  A host that ingests files therefore installs
-the model stack only when it tokenizes uploads — a host which only answers
-searches never does.
+`radlab_data` (≥ 0.1.1), which imports without `torch` or `transformers`,
+and *token* chunking (`max_tokens_in_chunk`) is a model-service operation
+(`POST /v1/chunk`): the pages are cut with the tokenizer of the collection's
+embedder, on the model host.  No engine host therefore needs the model
+stack; only a single-host deployment without the service falls back to the
+reader's own tokenizer, and that host installs the stack.
 
 ## Quick Start
 

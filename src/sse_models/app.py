@@ -50,6 +50,8 @@ from sse_models.schemas import (
     ExtractiveQAResponse,
     TokenizeRequest,
     TokenizeResponse,
+    ChunkRequest,
+    ChunkResponse,
     TruncateRequest,
     TruncateResponse,
 )
@@ -394,6 +396,75 @@ def create_app(
             model=payload.model,
             truncated_texts=truncated,
             was_truncated=was_truncated,
+            took_ms=round(took_ms, 3),
+        )
+
+    # ------------------------------------------------------------------
+    # /v1/chunk
+    # ------------------------------------------------------------------
+    @app.post(
+        "/v1/chunk",
+        response_model=ChunkResponse,
+        response_model_exclude_none=True,
+        tags=["inference"],
+        dependencies=auth,
+        responses={
+            404: {"model": ErrorResponse, "description": "Unknown model name"},
+            422: {"model": ErrorResponse, "description": "Bad chunk size"},
+            500: {"model": ErrorResponse, "description": "Bad model config"},
+        },
+    )
+    def chunk(payload: ChunkRequest) -> ChunkResponse:
+        """Split texts into token chunks (token-exact, model tokenizer).
+
+        Chunking is a model operation because a chunk is measured in the
+        tokens of the embedder which has to read it: the engine sends whole
+        pages and receives the chunks of every one of them.  Adjacent chunks
+        repeat ``overlap`` tokens, so a sentence cut at a boundary survives
+        on both sides.
+        """
+        if payload.overlap >= payload.max_tokens:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"overlap {payload.overlap} must be smaller than "
+                    f"max_tokens {payload.max_tokens}"
+                ),
+            )
+
+        kind = _resolve_kind(registry, payload.model)
+        start = time.perf_counter()
+        tokenizer = _load_tokenizer(registry, kind, payload.model)
+
+        step = payload.max_tokens - payload.overlap
+        chunked: List[List[str]] = []
+        for text in payload.texts:
+            token_ids = tokenizer.encode(text, add_special_tokens=False)
+            if len(token_ids) <= payload.max_tokens:
+                chunked.append([text])
+                continue
+            windows = []
+            for position in range(0, len(token_ids), step):
+                window = token_ids[position : position + payload.max_tokens]
+                if not window:
+                    continue
+                windows.append(tokenizer.decode(window, skip_special_tokens=True))
+            chunked.append(windows or [text])
+
+        took_ms = (time.perf_counter() - start) * 1000.0
+        logger.info(
+            "chunk model=%s texts=%d chunks=%d max_tokens=%d overlap=%d took=%.1fms",
+            payload.model,
+            len(payload.texts),
+            sum(len(parts) for parts in chunked),
+            payload.max_tokens,
+            payload.overlap,
+            took_ms,
+        )
+        return ChunkResponse(
+            model=payload.model,
+            chunks=chunked,
+            chunk_counts=[len(parts) for parts in chunked],
             took_ms=round(took_ms, 3),
         )
 

@@ -4,7 +4,7 @@ All notable changes to the Semantic Search Engine are documented in this file.
 
 | Version | Changelog |
 |---------|-----------|
-| [0.1.9](#019) | Search quality: the engine core no longer ships the ML stack (text cleaning, token counting and truncation move to the model service — `POST /v1/tokenize`, `/v1/truncate`, `/v1/denoise`), indexing embeds chunks with a document context header (document, category, path, section), the Milvus `filename` / `document_name` filter bug is fixed, short chunks (40+ characters) reach the index, texts are split on paragraph, code-fence and table boundaries, every collection stores its own search profile and RAG model (`POST /api/v1/set_collection_options`; the search and generation endpoints fall back to the profile when the request names no value), the hybrid search is rebalanced: weighted RRF (`dense_weight` / `lexical_weight`), equal candidate pools for both legs, the document filter on the full-text leg, the cosine similarity surviving the fusion, per-model `query_instruction` for asymmetric embedders and HNSW tuned for recall, and the post-retrieval stage: the reranker sees the name of the document it scores, a bigger rerank pool, per-document chunk caps (MMR-style diversification), a logarithmic document mass and the stitching of neighbouring chunks into one passage for the RAG context; the evaluation gains the standard IR metrics (NDCG, MRR, Precision/Recall, AP/MAP) scored on every question and a grid-search tuner of the fusion weights, the RRF constant and the rerank switch, and extractive question answering moving to the model service (`POST /v1/extractive_qa`), with the engine verified to import without `torch`, `transformers` or `sentence-transformers` |
+| [0.1.9](#019) | Search quality: the engine core no longer ships the ML stack (text cleaning, token counting and truncation move to the model service — `POST /v1/tokenize`, `/v1/truncate`, `/v1/denoise`), indexing embeds chunks with a document context header (document, category, path, section), the Milvus `filename` / `document_name` filter bug is fixed, short chunks (40+ characters) reach the index, texts are split on paragraph, code-fence and table boundaries, every collection stores its own search profile and RAG model (`POST /api/v1/set_collection_options`; the search and generation endpoints fall back to the profile when the request names no value), the hybrid search is rebalanced: weighted RRF (`dense_weight` / `lexical_weight`), equal candidate pools for both legs, the document filter on the full-text leg, the cosine similarity surviving the fusion, per-model `query_instruction` for asymmetric embedders and HNSW tuned for recall, and the post-retrieval stage: the reranker sees the name of the document it scores, a bigger rerank pool, per-document chunk caps (MMR-style diversification), a logarithmic document mass and the stitching of neighbouring chunks into one passage for the RAG context; the evaluation gains the standard IR metrics (NDCG, MRR, Precision/Recall, AP/MAP) scored on every question and a grid-search tuner of the fusion weights, the RRF constant and the rerank switch, extractive question answering and the token chunking of the indexed pages moving to the model service (`POST /v1/extractive_qa`, `POST /v1/chunk`), and the engine verified to import without `torch`, `transformers` or `sentence-transformers` |
 | [0.1.8](#018) | Standalone model service (`src/sse_models`) with `POST /v1/embed` / `POST /v1/rerank`, run with `./run.sh models` or `./run-models.sh`: the engine can delegate embedding and reranking to it (`SSE_MODEL_SERVICE_ENABLED`) with a circuit breaker and in-process fallback, or run inference on another machine entirely. Keyword filters in search (`options.keywords` with `keywords_match: "and"` / `"any"`), lexical-only search (`"lexical_only": true` answers from the full-text leg alone, `score_scale: "fts"`), a `POST update_knowledge_quality` endpoint with monotonic per-document upvote/downvote counters, and `model_embedder` / `model_reranker` in `GET collections` |
 | [0.1.7](#017) | Deletion of user chats: `POST delete_chat` (also accepted as `DELETE`, `chat_id` / `chat_ids[]`), `ChatDeletionController`, and `sse_lib.SSEClient.delete_chat` (`endpoints.DELETE_CHAT`). Deleting a collection also removes messages and states of its chats cleanly. Chat history (`GET chats` and `GET get_chat_by_hash`) now serializes messages with `DeepMessageSerializer` (including `state` with RAG responses, answers, and citations) and `collection_name` |
 | [0.1.6](#016) | Conversational RAG with memory: the generator sees the previous questions **and** answers, follow-up questions are rewritten into standalone retrieval queries (new `POST rewrite_query`), answers carry numbered source citations (`citations`, per-chat numbering, `answer_source`/`rewritten_query` in the reply) and short commands ("make it a table", "shorten", "translate") reuse the previous sources without a new search. Every search hit and citation carries the chunk's identity and position (`text_id`, `document_id`, `char_start`, `char_end`); `GET document_content?text_id=` opens exactly the chunk's page with a `highlight`. `sse_lib`: `rewrite_query()`, `generative_answer_with_citations()`, `document_content(text_id=...)` and the new reply/citation fields |
@@ -231,6 +231,36 @@ All notable changes to the Semantic Search Engine are documented in this file.
   is answered by the local backend instead of falling into the rerank branch
   (which also removes a block of unreachable code).
 
+#### Token chunking of the indexed documents in the model service
+- A chunk is measured in the tokens of the embedder which has to read it, so
+  the cutting of the indexed pages moves to the model host as
+  **`POST /v1/chunk`**: the engine sends the pages of an upload and gets back
+  the chunks of every one of them (token-exact, a window of `max_tokens`
+  tokens with `overlap` repeated at the start of each next window; a page
+  which fits the budget comes back whole).
+- `sse_models`: schemas `ChunkRequest` / `ChunkResponse`, the endpoint in
+  `src/sse_models/app.py` (the tokenizer of the named catalog model, like
+  `/v1/tokenize` and `/v1/truncate`; `422` for an overlap which is not below
+  the budget, `404` for an unknown model, `422` for an empty batch).
+- Engine: `ModelBackend` gains `chunk_texts(texts, max_tokens, overlap)` —
+  `RemoteBackend` calls the service (circuit breaker and degrade-to-fallback
+  like every other operation), `LocalBackend` cuts with the tokenizer of the
+  in-process embedder.  `build_chunk_client()` is the standalone client, the
+  mirror of `build_truncate_client()`;
+  `sse_api/data/controllers/token_chunking.py` carries the pages of a
+  document through it in batches and writes the `chunk` number and the
+  `text_chunk_type` exactly the way the reader always did.
+- Both indexing paths (uploaded files and pasted texts) ask the service to
+  cut the pages when it is reachable — the document reader then gets no
+  token budget of its own — and keep the reader's own chunker when no service
+  is configured.  With the service, no host of the engine needs the model
+  stack, the indexing host included; without it, a host which ingests
+  token-chunked collections installs the stack, as before.
+- The tokens of the collection's embedder replace the fixed tokenizer of
+  `radlab_data` (`radlab/polish-fast-tokenizer`): the boundaries of the
+  chunks of an already-indexed collection change when this goes live, so such
+  a collection is re-indexed the next time it is indexed.
+
 ### Changed
 
 #### Dependencies of the engine
@@ -265,12 +295,12 @@ All notable changes to the Semantic Search Engine are documented in this file.
   `TextUtils` import without `torch` or `transformers`.  The heavy packages
   moved to the extras of the package (`ml`, `spacy`, `lang`, `tables`,
   `all`).
-- Reading and cleaning an uploaded file — the whole indexing path of a
-  sentence-chunked collection — therefore runs on `requirements.txt` alone;
-  only *token* chunking (`max_tokens_in_chunk`, which counts with the
-  tokenizer of `radlab_data`) still asks for the model stack on the host
-  which ingests.  `README.md` and `src/sse_api/README.md` describe where the
-  line sits now.
+- Reading and cleaning an uploaded file therefore runs on `requirements.txt`
+  alone; the token chunking of the pages is a model-service operation (see
+  *Token chunking of the indexed documents in the model service* above), so
+  the model stack is installed by no host of the engine, the indexing host
+  included.  `README.md` and `src/sse_api/README.md` describe where the line
+  sits now.
 
 ### Fixed
 
