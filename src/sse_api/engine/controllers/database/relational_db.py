@@ -30,11 +30,13 @@ def directory_file_reader(**options):
     """
     A reader of the files of an upload, imported when files are really read.
 
-    ``radlab_data`` imports ``transformers`` as soon as its loaders are
-    imported, and the engine — the API, the search, a worker which never
-    ingests a file — must stay importable on a host without the model stack.
-    A function rather than a module-level name, so that a test can hand out
-    its own reader.
+    ``radlab_data`` is an optional dependency of the engine: a host which
+    only answers queries may not have it installed at all, so the import
+    stays inside the call (and a test can hand out its own reader).  Since
+    ``radlab_data`` 0.1.1 its light core — document loaders, ``Document``,
+    ``DirectoryFileReader`` — imports without the model stack; the only part
+    that still needs it is token chunking, which loads the tokenizer from
+    ``transformers`` on first use.
     """
     from radlab_data.text.reader import DirectoryFileReader
 

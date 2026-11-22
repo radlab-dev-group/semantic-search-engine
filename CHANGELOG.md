@@ -255,8 +255,22 @@ All notable changes to the Semantic Search Engine are documented in this file.
   text to the embedder), and
   `src/sse_api/engine/tests/test_import_boundaries.py` imports the engine in
   a process where `torch`, `transformers` and `sentence-transformers` raise
-  `ImportError`.  File indexing stays the documented exception: reading and
-  tokenizing a document is `radlab_data`'s work and it needs the model stack.
+  `ImportError`.
+
+#### Light core of `radlab_data`
+- The document reader of the uploads, `radlab_data` 0.1.1, no longer drags
+  the model stack with it: `transformers` is imported inside
+  `get_tokenizer()` and its tokenizer is loaded on the first use of token
+  chunking, so `Document`, `DirectoryFileReader`, the loaders and
+  `TextUtils` import without `torch` or `transformers`.  The heavy packages
+  moved to the extras of the package (`ml`, `spacy`, `lang`, `tables`,
+  `all`).
+- Reading and cleaning an uploaded file — the whole indexing path of a
+  sentence-chunked collection — therefore runs on `requirements.txt` alone;
+  only *token* chunking (`max_tokens_in_chunk`, which counts with the
+  tokenizer of `radlab_data`) still asks for the model stack on the host
+  which ingests.  `README.md` and `src/sse_api/README.md` describe where the
+  line sits now.
 
 ### Fixed
 

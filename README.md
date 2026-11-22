@@ -161,7 +161,7 @@ semantic-search-engine/
 | **Milvus**                   | 2.3+                  | Vector database for semantic embeddings.                                                         |
 | **Django**                   | 4.x                   | Core web framework for the API layer.                                                            |
 | **boto3**                    | any                   | Required only if you enable AWS S3 storage.                                                      |
-| **radlab_data** package      | ≥ 0.2.0               | Reads and splits the uploaded files during indexing; pulls the model stack with it (see below).  |
+| **radlab_data** package      | ≥ 0.1.1               | Reads and splits the uploaded files during indexing (light core: no `torch` / `transformers` at import time — see below).  |
 | **CUDA (optional)**          | 11+                   | If you want to run embeddings / LLMs on GPU.                                                     |
 | **Deepl API key** (optional) | –                     | Enables answer translation.                                                                      |
 
@@ -175,13 +175,17 @@ service (`requirements-models.txt`, installed on the model host), and the
 engine refuses no request when that service is down — it degrades to its
 in-process fallback when one is configured and to a plain answer otherwise.
 
-The one remaining consumer of the model stack on the API side is **file
-indexing**: the `radlab_data` package reads and tokenizes the uploaded
-documents and imports `transformers`, so an API host which ingests files
-installs the model stack too, while a host which only serves queries does
-not.  `src/sse_api/engine/tests/test_import_boundaries.py` guards that
-boundary: it imports the engine in a process where `torch`, `transformers`
-and `sentence-transformers` raise `ImportError`.
+File indexing reads the uploaded documents with the light core of the
+`radlab_data` package (≥ 0.1.1): its document loaders, `Document`,
+`DirectoryFileReader` and `TextUtils` import without `torch` or
+`transformers`, so an API host which ingests files does **not** have to
+install the model stack either.  The only remaining exception is *token*
+chunking (`max_tokens_in_chunk`): `radlab_data` loads its tokenizer from
+`transformers` on first use, so a host that tokenizes uploads installs the
+model stack (or, going forward, delegates chunking to the model service).
+`src/sse_api/engine/tests/test_import_boundaries.py` guards the boundary: it
+imports the engine in a process where `torch`, `transformers` and
+`sentence-transformers` raise `ImportError`.
 
 ---  
 
