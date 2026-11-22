@@ -288,13 +288,18 @@ All notable changes to the Semantic Search Engine are documented in this file.
   `ImportError`.
 
 #### Installation of `radlab_data` from PyPI
-- `radlab_data` is published on PyPI (`radlab-data`), so the engine installs
-  it from there instead of from git: `src/sse_api/initialize.sh` runs
-  `pip install radlab-data`, and the `Dockerfile` installs
-  `radlab-data>=0.0.4` behind the same `INSTALL_RADLAB_DATA` build arg (the
-  `RADLAB_DATA_REF` arg is gone, with its `docker-compose.yml` and
-  `.env.example` entries).  `run.sh` and `SETUP.md` describe the install as
-  it is now.
+- `radlab_data` is published on PyPI (`radlab-data`), so it becomes an
+  ordinary requirement of the engine instead of a git checkout nobody can
+  repeat in a clean environment: `requirements.txt` asks for
+  `radlab-data>=0.0.4` (its own dependencies are the light ones the engine
+  already installs — `tqdm`, `requests`, `beautifulsoup4`, `python-docx`,
+  `pypdf` — no `torch`, no `transformers`).
+- With that in `requirements.txt` every switch which made the install
+  optional is gone: the `INSTALL_RADLAB_DATA` build arg of the `Dockerfile`,
+  its entries in `docker-compose.yml` and `.env.example`, the `RADLAB_DATA_REF`
+  ref, and the `pip install` of `src/sse_api/initialize.sh` (which is left
+  with the LLM router, the one dependency without a release).
+  `run.sh` and `SETUP.md` describe the install as it is now.
 
 #### Light core of `radlab_data`
 - The document reader of the uploads, `radlab_data` 0.0.4 (on PyPI), no longer drags

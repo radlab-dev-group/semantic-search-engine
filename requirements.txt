@@ -15,14 +15,19 @@ deepl
 pybind11
 xlsxwriter
 bs4
+# document reader of the uploads: the light core (>=0.0.4, on PyPI) reads
+# txt/md/pdf/docx/html without the model stack; token chunking goes to the
+# model service (POST /v1/chunk), the reader's own chunker is the fallback
+# for a single-host deployment without the service
+radlab-data>=0.0.4
 
 # ml
 # The engine core is inference-free by default: embedding, reranking,
 # tokenization and denoising are served by `sse_models` over HTTP (see
 # requirements-models.txt, installed on the model host only).  What stays
-# here is what the engine itself executes: language detection of queries
-# (radlab_data) and the text-similarity metric of the denoiser's correctness
-# score.
+# here is what the engine itself still executes: language detection of
+# queries (radlab_data) and the text-similarity metric of the denoiser's
+# correctness score.
 #
 # An engine which still loads models in process (SSE_MODEL_SERVICE_ENABLED=0,
 # the historical default) installs BOTH files:
