@@ -161,11 +161,27 @@ semantic-search-engine/
 | **Milvus**                   | 2.3+                  | Vector database for semantic embeddings.                                                         |
 | **Django**                   | 4.x                   | Core web framework for the API layer.                                                            |
 | **boto3**                    | any                   | Required only if you enable AWS S3 storage.                                                      |
-| **radlab_data** package      | ≥ 0.2.0               | Provides `DirectoryFileReader`, `TextUtils`, and other utilities used by the conversion scripts. |
+| **radlab_data** package      | ≥ 0.2.0               | Reads and splits the uploaded files during indexing; pulls the model stack with it (see below).  |
 | **CUDA (optional)**          | 11+                   | If you want to run embeddings / LLMs on GPU.                                                     |
 | **Deepl API key** (optional) | –                     | Enables answer translation.                                                                      |
 
 All third‑party Python dependencies are listed in `requirements.txt`.
+
+The API and the core engine are **inference-free**: they install
+`requirements.txt` only, which carries no `torch`, `transformers` or
+`sentence-transformers`.  Embedding, reranking, token counting, text
+truncation, denoising and extractive QA are served over HTTP by the model
+service (`requirements-models.txt`, installed on the model host), and the
+engine refuses no request when that service is down — it degrades to its
+in-process fallback when one is configured and to a plain answer otherwise.
+
+The one remaining consumer of the model stack on the API side is **file
+indexing**: the `radlab_data` package reads and tokenizes the uploaded
+documents and imports `transformers`, so an API host which ingests files
+installs the model stack too, while a host which only serves queries does
+not.  `src/sse_api/engine/tests/test_import_boundaries.py` guards that
+boundary: it imports the engine in a process where `torch`, `transformers`
+and `sentence-transformers` raise `ImportError`.
 
 ---  
 

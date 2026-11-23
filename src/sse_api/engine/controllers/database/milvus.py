@@ -5,7 +5,11 @@ import json
 from typing import List, Dict, Any
 
 from sse_api.core.constants import get_logger
-from sse_api.engine.core.models.backend import build_backend, service_enabled
+from sse_api.engine.core.models.backend import (
+    ModelBackendError,
+    build_backend,
+    service_enabled,
+)
 from pymilvus.exceptions import MilvusException  # type: ignore[import-untyped]
 from pymilvus import (
     db,
@@ -419,8 +423,15 @@ class MilvusHandler:
               truncated to this length (number of characters)
         :return: None
         """
-        if self._embedder_model is None:
-            raise Exception("Embedder model is not initialized!")
+        # An in-process embedder is only one way to obtain vectors: with the
+        # model service enabled they come from there and nothing is loaded
+        # here, so the guard asks the backend which is really going to answer.
+        if self._embedder_model is None and not service_enabled():
+            raise ModelBackendError(
+                "Embedder model is not initialized! Configure the model "
+                "service (SSE_MODEL_SERVICE_ENABLED / "
+                "SSE_MODEL_SERVICE_URL) or an in-process embedder."
+            )
 
         if max_text_len is not None and max_text_len:
             texts = [t[:max_text_len] for t in texts]

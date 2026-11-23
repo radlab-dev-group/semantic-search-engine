@@ -7,10 +7,15 @@ Provides a clean protocol boundary so engine.core never needs to know about
 pymilvus or Milvus internals.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from sse_api.engine.core.protocols import VectorStoreProtocol
-from sse_api.engine.database.milvus_impl import MilvusHandler
+
+if TYPE_CHECKING:
+    # The type of the wrapped handler, without the import it would cost at
+    # runtime: ``milvus_impl`` re-exports the handler from the controllers,
+    # which import this module, so an import-time edge here is a cycle.
+    from sse_api.engine.controllers.database.milvus import MilvusHandler
 
 
 class MilvusVectorStoreAdapter(VectorStoreProtocol):
@@ -20,7 +25,7 @@ class MilvusVectorStoreAdapter(VectorStoreProtocol):
     Milvus operations.
     """
 
-    def __init__(self, handler: MilvusHandler) -> None:
+    def __init__(self, handler: "MilvusHandler") -> None:
         self._handler = handler
 
     # ------------------------------------------------------------------

@@ -742,6 +742,68 @@ def build_extractive_qa_client() -> (
     return _answer
 
 
+def build_truncate_client(
+    embed_model: Optional[str],
+) -> Optional[Callable[[Sequence[str], int], Tuple[List[str], List[bool]]]]:
+    """
+    Build a ``(texts, max_tokens) -> (truncated, was_truncated)`` client.
+
+    Truncation is a model-service operation (the embedder's own tokenizer on
+    the service side, ``POST /v1/truncate``) and the engine must not need
+    ``transformers`` for it.  ``None`` means "no service configured or no
+    model to address", and the caller then decides what cutting means —
+    usually: nothing.
+    """
+    if not service_enabled() or not embed_model:
+        return None
+
+    base_url = os.environ.get(ENV_MODEL_SERVICE_URL, "").strip().rstrip("/")
+    api_token = os.environ.get(ENV_MODEL_SERVICE_TOKEN, "").strip()
+    timeout = _env_float(ENV_MODEL_SERVICE_TIMEOUT, DEFAULT_TIMEOUT_SECONDS)
+    connect_timeout = _env_float(
+        ENV_MODEL_SERVICE_CONNECT_TIMEOUT, DEFAULT_CONNECT_TIMEOUT_SECONDS
+    )
+
+    def _truncate(
+        texts: Sequence[str], max_tokens: int
+    ) -> Tuple[List[str], List[bool]]:
+        import requests
+
+        headers = {"Content-Type": "application/json"}
+        if api_token:
+            headers["Authorization"] = f"Bearer {api_token}"
+
+        response = requests.post(
+            f"{base_url}/v1/truncate",
+            json={
+                "model": embed_model,
+                "texts": list(texts),
+                "max_tokens": int(max_tokens),
+            },
+            headers=headers,
+            timeout=(connect_timeout, timeout),
+        )
+        if response.status_code >= 400:
+            raise ModelBackendError(
+                f"{base_url}/v1/truncate responded {response.status_code}"
+            )
+        body = response.json()
+        truncated = body.get("truncated_texts")
+        flags = body.get("was_truncated")
+        if (
+            not isinstance(truncated, list)
+            or len(truncated) != len(texts)
+            or not isinstance(flags, list)
+            or len(flags) != len(texts)
+        ):
+            raise ModelBackendError(
+                "model service returned an unexpected truncate payload"
+            )
+        return [str(text) for text in truncated], [bool(flag) for flag in flags]
+
+    return _truncate
+
+
 def resolve_model_name(kind: str, model_path: Optional[str]) -> Optional[str]:
     """
     Map a model *path* back to its catalog *name*.

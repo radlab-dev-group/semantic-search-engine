@@ -86,7 +86,7 @@ class UploadMetadataTests(EndpointInputMixin, TestCase):
                     )
 
                 with patch(
-                    "sse_api.engine.controllers.database.relational_db.DirectoryFileReader",
+                    "sse_api.engine.controllers.database.relational_db.directory_file_reader",
                     side_effect=read_directory,
                 ):
                     response, dispatch = self.upload(
@@ -154,7 +154,7 @@ class UploadMetadataTests(EndpointInputMixin, TestCase):
             ],
         )
         with patch(
-            "sse_api.engine.controllers.database.relational_db.DirectoryFileReader",
+            "sse_api.engine.controllers.database.relational_db.directory_file_reader",
             return_value=reader,
         ):
             response, dispatch = self.upload(None, False)
@@ -175,7 +175,7 @@ class UploadMetadataTests(EndpointInputMixin, TestCase):
     def test_reader_omission_rejects_inline_job_instead_of_losing_metadata(self):
         reader = SimpleNamespace(load=lambda **options: None, documents=[])
         with patch(
-            "sse_api.engine.controllers.database.relational_db.DirectoryFileReader",
+            "sse_api.engine.controllers.database.relational_db.directory_file_reader",
             return_value=reader,
         ):
             response, dispatch = self.upload(json.dumps(self.metadata), False)
