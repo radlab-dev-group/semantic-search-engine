@@ -43,9 +43,10 @@ class ModelServiceSettings:
         # endpoint (the other returns 503).  This is what lets the same image
         # be deployed as a cheap embedder fleet and a beefier reranker fleet.
         self.role = env.get("SSE_MODELS_ROLE", "all").strip().lower()
-        # ``denoise`` adds the T5 text-cleaning model, which is only loaded
-        # when that endpoint is asked for.
-        if self.role not in {"all", "embed", "rerank", "denoise"}:
+        # ``denoise`` adds the T5 text-cleaning model, ``extractive_qa`` the
+        # question-answering pipeline; both are only loaded when their
+        # endpoint is asked for.
+        if self.role not in {"all", "embed", "rerank", "denoise", "extractive_qa"}:
             self.role = "all"
 
         # Optional shared secret.  When set, /v1/* requests must carry
@@ -83,6 +84,13 @@ class ModelServiceSettings:
             env.get("SSE_MODELS_DENOISE_MAX_MODEL_INPUT"), 256
         )
 
+        # Max number of passages a single /v1/extractive_qa call may answer
+        # over.  The pipeline runs once per passage, so this is the request's
+        # cost cap (same role as the rerank document limit).
+        self.extractive_qa_max_contexts = _as_int(
+            env.get("SSE_MODELS_EXTRACTIVE_QA_MAX_CONTEXTS"), 64
+        )
+
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
@@ -98,6 +106,11 @@ class ModelServiceSettings:
     def denoise_enabled(self) -> bool:
         """Text denoising (T5); off for the two pure inference roles."""
         return self.role in {"all", "denoise"}
+
+    @property
+    def extractive_qa_enabled(self) -> bool:
+        """Extractive question answering; off for the pure inference roles."""
+        return self.role in {"all", "extractive_qa"}
 
     def embedders_config_path(self) -> str:
         return os.path.join(self.config_dir, "embedders.json")

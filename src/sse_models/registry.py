@@ -275,7 +275,9 @@ class ModelRegistry:
     def _load_denoiser(self):
         config_path = os.path.join(self._settings.config_dir, "models.json")
         if not os.path.isfile(config_path):
-            raise ModelConfigError(f"denoiser configuration not found: {config_path}")
+            raise ModelConfigError(
+                f"denoiser configuration not found: {config_path}"
+            )
         try:
             with open(config_path, "r", encoding="utf-8") as handle:
                 config = json.load(handle)
@@ -296,11 +298,67 @@ class ModelRegistry:
         try:
             import torch
 
-            model.to(device if torch.cuda.is_available() or not device.startswith("cuda") else "cpu")
+            model.to(
+                device
+                if torch.cuda.is_available() or not device.startswith("cuda")
+                else "cpu"
+            )
         except Exception:  # torch missing / no device: keep the CPU copy
             pass
         tokenizer = T5Tokenizer.from_pretrained(path)
         return {"model": model, "tokenizer": tokenizer, "path": path}
+
+    # ------------------------------------------------------------------
+    # extractive QA (question-answering pipeline, optional)
+    # ------------------------------------------------------------------
+    def qa_model(self):
+        """
+        The extractive QA pipeline, loaded once and cached.
+
+        Like the denoiser it is not part of the embedder/reranker catalogs:
+        the ``extractive_qa`` section of ``configs/models.json`` carries its
+        ``model_path`` and ``device``.  Loading is entirely lazy — a service
+        that never answers ``/v1/extractive_qa`` never pays for its weights.
+        """
+        key = "qa_model"
+        cached = self._loaded.get(key)
+        if cached is not None:
+            return cached
+
+        with self._lock:
+            cached = self._loaded.get(key)
+            if cached is not None:
+                return cached
+            model = self._load_qa_model()
+            self._loaded[key] = model
+            self._load_errors.pop(key, None)
+            return model
+
+    def _load_qa_model(self):
+        from sse_models.extractive_qa import load_qa_pipeline
+
+        config_path = os.path.join(self._settings.config_dir, "models.json")
+        if not os.path.isfile(config_path):
+            raise ModelConfigError(
+                f"extractive_qa configuration not found: {config_path}"
+            )
+        try:
+            with open(config_path, "r", encoding="utf-8") as handle:
+                config = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ModelConfigError(
+                f"cannot read extractive_qa config {config_path}: {exc}"
+            ) from exc
+
+        section = config.get("extractive_qa") or {}
+        path = section.get("model_path") or section.get("model_name")
+        if not path:
+            raise ModelConfigError(
+                "extractive_qa section has no model_path (or model_name)"
+            )
+        device = section.get("device") or "cpu"
+
+        return load_qa_pipeline(path, device=device)
 
     def inference_lock(self, kind: str, name: str) -> threading.Lock:
         """

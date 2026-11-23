@@ -190,4 +190,31 @@ class DenoiseResponse(BaseModel):
     took_ms: float
 
 
+# ----------------------------------------------------------------------
+# /v1/extractive_qa
+# ----------------------------------------------------------------------
+class ExtractiveQARequest(BaseModel):
+    """Answer a question with spans of the retrieved passages."""
+
+    question: str = Field(..., min_length=1, description="The question to answer")
+    contexts: List[str] = Field(
+        ..., min_length=1, description="Retrieved passages (at least one)"
+    )
+
+
+class ExtractiveQAAnswer(BaseModel):
+    """The span one passage offers, with its confidence."""
+
+    answer: str = Field(..., description="Extracted span, verbatim from the passage")
+    score: float = Field(..., description="Model confidence, in [0, 1]")
+
+
+class ExtractiveQAResponse(BaseModel):
+    """One answer per input passage, in input order."""
+
+    answers: List[ExtractiveQAAnswer]
+    count: int
+    took_ms: float
+
+
 AnyModel = Any

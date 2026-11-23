@@ -3,5 +3,10 @@
     "model_name": "radlab/polish-denoiser-t5-base",
     "model_path": "/mnt/data2/llms/models/radlab-open/denoiser/radlab-denoiser-plt5-base-v2",
     "device": "cuda:0"
+  },
+  "extractive_qa": {
+    "model_name": "radlab/polish-qa-v2",
+    "model_path": "/mnt/data2/llms/models/radlab-open/qa/best_model",
+    "device": "cuda:0"
   }
 }

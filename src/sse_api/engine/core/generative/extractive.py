@@ -1,59 +1,85 @@
-"""Extractive question‑answering using a HuggingFace pipeline."""
+"""Extractive question‑answering over the retrieved passages.
 
-# ``transformers`` is imported inside ``load_model``: an extractive QA run is
-# the only thing which needs it, and the engine must import without it.
+The engine does not own the QA weights: an answer is extracted by the model
+service (``POST /v1/extractive_qa`` of ``sse_models``), which is what
+``SSE_MODEL_SERVICE_ENABLED`` switches on.  ``transformers`` is imported by
+neither this module nor anything it imports at module level, so the engine
+stays importable — and deployable — without the model stack.
+"""
+
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+
+from sse_api.core.constants import get_logger
 
 
 class ExtractiveQAController:
     """
-    Controller that runs extractive question‑answering using a HuggingFace pipeline.
+    Answer a question with a span of every retrieved passage.
+
+    Three ways of answering, tried in this order:
+
+    * a ``qa_pipeline`` (or an ``answerer`` callable) handed to the
+      constructor — a test double, or a caller which owns its model;
+    * the **model service**, the production path: one HTTP call for the whole
+      candidate set, no torch in this process;
+    * the in‑process pipeline of
+      :mod:`sse_api.data.controllers.extractive_qa_local`, the historical path
+      for deployments which do not run the service.
+
+    A passage the model cannot be run over answers with an empty string and a
+    score of ``0.0``: a failed answer is a missing answer, not a failed search.
     """
 
     model_path = "radlab/polish-qa-v2"
 
     def __init__(
-        self, model_path: str | None, qa_pipeline=None, device: str = "cpu"
-    ):
+        self,
+        model_path: Optional[str] = None,
+        qa_pipeline: Any = None,
+        device: str = "cpu",
+        answerer: Optional[
+            Callable[[str, Sequence[str]], List[Tuple[str, float]]]
+        ] = None,
+    ) -> None:
         """
         Initialise the controller.
 
         Parameters
         ----------
         model_path : str | None
-            Path or identifier of the model to load if ``qa_pipeline`` is not
-            provided.
+            Model used by :meth:`load_model`. Nothing is loaded by the
+            constructor: without an injected pipeline the question is answered
+            by the model service, or by the in‑process pipeline on first use.
         qa_pipeline : object | None
-            An already‑initialised ``pipeline`` object. If supplied, ``model_path``
-            is ignored.
+            An already‑initialised HuggingFace question‑answering pipeline.
         device : str
-            Device to run the model on (e.g., ``"cpu"`` or ``"cuda"``).
+            Device :meth:`load_model` asks for (``"cpu"``, ``"cuda"``).
+        answerer : callable | None
+            ``(question, contexts) -> [(answer, score), ...]`` override, used
+            instead of the service.
         """
-        assert model_path is not None or qa_pipeline is not None
-
         self.device = device
-        if qa_pipeline is not None:
-            self.question_answerer = qa_pipeline
-        else:
-            self.question_answerer = self.load_model(model_path)
+        self.model_path = model_path or self.model_path
+        self.question_answerer = qa_pipeline
+        self._answerer = answerer
+        self._logger = get_logger()
 
-    def load_model(self, model_path):
+    # ------------------------------------------------------------------
+    def load_model(self, model_path: Optional[str] = None):
         """
-        Load a HuggingFace “question‑answering” pipeline.
+        Load the in‑process HuggingFace question‑answering pipeline.
 
-        Parameters
-        ----------
-        model_path : str
-            Model identifier or path.
-
-        Returns
-        -------
-        pipeline
-            A ready‑to‑use question‑answering pipeline.
+        Kept for callers which really want the weights in their own process;
+        the service path never calls it.
         """
-        from transformers import pipeline
+        from sse_api.data.controllers.extractive_qa_local import load_qa_pipeline
 
-        return pipeline("question-answering", model=model_path, device=self.device)
+        self.question_answerer = load_qa_pipeline(
+            model_path or self.model_path, device=self.device
+        )
+        return self.question_answerer
 
+    # ------------------------------------------------------------------
     def run_extractive_qa(self, question_str: str, search_results: dict) -> dict:
         """
         Perform extractive QA on a set of retrieved passages.
@@ -73,18 +99,85 @@ class ExtractiveQAController:
             Mapping of document name to a dict containing page number, text
             number, the extracted answer and its confidence score.
         """
-        document_answers = {}
-        for answer in search_results["results"]:
-            answer_str = answer["result"]["text"]["text_str"]
-            document_name = answer["result"]["text"]["document_name"]
-            page_number = answer["result"]["text"]["page_number"]
-            text_number = answer["result"]["text"]["text_number"]
+        passages = [
+            (
+                answer["result"]["text"]["text_str"],
+                answer["result"]["text"]["document_name"],
+                answer["result"]["text"]["page_number"],
+                answer["result"]["text"]["text_number"],
+            )
+            for answer in search_results["results"]
+        ]
 
-            q_res = self.question_answerer(question=question_str, context=answer_str)
+        answers = self._answer(question_str, [passage[0] for passage in passages])
+
+        document_answers: Dict[str, Any] = {}
+        for (answer, score), (_text, document_name, page, text_number) in zip(
+            answers, passages
+        ):
             document_answers[document_name] = {
-                "page_number": page_number,
+                "page_number": page,
                 "text_number": text_number,
-                "answer": q_res["answer"],
-                "score": q_res["score"],
+                "answer": answer,
+                "score": score,
             }
         return document_answers
+
+    # ------------------------------------------------------------------
+    def _answer(
+        self, question: str, contexts: Sequence[str]
+    ) -> List[Tuple[str, float]]:
+        """Answer over ``contexts``, one ``(answer, score)`` pair each."""
+        if not contexts:
+            return []
+        if not question.strip():
+            return [("", 0.0)] * len(contexts)
+
+        if self._answerer is not None:
+            return list(self._answerer(question, contexts))
+
+        if self.question_answerer is not None:
+            answers: List[Tuple[str, float]] = []
+            for context in contexts:
+                if not context.strip():
+                    answers.append(("", 0.0))
+                    continue
+                result = self.question_answerer(question=question, context=context)
+                answers.append(
+                    (
+                        str(result.get("answer") or ""),
+                        float(result.get("score") or 0.0),
+                    )
+                )
+            return answers
+
+        service_answerer = self._service_answerer()
+        if service_answerer is not None:
+            try:
+                return list(service_answerer(question, contexts))
+            except Exception as exc:  # dead service: fall through to local
+                self._logger.warning(
+                    "Model service extractive QA failed (%s); trying the local "
+                    "QA pipeline",
+                    exc,
+                )
+
+        from sse_api.data.controllers.extractive_qa_local import answer_locally
+
+        try:
+            return answer_locally(question, list(contexts))
+        except Exception as exc:  # no weights / no torch on this host
+            self._logger.warning(
+                "Extractive QA is unavailable (%s); answering with no answer",
+                exc,
+            )
+            return [("", 0.0)] * len(contexts)
+
+    @staticmethod
+    def _service_answerer():
+        """The ``POST /v1/extractive_qa`` client, ``None`` when not configured."""
+        from sse_api.engine.core.models.backend import (
+            build_extractive_qa_client,
+        )
+
+        return build_extractive_qa_client()
