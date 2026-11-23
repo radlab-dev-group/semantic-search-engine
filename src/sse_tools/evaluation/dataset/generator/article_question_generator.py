@@ -15,15 +15,22 @@ from sse_tools.evaluation.dataset.generator.question_worker import (
     FileWriter,
 )
 
-LLAMA_SERVICES_HOSTS = [
-    "http://192.168.100.66:8000/api/",
-    "http://192.168.100.66:8001/api/",
-    "http://192.168.100.69:8000/api/",
-    "http://192.168.100.70:8000/api/",
-    "http://192.168.100.70:8001/api/",
-    "http://192.168.100.71:8000/api/",
-    "http://192.168.100.71:8001/api/",
-]
+
+def llama_services_hosts() -> list:
+    """
+    The hosts of the Llama services which answer the questions.
+
+    A deployment owns its own addresses of the inference services, so they
+    come from the environment, not from the source: ``LLAMA_SERVICES_HOSTS``
+    with a whitespace or comma separated list of the base API urls.
+    """
+    raw = os.getenv("LLAMA_SERVICES_HOSTS", "")
+    hosts = [
+        host.strip().rstrip("/") + "/"
+        for host in raw.replace(",", " ").split()
+        if host.strip()
+    ]
+    return hosts
 
 
 def prepare_parser(desc=""):
@@ -88,7 +95,7 @@ def main(argv=None):
                 dataset_read_queue=data_to_process_queue,
                 results_write_queue=results_queue,
             )
-            for base_api_url in LLAMA_SERVICES_HOSTS
+            for base_api_url in llama_services_hosts()
         ],
     )
 

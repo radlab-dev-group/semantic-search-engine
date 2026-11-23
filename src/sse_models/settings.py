@@ -43,7 +43,9 @@ class ModelServiceSettings:
         # endpoint (the other returns 503).  This is what lets the same image
         # be deployed as a cheap embedder fleet and a beefier reranker fleet.
         self.role = env.get("SSE_MODELS_ROLE", "all").strip().lower()
-        if self.role not in {"all", "embed", "rerank"}:
+        # ``denoise`` adds the T5 text-cleaning model, which is only loaded
+        # when that endpoint is asked for.
+        if self.role not in {"all", "embed", "rerank", "denoise"}:
             self.role = "all"
 
         # Optional shared secret.  When set, /v1/* requests must carry
@@ -74,6 +76,13 @@ class ModelServiceSettings:
             env.get("SSE_MODELS_RERANK_MAX_DOCUMENTS"), 256
         )
 
+        # Token window the denoiser feeds to T5 (the model's own limit; the
+        # engine's former value, so behaviour does not change when the work
+        # moves from the engine process to this service).
+        self.denoise_max_model_input = _as_int(
+            env.get("SSE_MODELS_DENOISE_MAX_MODEL_INPUT"), 256
+        )
+
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
@@ -84,6 +93,11 @@ class ModelServiceSettings:
     @property
     def rerank_enabled(self) -> bool:
         return self.role in {"all", "rerank"}
+
+    @property
+    def denoise_enabled(self) -> bool:
+        """Text denoising (T5); off for the two pure inference roles."""
+        return self.role in {"all", "denoise"}
 
     def embedders_config_path(self) -> str:
         return os.path.join(self.config_dir, "embedders.json")

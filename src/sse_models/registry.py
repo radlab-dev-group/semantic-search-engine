@@ -82,8 +82,10 @@ class ModelRegistry:
         self._inference_locks: Dict[str, threading.Lock] = {}
         self._embedders: Dict[str, Dict[str, Any]] | None = None
         self._rerankers: Dict[str, Dict[str, Any]] | None = None
+        self._denoiser: Dict[str, Any] | None = None
         self._loaded: Dict[str, Any] = {}
         self._load_errors: Dict[str, str] = {}
+        self._tokenizer_cache: Dict[str, Any] = {}
 
     # ------------------------------------------------------------------
     # catalog
@@ -195,6 +197,110 @@ class ModelRegistry:
             return model
 
         raise ValueError(f"unknown model kind: {kind}")
+
+    # ------------------------------------------------------------------
+    # tokenizers (shared by /v1/tokenize and /v1/truncate)
+    # ------------------------------------------------------------------
+    def tokenizer_for(self, kind: str, name: str):
+        """
+        Fast tokenizer of a catalog model, loaded once and cached.
+
+        Tokenizers are read from the same catalog path as the weights and
+        cached separately from the model itself: counting tokens must not
+        force the multi-gigabyte weights into memory.
+        """
+        key = f"tokenizer:{kind}:{name}"
+        cached = self._tokenizer_cache.get(key)
+        if cached is not None:
+            return cached
+
+        catalog = self._catalog(kind)
+        if name not in catalog:
+            raise ModelNotFoundError(
+                f"{kind} model '{name}' is not configured; "
+                f"available: {', '.join(sorted(catalog)) or 'none'}"
+            )
+        path = catalog[name].get("path")
+        if not path or not os.path.isdir(path):
+            raise ModelConfigError(
+                f"{kind} model '{name}' has no usable path for its tokenizer"
+            )
+
+        with self._lock:
+            cached = self._tokenizer_cache.get(key)
+            if cached is not None:
+                return cached
+            from transformers import AutoTokenizer
+
+            tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
+            self._tokenizer_cache[key] = tokenizer
+            return tokenizer
+
+    def max_length_of(self, kind: str, name: str) -> int:
+        """Declared ``max_model_length`` of a catalog model, ``0`` when unknown."""
+        catalog = self._catalog(kind)
+        entry = catalog.get(name) or {}
+        try:
+            return int(entry.get("max_model_length") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    # ------------------------------------------------------------------
+    # denoiser (T5 text-cleaning model, optional)
+    # ------------------------------------------------------------------
+    def denoiser(self):
+        """
+        The text denoiser (T5), loaded once and cached.
+
+        The denoiser is not part of the embedder/reranker catalogs: it is a
+        separate generative model configured in ``configs/models.json`` (the
+        ``denoiser`` section, with ``model_path`` and ``device``).  Loading it
+        is entirely lazy — a service that never answers ``/v1/denoise`` never
+        pays for its weights.
+        """
+        key = "denoiser"
+        cached = self._loaded.get(key)
+        if cached is not None:
+            return cached
+
+        with self._lock:
+            cached = self._loaded.get(key)
+            if cached is not None:
+                return cached
+            model = self._load_denoiser()
+            self._loaded[key] = model
+            self._load_errors.pop(key, None)
+            return model
+
+    def _load_denoiser(self):
+        config_path = os.path.join(self._settings.config_dir, "models.json")
+        if not os.path.isfile(config_path):
+            raise ModelConfigError(f"denoiser configuration not found: {config_path}")
+        try:
+            with open(config_path, "r", encoding="utf-8") as handle:
+                config = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ModelConfigError(
+                f"cannot read denoiser config {config_path}: {exc}"
+            ) from exc
+
+        section = config.get("denoiser") or {}
+        path = section.get("model_path")
+        if not path:
+            raise ModelConfigError("denoiser section has no model_path")
+        device = section.get("device") or "cpu"
+
+        from transformers import T5ForConditionalGeneration, T5Tokenizer
+
+        model = T5ForConditionalGeneration.from_pretrained(path)
+        try:
+            import torch
+
+            model.to(device if torch.cuda.is_available() or not device.startswith("cuda") else "cpu")
+        except Exception:  # torch missing / no device: keep the CPU copy
+            pass
+        tokenizer = T5Tokenizer.from_pretrained(path)
+        return {"model": model, "tokenizer": tokenizer, "path": path}
 
     def inference_lock(self, kind: str, name: str) -> threading.Lock:
         """

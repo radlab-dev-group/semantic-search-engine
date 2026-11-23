@@ -51,11 +51,24 @@ def load_tokenizer(model_embedder: Optional[str]):
     """
     Tokenizer of the embedder of a collection, ``None`` when unavailable.
 
+    The audit does not need the model itself, only its tokenizer, and it
+    prefers the model service (``POST /v1/tokenize``) over loading anything
+    locally: an engine host without ``transformers`` installed still measures
+    chunks.  With no service configured the local tokenizer of the embedder
+    is loaded — lazily, so importing this module never imports ``transformers``.
+
     A missing model or a broken configuration must not stop the audit; the
     sizes of the chunks are simply not measured then.
     """
     if not model_embedder:
         return None
+
+    from sse_api.engine.core.models.backend import service_backend_for
+
+    service = service_backend_for(model_embedder)
+    if service is not None:
+        return _ServiceTokenizerAdapter(service)
+
     try:
         from transformers import AutoTokenizer
 
@@ -69,6 +82,32 @@ def load_tokenizer(model_embedder: Optional[str]):
             exc_info=False,
         )
         return None
+
+
+class _ServiceTokenizerAdapter:
+    """
+    Tokenizer-shaped view of the model service.
+
+    ``measure_chunks`` calls the tokenizer once per chunk; the adapter turns
+    each call into one ``POST /v1/tokenize`` of a single text and returns the
+    count under ``input_ids``, the attribute the measurement reads.
+    """
+
+    def __init__(self, service) -> None:
+        self._service = service
+
+    def __call__(self, text: str):
+        from types import SimpleNamespace
+
+        try:
+            counts = self._service.count_tokens([text])
+        except Exception:  # service down: the audit continues unmeasured
+            logger.warning(
+                "Model service tokenization failed; the chunk is not measured",
+                exc_info=False,
+            )
+            return SimpleNamespace(input_ids=None)
+        return SimpleNamespace(input_ids=list(range(counts[0])))
 
 
 def measure_chunks(
@@ -90,7 +129,10 @@ def measure_chunks(
         text = text_of(chunk)
         if not len(text):
             continue
-        lengths.append(len(tokenizer(text).input_ids))
+        input_ids = tokenizer(text).input_ids
+        if input_ids is None:  # the tokenizer was unavailable for this chunk
+            continue
+        lengths.append(len(input_ids))
         if limit and len(lengths) >= limit:
             break
     if not lengths:

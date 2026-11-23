@@ -19,6 +19,7 @@ from sse_api.engine.database.milvus_impl import (
     MilvusHandler,
 )  # noqa: F401 — exposed for adapter usage
 from sse_api.engine.controllers.search.relational import DBTextSearchController
+from sse_api.engine.core.constants import MIN_CHUNK_CHAR_LEN
 
 
 class RelationalDataAdapter:
@@ -39,7 +40,7 @@ class RelationalDataAdapter:
     # ------------------------------------------------------------------
 
     def get_collection_chunks(
-        self, collection_id: int, min_char_len: int = 300
+        self, collection_id: int, min_char_len: int = MIN_CHUNK_CHAR_LEN
     ) -> list[DocumentPageText]:
         """Get all text chunks for a collection (used during indexing)."""
         coll = self._get_collection(collection_id)
@@ -89,14 +90,23 @@ class RelationalDataAdapter:
         collection_id: int,
         max_results: int,
         language: Optional[str] = None,
+        filter_doc_names: Optional[list[str]] = None,
     ) -> list[tuple[int, float]]:
-        """Full‑text search returning ``(text_id, rank)`` tuples."""
+        """Full‑text search returning ``(text_id, rank)`` tuples.
+
+        The document names the vector leg is filtered by are forwarded to
+        PostgreSQL: a search restricted to ``A.pdf`` must not spend its
+        candidate pool on the rest of the collection.
+        """
         coll = self._get_collection(collection_id)
+        fts_filters: dict[str, Any] = {}
+        if filter_doc_names:
+            fts_filters["document_names"] = filter_doc_names
         return DBTextSearchController.search_texts(
             query_str=query_str,
             collection=coll,
             max_results=max_results,
-            filters=None,
+            filters=fts_filters or None,
             language=language,
         )
 

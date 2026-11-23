@@ -9,6 +9,14 @@ from sse_api.system.models import OrganisationUser
 
 from sse_api.engine.controllers.database.relational_db import RelationalDBController
 
+from sse_tools.evaluation.evaluator.ir_metrics import (
+    average_precision_at_k,
+    map_at_k,
+    mrr_at_k,
+    ndcg_at_k,
+    precision_recall_at_k,
+)
+
 from sse_api.engine.controllers.search.query import SearchQueryController
 from sse_api.engine.controllers.models_logic.generative import (
     GenerativeModelController,
@@ -228,9 +236,10 @@ class TestsLoader:
                         user_query = single_test_answer["semantic_search"][
                             "user_query"
                         ]
-                        perc_found = single_test_answer["semantic_search"][
+                        human_answer_stats = single_test_answer["semantic_search"][
                             "human_answers"
-                        ]["1"]["perc_found"]
+                        ]["1"]
+                        perc_found = human_answer_stats["perc_found"]
 
                         single_res = {
                             "id": "<id>",
@@ -247,6 +256,15 @@ class TestsLoader:
                             "generated_answer_number": gen_answer_number,
                             "generated_answer": "<not generated>",
                             "perc_found": perc_found,
+                            # the standard IR metrics of the ranking, when
+                            # the test step computed them
+                            "ndcg": human_answer_stats.get("ndcg", ""),
+                            "mrr": human_answer_stats.get("mrr", ""),
+                            "precision": human_answer_stats.get("precision", ""),
+                            "recall": human_answer_stats.get("recall", ""),
+                            "average_precision": human_answer_stats.get(
+                                "average_precision", ""
+                            ),
                         }
 
                         if sse_detailed_results is not None:
@@ -330,6 +348,59 @@ class TestsLoader:
             res_dict["right_context"] = result["right_context"]
             all_results.append(res_dict)
         return all_results
+
+    @staticmethod
+    def __ground_truth(ranked_documents: list, human_files: list) -> set:
+        """
+        The documents of the ranking a human answer asks for.
+
+        The names in a test case are the names a person wrote, not always
+        the names the indexer gave to a document, so a file is resolved
+        against the ranking with the same rule the percentage of the found
+        files uses: an exact name, or a name whose Levenshtein distance to a
+        document is below a tenth of its length.  A file which resolves to
+        nothing stays in the ground truth under its own name: the search
+        missed it, and a metric which forgot it would report a better
+        recall than the reader deserves.
+        """
+        ground_truth = set()
+        for file_name in human_files:
+            resolved = file_name if file_name in ranked_documents else None
+            if resolved is None:
+                for document_name in ranked_documents:
+                    if not file_name:
+                        continue
+                    distance = Levenshtein.distance(document_name, file_name)
+                    if float(distance) / len(file_name) < 0.1:
+                        resolved = document_name
+                        break
+            ground_truth.add(resolved if resolved is not None else file_name)
+        return ground_truth
+
+    @staticmethod
+    def __ir_metrics(ranked_documents: list, ground_truth: set, k: int) -> dict:
+        """
+        The IR metrics of one question: the ranking of the documents of the
+        search against the files named by a human answer.
+
+        The documents arrive in the order the search presents them (the
+        mass of the ``stats``), which is the ranking the reader -- and the
+        selection of the documents for the answer -- actually sees.  The
+        metrics are the standard ones (NDCG, MRR, Precision/Recall, AP),
+        each at the depth of the test.
+        """
+        precision, recall = precision_recall_at_k(
+            ranked_documents, ground_truth, k=k
+        )
+        return {
+            "ndcg": ndcg_at_k(ranked_documents, ground_truth, k=k),
+            "mrr": mrr_at_k(ranked_documents, ground_truth, k=k),
+            "precision": precision,
+            "recall": recall,
+            "average_precision": average_precision_at_k(
+                ranked_documents, ground_truth, k=k
+            ),
+        }
 
     def _start_test_case(
         self,
@@ -448,6 +519,14 @@ class TestsLoader:
         detailed_results = m_results["detailed_results"]
 
         search_files = [f for f in list(general_stats.keys())]
+        # The order of the answer: the documents of the search sorted by
+        # their mass, which is how the engine ranks them for a reader and
+        # for the selection of the documents of a generated answer.
+        ranked_documents = sorted(
+            search_files,
+            key=lambda name: general_stats[name].get("score_weighted_scaled", 0.0),
+            reverse=True,
+        )
         out_q_res[TEST_STEP_SEM_SEARCH]["search_files"] = search_files
         ff_str = "\n[##] ".join(sorted(search_files))
 
@@ -485,6 +564,20 @@ class TestsLoader:
                 "not_found_files": not_found_files,
                 "perc_found": float(len(found_files)) / len(human_files),
             }
+
+            # The standard metrics of Information Retrieval: the ranking of
+            # the documents by their mass (the very order which selects the
+            # documents of an answer) against the files named by the human
+            # answer, at the depth the test asked for.  They sit next to the
+            # old percentage of the found files, which stays the human
+            # readable summary of the same thing.
+            out_q_res[TEST_STEP_SEM_SEARCH]["human_answers"][ans_id].update(
+                self.__ir_metrics(
+                    ranked_documents=ranked_documents,
+                    ground_truth=self.__ground_truth(ranked_documents, human_files),
+                    k=int(options_dict.get("max_results", 10)),
+                )
+            )
 
             hf_str = ""
             for f_name in human_files:

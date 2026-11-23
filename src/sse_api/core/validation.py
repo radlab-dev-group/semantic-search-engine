@@ -133,6 +133,21 @@ def search_options(value):
     for key in ("max_results", "rerank_max_results", "rrf_k"):
         if key in value:
             value[key] = identifier(value[key])
+    for key in ("dense_weight", "lexical_weight"):
+        if key in value and value[key] is not None:
+            weight = number(value[key])
+            if not 0.0 <= weight <= 1.0:
+                raise ValueError(f"{key} must be between 0.0 and 1.0")
+            value[key] = float(weight)
+    if "min_similarity" in value and value["min_similarity"] is not None:
+        similarity = number(value["min_similarity"])
+        if not 0.0 <= similarity <= 1.0:
+            raise ValueError("min_similarity must be between 0.0 and 1.0")
+        value["min_similarity"] = float(similarity)
+    if "max_chunks_per_document" in value:
+        value["max_chunks_per_document"] = identifier(
+            value["max_chunks_per_document"]
+        )
     for key in (
         "categories",
         "documents",
@@ -172,9 +187,71 @@ def search_options(value):
     return value
 
 
+#: Aliases of the sampling parameters of a generation request.
+GENERATION_OPTION_ALIASES = {
+    "rep_penalty": "repetition_penalty",
+    "topp": "top_p",
+    "topk": "top_k",
+    "typicalp": "typical_p",
+    "max_tokens": "max_new_tokens",
+}
+
+
+def _canonical_generation_options(value):
+    """``value`` with the aliases of the sampling parameters renamed."""
+    for alias, canonical in GENERATION_OPTION_ALIASES.items():
+        if alias in value and canonical not in value:
+            value[canonical] = value.pop(alias)
+    return value
+
+
+def _validate_sampling_options(value):
+    """
+    Check the ranges of the sampling parameters of a generation request.
+
+    Recognised (after the alias renaming): ``temperature``,
+    ``repetition_penalty``, ``top_p``, ``top_k``, ``typical_p`` and
+    ``max_new_tokens``.  Absent keys are left alone, so the same helper
+    serves a per-request query and the profile of a collection.
+    """
+    if "temperature" in value and value["temperature"] is not None:
+        val = number(value["temperature"])
+        if not 0.0 <= val <= 2.0:
+            raise ValueError("temperature must be between 0.0 and 2.0")
+        value["temperature"] = float(val)
+    if "repetition_penalty" in value and value["repetition_penalty"] is not None:
+        val = number(value["repetition_penalty"])
+        if not 0.1 <= val <= 10.0:
+            raise ValueError("repetition_penalty must be between 0.1 and 10.0")
+        value["repetition_penalty"] = float(val)
+    if "top_p" in value and value["top_p"] is not None:
+        val = number(value["top_p"])
+        if not 0.0 < val <= 1.0:
+            raise ValueError("top_p must be between 0.0 (exclusive) and 1.0")
+        value["top_p"] = float(val)
+    if "top_k" in value and value["top_k"] is not None:
+        val = number(value["top_k"])
+        if val < 0 or not float(val).is_integer():
+            raise ValueError("top_k must be a non-negative integer")
+        value["top_k"] = int(val)
+    if "typical_p" in value and value["typical_p"] is not None:
+        val = number(value["typical_p"])
+        if not 0.0 < val <= 1.0:
+            raise ValueError("typical_p must be between 0.0 (exclusive) and 1.0")
+        value["typical_p"] = float(val)
+    if "max_new_tokens" in value and value["max_new_tokens"] is not None:
+        val = number(value["max_new_tokens"])
+        if val <= 0 or not float(val).is_integer():
+            raise ValueError("max_new_tokens must be a positive integer")
+        value["max_new_tokens"] = int(val)
+    return value
+
+
 def generation_options(value):
     value = options_object(value)
+    value = _canonical_generation_options(value)
     value["generative_model"] = required_text(value.get("generative_model"))
+    _validate_sampling_options(value)
     value["percentage_rank_mass"] = number(value.get("percentage_rank_mass"))
     if not 0 <= value["percentage_rank_mass"] <= 100:
         raise ValueError("Percentage out of range")
@@ -187,6 +264,80 @@ def generation_options(value):
         )
     if "translate_answer" in value:
         value["translate_answer"] = boolean(value["translate_answer"])
+    if value.get("translate_answer"):
+        value["answer_language"] = required_text(value.get("answer_language"))
+    return value
+
+
+def collection_search_options(value):
+    """
+    The search profile saved on a collection.
+
+    The same vocabulary as the ``options`` of a search request, except that
+    every key is optional: a profile stores only what the collection wants
+    to pin, and the engine fills the rest with its own defaults.
+    """
+    value = options_object(value)
+    for key in (
+        "use_and_operator",
+        "only_template_documents",
+        "hybrid_search",
+        "lexical_only",
+        "rerank_results",
+        "return_with_factored_fields",
+    ):
+        if key in value and value[key] is not None:
+            value[key] = boolean(value[key])
+    for key in (
+        "max_results",
+        "rerank_max_results",
+        "rrf_k",
+        "max_chunks_per_document",
+    ):
+        if key in value and value[key] is not None:
+            value[key] = identifier(value[key])
+    for key in ("dense_weight", "lexical_weight", "min_similarity"):
+        if key in value and value[key] is not None:
+            val = number(value[key])
+            if not 0.0 <= val <= 1.0:
+                raise ValueError(f"{key} must be between 0.0 and 1.0")
+            value[key] = float(val)
+    return value
+
+
+def collection_generation_options(value):
+    """
+    The RAG profile saved on a collection.
+
+    The sampling parameters (temperature, repetition penalty, top-p, top-k,
+    typical-p, maximum new tokens) with the same aliases and ranges as a
+    per-request ``query_options``.  ``generative_model`` is optional here,
+    because a collection without a pinned model answers with the model the
+    request names, or the default of the router.
+    """
+    value = options_object(value)
+    value = _canonical_generation_options(value)
+    if "generative_model" in value and value["generative_model"] is not None:
+        value["generative_model"] = required_text(value["generative_model"])
+    _validate_sampling_options(value)
+    if "percentage_rank_mass" in value and value["percentage_rank_mass"] is not None:
+        val = number(value["percentage_rank_mass"])
+        if not 0 <= val <= 100:
+            raise ValueError("percentage_rank_mass must be between 0 and 100")
+        value["percentage_rank_mass"] = int(val)
+    if "system_prompt" in value and value["system_prompt"] is not None:
+        value["system_prompt"] = str(value["system_prompt"]).strip()
+    if "answer_language" in value and value["answer_language"] is not None:
+        value["answer_language"] = required_text(value["answer_language"])
+    if "translate_answer" in value and value["translate_answer"] is not None:
+        value["translate_answer"] = boolean(value["translate_answer"])
+    if (
+        "use_doc_names_in_response" in value
+        and value["use_doc_names_in_response"] is not None
+    ):
+        value["use_doc_names_in_response"] = boolean(
+            value["use_doc_names_in_response"]
+        )
     if value.get("translate_answer"):
         value["answer_language"] = required_text(value.get("answer_language"))
     return value

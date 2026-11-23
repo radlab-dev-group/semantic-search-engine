@@ -18,7 +18,8 @@ the vector.
 """
 
 import logging
-from typing import Any, Dict, Optional, Tuple
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
 from sse_api.data.core.constants import (
     DEFAULT_MAX_TOKENS_IN_CHUNK,
@@ -34,6 +35,169 @@ logger = logging.getLogger(__name__)
 
 #: Chunking resolved from a request, a collection or the global defaults.
 Chunking = Dict[str, int]
+
+
+# ---------------------------------------------------------------------------
+# Structure‑aware splitting
+# ---------------------------------------------------------------------------
+
+#: A fenced code block: the opening fence, the body and the closing fence.
+_CODE_FENCE_RE = re.compile(r"(`{3,}|~{3,})([^\n]*)\n.*?\1\s*\n?", re.DOTALL)
+#: A table row: a line whose cells are separated by ``|``.
+_TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
+
+
+def _split_into_blocks(text: str) -> List[str]:
+    """
+    Split text into blocks which should not be cut in the middle.
+
+    Blocks are paragraphs (separated by blank lines); a fenced code block
+    and a Markdown table stay one block even when their lines are not
+    separated by a blank line.
+    """
+    blocks: List[str] = []
+    current: List[str] = []
+    in_fence = False
+    fence_marker = ""
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not in_fence and (
+            stripped.startswith("```") or stripped.startswith("~~~")
+        ):
+            fence_marker = stripped[:3]
+            in_fence = True
+        elif (
+            in_fence
+            and stripped.startswith(fence_marker)
+            and len(stripped) == len(fence_marker)
+        ):
+            in_fence = False
+        current.append(line)
+        if not in_fence and not stripped and current:
+            blocks.append("\n".join(current).strip())
+            current = []
+    if current:
+        block = "\n".join(current).strip()
+        if block:
+            blocks.append(block)
+
+    merged: List[str] = []
+    for block in blocks:
+        # A Markdown table is one unit: consecutive table rows belong
+        # together even when they are not blank‑line separated.
+        if (
+            merged
+            and _TABLE_ROW_RE.match(block)
+            and _TABLE_ROW_RE.match(merged[-1].split("\n", 1)[0])
+        ):
+            merged[-1] = f"{merged[-1]}\n{block}"
+        else:
+            merged.append(block)
+    return merged
+
+
+def split_text_respecting_structure(
+    text: str,
+    max_chars: int = 2000,
+    overlap_chars: int = 200,
+) -> List[str]:
+    """
+    Split ``text`` into chunks without cutting sentences, code or tables.
+
+    The text is first divided into structure‑aware blocks (paragraphs,
+    fenced code, Markdown tables); blocks are then packed into chunks of at
+    most ``max_chars`` characters, and a chunk longer than the limit is cut
+    on a paragraph, then a line, then a sentence boundary, so a code fence
+    or a table row is never broken in the middle.
+
+    Parameters
+    ----------
+    text : str
+        The text to split.
+    max_chars : int, default 2000
+        Maximum length of a chunk, in characters.
+    overlap_chars : int, default 200
+        Number of characters repeated at the beginning of the next chunk.
+
+    Returns
+    -------
+    list of str
+        The chunks, in order.
+    """
+    if not text or not text.strip():
+        return []
+    if len(text.strip()) <= max_chars:
+        return [text.strip()]
+
+    blocks = _split_into_blocks(text)
+    chunks: List[str] = []
+    current = ""
+
+    def _push() -> None:
+        nonlocal current
+        if current.strip():
+            chunks.append(current.strip())
+        current = ""
+
+    for block in blocks:
+        if len(block) > max_chars:
+            _push()
+            chunks.extend(_split_oversized_block(block, max_chars))
+            continue
+        if current and len(current) + len(block) + 1 > max_chars:
+            _push()
+        current = f"{current}\n{block}" if current else block
+    _push()
+
+    return _add_overlap(chunks, overlap_chars)
+
+
+def _add_overlap(chunks: List[str], overlap_chars: int) -> List[str]:
+    """Repeat the beginning of a chunk at the start of the next one."""
+    if overlap_chars <= 0 or len(chunks) < 2:
+        return chunks
+    overlapped = [chunks[0]]
+    for previous, chunk in zip(chunks, chunks[1:]):
+        tail = previous[:overlap_chars].strip()
+        overlapped.append(f"{tail}\n{chunk}" if tail else chunk)
+    return overlapped
+
+
+def _split_oversized_block(block: str, max_chars: int) -> List[str]:
+    """Cut one block which is longer than a chunk, on safe boundaries."""
+    if len(block) <= max_chars:
+        return [block]
+    pieces: List[str] = []
+    rest = block
+    while len(rest) > max_chars:
+        window = rest[:max_chars]
+        # A fenced code block is never broken: take it whole, even when it
+        # alone exceeds the limit.
+        fence = _CODE_FENCE_RE.search(window)
+        if fence and fence.start() == 0:
+            cut = fence.end()
+        else:
+            cut = window.rfind("\n\n")
+            if cut < max_chars // 2:
+                cut = window.rfind("\n")
+            if cut < max_chars // 2:
+                sentence = max(
+                    (
+                        pos
+                        for pos in (
+                            window.rfind(". "),
+                            window.rfind("! "),
+                            window.rfind("? "),
+                        )
+                    ),
+                    default=-1,
+                )
+                cut = sentence + 1 if sentence > max_chars // 2 else max_chars
+        pieces.append(rest[:cut].strip())
+        rest = rest[cut:].strip()
+    if rest:
+        pieces.append(rest)
+    return pieces
 
 
 class ChunkingError(Exception):

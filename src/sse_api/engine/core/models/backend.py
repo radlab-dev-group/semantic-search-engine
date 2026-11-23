@@ -35,7 +35,7 @@ from __future__ import annotations
 import os
 import threading
 import time
-from typing import Any, Callable, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Iterable, List, Optional, Sequence, Tuple
 
 from sse_api.core.constants import get_logger
 
@@ -126,6 +126,27 @@ class ModelBackend:
     def rerank_scores(self, query: str, texts: Sequence[str]) -> List[float]:
         raise NotImplementedError
 
+    # -- text operations (tokenization / truncation / denoising) ---------
+
+    def count_tokens(self, texts: Sequence[str]) -> List[int]:
+        """Token count of every text, per the embedder's tokenizer."""
+        raise NotImplementedError
+
+    def truncate_texts(
+        self, texts: Sequence[str], max_tokens: int
+    ) -> Tuple[List[str], List[bool]]:
+        """
+        Truncate texts to ``max_tokens`` tokens.
+
+        Returns ``(texts, was_truncated)`` — one entry per input text, in
+        input order; ``was_truncated[i]`` is True when the i-th text was cut.
+        """
+        raise NotImplementedError
+
+    def denoise_text(self, text: str) -> str:
+        """Clean ``text`` (OCR artefacts, broken sentences) via the denoiser."""
+        raise NotImplementedError
+
     def describe(self) -> str:
         """Short human-readable summary for the logs."""
         return self.__class__.__name__
@@ -191,6 +212,50 @@ class LocalBackend(ModelBackend):
         pairs = [[query, text] for text in texts]
         scores = model.predict(pairs)
         return [float(score) for score in scores]
+
+    # -- text operations -------------------------------------------------
+    def _tokenizer(self):
+        """Tokenizer of the in-process embedder, loaded through its provider."""
+        if self._embedder_provider is None:
+            raise ModelBackendError("no embedder model configured")
+        model = self._embedder_provider()
+        if model is None:
+            raise ModelBackendError("embedder model is not loaded")
+        tokenizer = getattr(model, "tokenizer", None) or getattr(
+            model, "tokenizer_model", None
+        )
+        if tokenizer is None:
+            raise ModelBackendError("embedder exposes no tokenizer")
+        return tokenizer
+
+    def count_tokens(self, texts: Sequence[str]) -> List[int]:
+        tokenizer = self._tokenizer()
+        return [len(tokenizer.encode(text)) for text in texts]
+
+    def truncate_texts(
+        self, texts: Sequence[str], max_tokens: int
+    ) -> Tuple[List[str], List[bool]]:
+        tokenizer = self._tokenizer()
+        truncated: List[str] = []
+        was_truncated: List[bool] = []
+        for text in texts:
+            token_ids = tokenizer.encode(text)
+            if len(token_ids) <= max_tokens:
+                truncated.append(text)
+                was_truncated.append(False)
+                continue
+            truncated.append(
+                tokenizer.decode(token_ids[:max_tokens], skip_special_tokens=True)
+            )
+            was_truncated.append(True)
+        return truncated, was_truncated
+
+    def denoise_text(self, text: str) -> str:
+        # The local denoiser is the engine's historical T5 path; it is kept
+        # importable but torch arrives only when a text is really cleaned.
+        from sse_api.data.controllers.denoiser import denoise_text_locally
+
+        return denoise_text_locally(text)
 
     def describe(self) -> str:
         return f"local({self._label})"
@@ -382,6 +447,52 @@ class RemoteBackend(ModelBackend):
             )
         return [float(score) for score in scores]  # type: ignore[arg-type]
 
+    # -- text operations -------------------------------------------------
+    def count_tokens(self, texts: Sequence[str]) -> List[int]:
+        data = self._run(
+            "/v1/tokenize",
+            {"model": self._embed_model, "texts": list(texts)},
+        )
+        counts = data.get("token_counts")
+        if not isinstance(counts, list) or len(counts) != len(texts):
+            raise ModelBackendError(
+                "model service returned an unexpected tokenize payload"
+            )
+        return [int(count) for count in counts]
+
+    def truncate_texts(
+        self, texts: Sequence[str], max_tokens: int
+    ) -> Tuple[List[str], List[bool]]:
+        data = self._run(
+            "/v1/truncate",
+            {
+                "model": self._embed_model,
+                "texts": list(texts),
+                "max_tokens": int(max_tokens),
+            },
+        )
+        truncated = data.get("truncated_texts")
+        flags = data.get("was_truncated")
+        if (
+            not isinstance(truncated, list)
+            or len(truncated) != len(texts)
+            or not isinstance(flags, list)
+            or len(flags) != len(texts)
+        ):
+            raise ModelBackendError(
+                "model service returned an unexpected truncate payload"
+            )
+        return [str(text) for text in truncated], [bool(flag) for flag in flags]
+
+    def denoise_text(self, text: str) -> str:
+        data = self._run("/v1/denoise", {"text": text})
+        cleaned = data.get("cleaned_text")
+        if not isinstance(cleaned, str):
+            raise ModelBackendError(
+                "model service returned an unexpected denoise payload"
+            )
+        return cleaned
+
     def _run(self, path: str, payload: dict) -> dict:
         if self.circuit_open:
             return self._degrade(
@@ -443,6 +554,82 @@ def service_enabled() -> bool:
     return _env_bool(ENV_MODEL_SERVICE_ENABLED, False) and bool(
         os.environ.get(ENV_MODEL_SERVICE_URL, "").strip()
     )
+
+
+def service_backend_for(embed_model: str) -> Optional[RemoteBackend]:
+    """
+    A :class:`RemoteBackend` bound to ``embed_model``, or ``None``.
+
+    For callers which need one text operation of the service (counting or
+    truncating tokens) without an embedder model of their own — a management
+    command auditing chunk sizes, for instance.  ``None`` when the service is
+    not configured, which tells the caller to use its local fallback.
+    """
+    if not service_enabled() or not embed_model:
+        return None
+    return RemoteBackend(
+        base_url=os.environ.get(ENV_MODEL_SERVICE_URL, "").strip().rstrip("/"),
+        embed_model=embed_model,
+        api_token=os.environ.get(ENV_MODEL_SERVICE_TOKEN, "").strip(),
+        timeout=_env_float(ENV_MODEL_SERVICE_TIMEOUT, DEFAULT_TIMEOUT_SECONDS),
+        connect_timeout=_env_float(
+            ENV_MODEL_SERVICE_CONNECT_TIMEOUT, DEFAULT_CONNECT_TIMEOUT_SECONDS
+        ),
+        cooldown_seconds=_env_float(
+            ENV_MODEL_SERVICE_COOLDOWN, DEFAULT_COOLDOWN_SECONDS
+        ),
+        failure_threshold=_env_int(
+            ENV_MODEL_SERVICE_FAILURE_THRESHOLD, DEFAULT_FAILURE_THRESHOLD
+        ),
+        fallback=None,
+    )
+
+
+def build_denoise_client() -> Optional[Callable[[str], str]]:
+    """
+    Build a ``text -> cleaned text`` client for the model service, or ``None``.
+
+    Denoising is a model-service operation and the engine must not need torch
+    for it; this is the one place the HTTP shape of ``POST /v1/denoise`` is
+    known on the engine side.  ``None`` means "no service configured", and
+    the caller decides what cleaning means then (usually: nothing).
+    """
+    if not service_enabled():
+        return None
+
+    base_url = os.environ.get(ENV_MODEL_SERVICE_URL, "").strip().rstrip("/")
+    api_token = os.environ.get(ENV_MODEL_SERVICE_TOKEN, "").strip()
+    timeout = _env_float(ENV_MODEL_SERVICE_TIMEOUT, DEFAULT_TIMEOUT_SECONDS)
+    connect_timeout = _env_float(
+        ENV_MODEL_SERVICE_CONNECT_TIMEOUT, DEFAULT_CONNECT_TIMEOUT_SECONDS
+    )
+
+    def _denoise(text: str) -> str:
+        import requests
+
+        headers = {"Content-Type": "application/json"}
+        if api_token:
+            headers["Authorization"] = f"Bearer {api_token}"
+
+        response = requests.post(
+            f"{base_url}/v1/denoise",
+            json={"text": text},
+            headers=headers,
+            timeout=(connect_timeout, timeout),
+        )
+        if response.status_code >= 400:
+            raise ModelBackendError(
+                f"{base_url}/v1/denoise responded {response.status_code}"
+            )
+        body = response.json()
+        cleaned = body.get("cleaned_text")
+        if not isinstance(cleaned, str):
+            raise ModelBackendError(
+                "model service returned an unexpected denoise payload"
+            )
+        return cleaned
+
+    return _denoise
 
 
 def resolve_model_name(kind: str, model_path: Optional[str]) -> Optional[str]:

@@ -39,6 +39,8 @@ NLP tasks.*
     - [Django Management Commands](#django-management-commands)
     - [Shell Scripts](#shell-scripts)
 13. [Testing & Evaluation](#testing--evaluation)
+    - [The metrics of the ranking](#the-metrics-of-the-ranking-ir_metricspy)
+    - [Tuning the hyperparameters](#tuning-the-hyperparameters-tune_search_parameterspy)
 14. [Extending the Engine](#extending-the-engine)
 15. [Contribution Guidelines](#contribution-guidelines)
 16. [License](#license)
@@ -322,6 +324,91 @@ the input text of an **embedder**, the whole `query + text` pair of a **reranker
   this key existed keep working.
 
 The values are exposed by `GET embedders` / `GET rerankers` in `models_info`.
+
+#### `query_instruction`
+
+An **embedder** entry may declare `query_instruction`, the prefix the model
+wants in front of a *query*.  Asymmetric models — `BAAI/bge-m3`,
+`intfloat/multilingual-e5-*`, `google/embeddinggemma-*` — are trained with an
+instruction in front of a query and without one in front of a passage, so
+embedding a query exactly like a document costs retrieval quality on them.
+The engine applies the prefix when it embeds a query (`MilvusHandler.search`);
+an entry without the key means "no prefix", so a plain
+sentence-transformer is not instructed.
+
+### Hybrid search
+
+A search runs **two legs** and fuses them: the vector leg (Milvus, cosine
+similarity) and the full-text leg (PostgreSQL, `SearchRank`).  The fusion is
+**weighted Reciprocal Rank Fusion** — each leg contributes
+`weight / (k + rank)` — with the weights decided per search:
+
+| Option (of `options`) | Default | Meaning |
+|-----------------------|---------|---------|
+| `dense_weight` | `0.6` | Share of the vector leg in the fusion |
+| `lexical_weight` | `0.4` | Share of the full-text leg in the fusion |
+| `rrf_k` | `60` | Reciprocal Rank Fusion constant |
+| `rerank_max_results` | `max(50, max_results * 3)` | Candidates handed to the reranker |
+| `max_chunks_per_document` | `2` | Chunks of one document in front of the others |
+
+Only the ratio of the two weights matters, so `0.6 / 0.4` and `6 / 4` fuse the
+same way.  A collection pins its own weights with
+`POST set_collection_options`; a request which names no weight gets the weight
+of the collection, then the default of the engine.
+
+The two legs are **balanced**: each of them contributes `max_results * 10`
+candidates to the fusion, and the document filter of the request reaches both
+legs — a search restricted to one document does not spend the candidate pool
+of its full-text leg on the rest of the collection.  The **cosine similarity**
+of a chunk is reported in a hybrid search as well: it is a fact about the
+chunk and the query, not about the leg which found it, and the document
+statistics, the reranker and the RAG context keep a comparable score (a chunk
+which only the text index found carries `similarity: null`).
+
+The HNSW index of Milvus is tuned for recall: `M = 16`,
+`efConstruction = 128` at the build and `ef = 200` at the query.
+
+#### Post-retrieval: reranking, diversity, and the RAG context
+
+The fusion decides the *candidates*; three stages decide what a reader —
+or a model — actually sees.
+
+**Contextual reranking.** When `rerank_results` is on, the cross-encoder
+scores each candidate *with the name of its document in front of it*:
+`Dokument: {name} | Treść: {text}` — the same shape the indexing
+enrichment uses for the embedder. A chunk which does not repeat the name
+of the document inside itself is still scored as a match for a query which
+names that document, a regulation or a product. The default number of
+candidates handed to the reranker is `max(50, max_results * 3)` (override
+with `rerank_max_results` in the request or in the profile of the
+collection), so a relevant chunk which ranks past the final count is still
+scored.
+
+**Diversification of the results.** A single document may not occupy the
+whole answer: at most `max_chunks_per_document` chunks of one document
+(default `2`, an option of the request and of the profile of a collection)
+are shown in front of the chunks of the others, and a chunk of a document
+which is already represented pays a fraction of the relevance range of the
+answer for each of its earlier chunks (the MMR redundancy penalty, in
+`engine.core.diversity`). A skipped chunk is never dropped — the list is
+topped up with it — so a search with exactly `max_results` results only
+reorders them. The document statistics are computed from the
+undiversified hits: the mass of a document is its evidence, not a
+presentation rule.
+
+**Stitching of neighbouring chunks.** Before the generative model reads
+the context, two hits of one document which follow each other in the text
+(the same page with the next `text_number`, or the context attached to the
+later hit being exactly the text of the earlier one — the proof of the
+readers without page metadata) are joined into one continuous passage
+(`stitch_adjacent_chunks` in `engine.core.search_engine`). A sentence cut
+by the chunking window is not cut twice, and the tokens of the prompt go
+to the answer, not to the repetition. A merged passage keeps the identity
+of its first part (`text_id`, `char_start`) and the widest span it can
+prove; in a conversational answer the passages — not the chunks — carry
+the citation numbers.
+
+### Environment Variables (summary)
 
 ### Environment Variables (summary)
 
@@ -629,6 +716,7 @@ each app.
 | `POST` | `/api/delete_documents/`       | Delete documents (`documents[]` names and/or `document_ids[]`) with their pages and chunks. |
 | `POST` | `/api/delete_collection/`      | Delete the whole collection with all of its content from both databases.        |
 | `POST` | `/api/set_documents_use_in_search/` | Enable/disable documents in the search (`use_in_search` flag).              |
+| `POST` | `/api/set_collection_options/` | Set the search / RAG profile of a collection (`search_options`, `generation_options`, `generative_model`). |
 | `GET`  | `/api/search_history/`           | Search history of the authenticated user (optionally one query by id), each entry with its `created_on`. |
 | `GET`  | `/api/get_search_history/`       | A single search history entry by its id.                                    |
 | `POST` | `/api/delete_search_history/`    | Delete stored queries (`query_ids[]` and/or `query_response_ids[]`) with their responses, answers and RAG states. |
@@ -747,6 +835,72 @@ consumer** of the vector collection, not only for the search of this engine.
 While disabled, its chunks are not returned by `search_with_options` —
 neither from the vector search nor from the full-text side.
 
+### The profile of a collection
+
+`POST set_collection_options` saves the **search** and the **RAG** profile of
+a collection, so a client does not have to repeat the same parameters in
+every request.  A call changes exactly the keys it sends, and only the
+**owner** of the collection may change it:
+
+```json
+{
+  "collection_name": "my-collection",
+  "search_options": {
+    "max_results": 15,
+    "hybrid_search": true,
+    "dense_weight": 0.6,
+    "lexical_weight": 0.4,
+    "rrf_k": 60,
+    "min_similarity": 0.35,
+    "rerank_max_results": 80,
+    "max_chunks_per_document": 2
+  },
+  "generation_options": {
+    "generative_model": "google/gemma-4-12b-it",
+    "temperature": 0.2,
+    "repetition_penalty": 1.1,
+    "top_p": 0.9,
+    "top_k": 40,
+    "typical_p": 0.95,
+    "max_new_tokens": 2048
+  }
+}
+```
+
+`generative_model` is accepted alone (without `generation_options`) when only
+the model of the collection is to change.  The answer is the profile read
+back, completed with the defaults of the engine:
+
+```json
+{
+  "status": true,
+  "body": {
+    "collection_name": "my-collection",
+    "default_search_options": {"max_results": 15, "hybrid_search": true, "...": 0},
+    "default_generation_options": {"generative_model": "google/gemma-4-12b-it", "...": 0},
+    "default_generative_model": "google/gemma-4-12b-it"
+  }
+}
+```
+
+The profiles are also part of `GET collections` (`default_search_options` and
+`default_generation_options` of every collection), so a client can prefill a
+form from what the collection already uses.
+
+The endpoints fall back to the profile of the collection:
+
+* `search_with_options` — every option a request does not declare is read
+  from the collection (request value → collection → default of the engine);
+* `generative_answer` and the RAG of the chat — the answer is generated with
+  the model and the sampling parameters the collection saved, unless the
+  request names its own; a collection without a pinned model answers with
+  the model of the request or the default of the router.
+
+The sampling parameters accept the aliases `rep_penalty`, `topp`, `topk`,
+`typicalp` and `max_tokens`, and are checked against their ranges
+(`temperature` 0–2, `repetition_penalty` 0.1–10, `top_p` and `typical_p`
+(0, 1], `top_k` and `max_new_tokens` positive integers, weights in 0–1).
+
 ### Counters of a collection
 
 `GET collections` answers with every collection and how many documents it
@@ -825,6 +979,39 @@ tokenizer of the embedder, pointing at the chunks longer than declared. `--fix` 
 of the embedder, an impossible overlap corrected) and `--dry-run` only shows that plan. No text
 is ever re-split: chunks which are already in the database can be corrected by indexing them
 again, and `--collection NAME` / `--limit` / `--json` select and format the report.
+
+### What the embedder sees
+
+A chunk on its own does not know which document it comes from, and a query
+naming that document never reaches it. Before a chunk is embedded, indexing
+prepends a small **context header** to it
+(`data/core/context_enrichment.py`):
+
+```text
+Dokument: regulamin-stypendia.pdf | Kategoria: finanse | Ścieżka: docs/2024 | Sekcja: Wnioski
+
+Wnioski należy składać do 30 kwietnia każdego roku w sekretariacie.
+```
+
+* the header carries the **name** of the document, its **category**, the path
+  it was read from and the **section** of the chunk (a Markdown heading or a
+  short title line of the chunk itself), and is cut at 400 characters, so a
+  pathological document name cannot outgrow the text it explains;
+* the header is for the **embedder only** — PostgreSQL keeps the raw text,
+  the API displays the raw text, the reranker builds its own candidate, and
+  re-indexing an already enriched text never stacks a second header on it;
+* a chunk reaches the index from **40** characters on
+  (`MIN_CHUNK_CHAR_LEN` in `engine/core/constants.py`), so short definitions,
+  single legal articles and price-list positions are no longer dropped.
+
+`split_text_respecting_structure()` (same module as the chunking settings)
+splits a text without cutting a sentence, a Markdown table or a fenced code
+block: paragraphs, code fences and tables are the units which are packed into
+chunks, and a unit longer than a chunk is cut on a paragraph, then a line,
+then a sentence boundary.
+
+Collections indexed before the header existed keep their vectors as they are;
+they profit from the enrichment after their texts are indexed again.
 
 ### Search Options & Filters
 
@@ -944,9 +1131,13 @@ The response contains:
   | --- | --- |
   | `score` | mean of the raw chunk scores (original metric, e.g. cosine) |
   | `score_normalized` | mean chunk relevance normalized to `[0, 1]` |
-  | `score_weighted` | document mass – `score_normalized * hits * pages_count` |
+  | `score_weighted` | document mass – `score_normalized * max(1, log2(1 + hits) * log2(1 + pages_count))` |
   | `score_weighted_scaled` | share of the total mass; all shares sum up to `1.0` |
   | `weight_normalized` | mass relative to the best document (best = `1.0`) |
+
+  The evidence factor saturates logarithmically on both the number of hits
+  and the number of pages: a hundred-page manual with marginal hits no
+  longer drowns a one-page note which answers the question exactly.
 
   The cumulative `score_weighted_scaled` of the top documents drives
   `percentage_rank_mass` in the generative options, so it stays a proper
@@ -1184,24 +1375,87 @@ The **evaluator** package (`src/sse_tools/evaluation/evaluator`) provides utilit
 - **Loading test configurations** (JSON files defining test cases).
 - **Running semantic search** with various parameters (max results, rerank, etc.).
 - **Generating answers** using configured generative models.
-- **Computing metrics** (BLEU, ROUGE) via `torchmetrics`.
+- **Computing metrics of the answers** (BLEU, ROUGE) via `torchmetrics`.
+- **Computing metrics of the ranking** (NDCG, MRR, Precision/Recall, AP/MAP) with `ir_metrics.py`, which needs
+  neither PyTorch nor a running engine.
 
-The main entry point is `tests_loader.py`. It writes results to Excel (`.xlsx`) files for downstream analysis. Example
-usage:
+The main entry point is `tests_loader.py`, driven by `evaluate_embedder_search.py`. It writes results to Excel
+(`.xlsx`) files for downstream analysis. Example usage:
 
 ```shell script
-python src/sse_tools/evaluation/evaluator/src/tests_loader.py \
+bash scripts/not_tested/evaluate_embedder_search.sh ./tests/config.json
+# ... which is
+python src/sse_tools/evaluation/evaluator/evaluate_embedder_search.py \
   -u alice \
-  -c ./tests/config.json \
-  -o results.xlsx \
-  -p results_chunks.xlsx
+  --test-configuration ./tests/config.json \
+  -o results.xlsx
 ```
 
 The output contains:
 
 - **Aggregated statistics** per collection, test case, and model.
 - **Human‑annotated answer comparisons** (precision/recall style).
+- **The metrics of the ranking of every question** (`ndcg`, `mrr`, `precision`, `recall`, `average_precision`),
+  measured on the documents of the search ordered by their mass against the files of the human answer.
 - **Per‑chunk detailed results** for error analysis.
+
+### The metrics of the ranking (`ir_metrics.py`)
+
+A search is evaluated per question: a ranked list of documents and a set of relevant ones.
+
+| Function | Answers |
+|----------|---------|
+| `dcg_at_k(scores, k)` | the gain of a ranking at a depth, discounted by `log2(position + 1)` |
+| `ndcg_at_k(hits, truth, k)` | how close the top-K is to the perfect ranking of these documents (`[0, 1]`, comparable between questions) |
+| `mrr_at_k(hits, truth, k)` | how early the first relevant document comes (`1 / position`) |
+| `precision_recall_at_k(hits, truth, k)` | how much of the top-K is relevant, and how much of the relevant was found |
+| `average_precision_at_k(hits, truth, k)` | the precision at every relevant hit, averaged over the relevant documents |
+| `map_at_k(per_query, k)` | the mean of the above over a set of questions |
+
+The ground truth of a test case is the files of a human answer. A name which differs from the name the indexer gave
+to a document is resolved with the rule the evaluation already used (a Levenshtein distance below a tenth of the
+length), and a file which resolves to nothing stays in the ground truth: a metric which forgot a document the search
+missed would report a better recall than the reader deserves.
+
+### Tuning the hyperparameters (`tune_search_parameters.py`)
+
+Which ratio of the vector leg to the full-text leg is best for a legal collection is a fact about that collection,
+not about the engine. The tuner measures it: it runs a golden dataset through the grid of the fusion weights, the
+constant of the RRF and the rerank switch, scores every run with the metrics above, and reports the combinations
+ordered by NDCG@k.
+
+```shell script
+python src/sse_tools/evaluation/evaluator/tune_search_parameters.py \
+    --username default_user \
+    --collection "MojaKolekcja" \
+    --golden-dataset golden_dataset.json \
+    --output-tuning-results tuning_results.xlsx \
+    --k 10
+```
+
+The golden dataset is a JSON list of questions
+
+```json
+[
+  {"question": "Jak dluga jest gwarancja?", "documents": ["regulamin.pdf"]}
+]
+```
+
+or an object mapping a question to its relevant documents; `documents`, `relevant_documents` and `files` are all
+accepted. `--grid grid.json` replaces the default grid (`dense_weight`, `lexical_weight`, `rrf_k`,
+`rerank_results`).
+
+Only the **ratio** of the fusion weights decides a fusion, so a combination which repeats a ratio already measured
+(`0.6 / 0.4` and `0.3 / 0.2` are one search) is skipped: the default grid of 200 cells is measured in 160 runs.
+
+The report is written as JSON (always) and XLSX (when the output path asks for it), and the winner is printed as a
+search profile ready to be stored on a collection:
+
+```shell script
+POST /api/v1/set_collection_options
+{"collection_name": "MojaKolekcja",
+ "search_options": {"dense_weight": 0.7, "lexical_weight": 0.3, "rrf_k": 40, "rerank_results": true}}
+```
 
 ---  
 

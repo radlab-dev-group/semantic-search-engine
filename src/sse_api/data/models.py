@@ -7,10 +7,14 @@ from sse_api.data.core.constants import (
     CHUNKING_METADATA_KEY,
     DEFAULT_MAX_TOKENS_IN_CHUNK,
     DEFAULT_NUMBER_OF_OVERLAP_TOKENS,
+    GENERATION_OPTIONS_METADATA_KEY,
+    GLOBAL_DEFAULT_GENERATION_OPTIONS,
+    GLOBAL_DEFAULT_SEARCH_OPTIONS,
     JOB_STATUS_QUEUED,
     JOB_TERMINAL_STATUSES,
     MAX_TOKENS_IN_CHUNK_KEY,
     NUMBER_OF_OVERLAP_TOKENS_KEY,
+    SEARCH_OPTIONS_METADATA_KEY,
     STRICT_CHUNKING_METADATA_KEY,
 )
 
@@ -126,6 +130,102 @@ class CollectionOfDocuments(models.Model):
         )
         metadata[STRICT_CHUNKING_METADATA_KEY] = bool(value)
         self.metadata_json = metadata
+
+    # ------------------------------------------------------------------
+    # Search and generation profile of the collection
+    #
+    # A collection decides once how it is searched and which language model
+    # answers about it; a request may override a single value without having
+    # to repeat the whole profile every time.
+    # ------------------------------------------------------------------
+    def _profile(self, key: str) -> dict:
+        """Saved profile of the collection, ``{}`` when it has none."""
+        metadata = self.metadata_json
+        if not isinstance(metadata, dict):
+            return {}
+        profile = metadata.get(key)
+        return profile if isinstance(profile, dict) else {}
+
+    def _store_profile(self, key: str, options: dict) -> None:
+        """Remember ``options`` as the profile ``key`` of the collection."""
+        metadata = (
+            dict(self.metadata_json) if isinstance(self.metadata_json, dict) else {}
+        )
+        metadata[key] = dict(options)
+        self.metadata_json = metadata
+
+    def default_search_options(self) -> dict:
+        """
+        Search options saved on the collection, without any defaults.
+
+        Returns
+        -------
+        dict
+            The ``default_search_options`` entry of ``metadata_json``, or
+            ``{}`` when the collection declares none.
+        """
+        return self._profile(SEARCH_OPTIONS_METADATA_KEY)
+
+    def search_options_with_defaults(self) -> dict:
+        """Search options of the collection completed with the global ones."""
+        options = dict(GLOBAL_DEFAULT_SEARCH_OPTIONS)
+        options.update(self.default_search_options())
+        return options
+
+    def set_default_search_options(self, search_options: dict) -> None:
+        """Save ``search_options`` as the search profile of the collection."""
+        self._store_profile(SEARCH_OPTIONS_METADATA_KEY, search_options)
+
+    def default_generation_options(self) -> dict:
+        """Generation options saved on the collection, without any defaults."""
+        return self._profile(GENERATION_OPTIONS_METADATA_KEY)
+
+    def generation_options_with_defaults(self) -> dict:
+        """Generation options of the collection completed with the global ones."""
+        options = dict(GLOBAL_DEFAULT_GENERATION_OPTIONS)
+        options.update(self.default_generation_options())
+        return options
+
+    def set_default_generation_options(self, generation_options: dict) -> None:
+        """Save ``generation_options`` as the RAG profile of the collection."""
+        self._store_profile(GENERATION_OPTIONS_METADATA_KEY, generation_options)
+
+    @property
+    def default_generative_model(self) -> str:
+        """Language model this collection answers with, ``""`` when unset."""
+        return self.default_generation_options().get("generative_model") or ""
+
+    def apply_search_defaults(self, options: dict | None) -> dict:
+        """
+        ``options`` of a request completed with the profile of the collection.
+
+        A value sent by the client always wins; a missing or ``None`` value
+        falls back to the collection, and the collection falls back to the
+        global defaults.
+        """
+        effective = self.search_options_with_defaults()
+        for key, value in (options or {}).items():
+            if value is not None:
+                effective[key] = value
+        return effective
+
+    def apply_generation_defaults(self, options: dict | None) -> dict:
+        """
+        ``options`` of a request completed with the profile of the collection.
+
+        Only what the collection really saved fills the gaps here, not the
+        global defaults of :data:`GLOBAL_DEFAULT_GENERATION_OPTIONS`: the
+        sampling parameters of a model belong to the model configuration,
+        and injecting them into a request which never mentioned them would
+        silently change the answers of every existing deployment.  Use
+        :meth:`generation_options_with_defaults` to show a complete set to a
+        client.
+        """
+        effective = dict(self.default_generation_options())
+        for key, value in (options or {}).items():
+            if value is not None and value != "":
+                effective[key] = value
+        return effective
 
 
 class UploadedDocuments(models.Model):

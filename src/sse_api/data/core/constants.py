@@ -32,6 +32,49 @@ DEFAULT_NUMBER_OF_OVERLAP_TOKENS = 60
 MAX_TOKENS_IN_CHUNK_LIMIT = 100000
 
 # ---------------------------------------------------------------------------
+# Domyślne hiperparametry wyszukiwania i generacji per kolekcja.
+#
+# Kolekcja może trwale zapisać w ``metadata_json`` swój profil
+# wyszukiwania (``default_search_options``) i profil generacji
+# (``default_generation_options``); poniższe wartości są tym, co silnik
+# podkłada, gdy kolekcja czegoś nie deklaruje.
+# ---------------------------------------------------------------------------
+
+#: Klucz opcji wyszukiwania w ``CollectionOfDocuments.metadata_json``.
+SEARCH_OPTIONS_METADATA_KEY = "default_search_options"
+
+#: Klucz opcji generacji (model + parametry LLM) w tym samym słowniku.
+GENERATION_OPTIONS_METADATA_KEY = "default_generation_options"
+
+#: Domyślne hiperparametry wyszukiwania kolekcji.
+GLOBAL_DEFAULT_SEARCH_OPTIONS = {
+    "max_results": 40,
+    "hybrid_search": True,
+    "rerank_results": False,
+    "rerank_max_results": 80,
+    "dense_weight": 0.6,
+    "lexical_weight": 0.4,
+    "rrf_k": 60,
+    "min_similarity": None,
+    "max_chunks_per_document": 2,
+}
+
+#: Domyślne parametry generacji odpowiedzi RAG kolekcji.
+GLOBAL_DEFAULT_GENERATION_OPTIONS = {
+    "generative_model": "",
+    "temperature": 0.7,
+    "repetition_penalty": 1.2,
+    "top_p": 0.99,
+    "top_k": 50,
+    "typical_p": 1.0,
+    "max_new_tokens": 1024,
+    "percentage_rank_mass": 40,
+    "system_prompt": None,
+    "answer_language": "pl",
+    "translate_answer": False,
+}
+
+# ---------------------------------------------------------------------------
 # Statusy kolejki indeksacji.
 #
 # Wdrożenie może indeksować w wątku żądania (``use_celery=false``) albo przez

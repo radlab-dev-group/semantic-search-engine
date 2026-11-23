@@ -25,6 +25,7 @@ from sse_api.data.core.file_metadata import apply_file_metadata
 from sse_api.engine.controllers.models_logic.embedders_rerankers import (
     EmbeddingModelsConfig,
 )
+from sse_api.engine.core.constants import MIN_CHUNK_CHAR_LEN
 from sse_api.core.utils import compute_text_hash
 
 
@@ -732,7 +733,8 @@ class PublicRelationDBController:
 
     @staticmethod
     def get_collection_chunks(
-        collection: CollectionOfDocuments, min_chunk_char_len: int = 300
+        collection: CollectionOfDocuments,
+        min_chunk_char_len: int = MIN_CHUNK_CHAR_LEN,
     ) -> List[DocumentPageText]:
         filtered_pages = []
         all_doc_pages = DocumentPageText.objects.filter(

@@ -21,12 +21,18 @@ INDEX_QUERY_PARAMS = {
         "INDEX_PARAMS": {
             "metric_type": "COSINE",
             "index_type": "HNSW",
-            "params": {"M": 8, "efConstruction": 64},
+            # M=16 and efConstruction=128 build a wider neighbourhood graph:
+            # more memory during the build for a recall which no longer
+            # silently drops the neighbour which is not in the graph at all.
+            "params": {"M": 16, "efConstruction": 128},
             "index_name": "emb_idx",
         },
         "QUERY_PARAMS": {
             "metric_type": "COSINE",
-            "params": {"ef": 100},
+            # ef=200 explores the graph deeper than the 100 candidates of a
+            # typical request, which is what turns the wider graph into
+            # recall instead of into unused memory.
+            "params": {"ef": 200},
         },
     },
     "IVF_FLAT": {
@@ -460,9 +466,48 @@ class MilvusHandler:
         :param texts: List of texts to prepare embeddings
         :return: List of prepared embeddings
         """
-        return self.model_backend.embed(
-            texts, normalize=self._normalize_embeddings
-        )
+        return self.model_backend.embed(texts, normalize=self._normalize_embeddings)
+
+    @property
+    def query_instruction(self) -> str:
+        """
+        Instruction prefix the embedder of this collection wants on a query.
+
+        Asymmetric models are trained with an instruction in front of a query
+        and without one in front of a passage; embedding a query like a
+        document costs retrieval quality on those models.  The prefix belongs
+        to the model, so it is read from ``configs/embedders.json``
+        (``query_instruction``) by the name of the configured path.  A model
+        without the key, and a configuration which cannot be read, mean "no
+        prefix" — an ordinary sentence-transformer must not be instructed.
+        """
+        model_path = getattr(self, "embedder_model_path", None)
+        if not model_path:
+            return ""
+        try:
+            from sse_api.engine.core.config.models_config import (
+                EmbeddingModelsConfig,
+            )
+            from sse_api.engine.core.models.backend import resolve_model_name
+
+            model_name = resolve_model_name("embedder", model_path)
+            if not model_name:
+                return ""
+            return EmbeddingModelsConfig.get_embedder_query_instruction(model_name)
+        except Exception:  # unknown model, unreadable config: no instruction
+            get_logger().debug(
+                "No query instruction for embedder %r", model_path, exc_info=False
+            )
+            return ""
+
+    def query_text_for_embedding(self, search_text: str) -> str:
+        """``search_text`` with the instruction of the embedder in front."""
+        if not search_text:
+            return search_text
+        instruction = self.query_instruction
+        if not instruction:
+            return search_text
+        return f"{instruction}{search_text}"
 
     def search(
         self,
@@ -488,7 +533,9 @@ class MilvusHandler:
         """
         self._prepare_milvus_client()
 
-        search_text_emb = self.prepare_embeddings([search_text])
+        search_text_emb = self.prepare_embeddings(
+            [self.query_text_for_embedding(search_text)]
+        )
         filter_expr = self.BASE_FILTER_EXPR
 
         filter_expr += self.__prepare_filtering_options(
@@ -632,13 +679,34 @@ class MilvusHandler:
 
     # ----------------------------------------------------------------------------
 
+    @staticmethod
+    def _rerank_candidate(result: dict) -> str:
+        """
+        The candidate as the cross-encoder should see it.
+
+        A cross-encoder scores a ``query + text`` pair, and a chunk without
+        the name of its document is context-blind: for a query naming the
+        document (a product, a regulation, a contract), the match lives in
+        the name, not in the fragment.  The candidate is therefore prefixed
+        with the name of the document it comes from (``filename`` or
+        ``document_name`` of the metadata) in the same shape the indexing
+        enrichment uses, so the model sees a consistent presentation.  A
+        candidate without a document name is passed as it is.
+        """
+        raw_text = result.get(MilvusHandler.DB_FIELD_TEXT, "")
+        metadata = result.get(MilvusHandler.DB_FIELD_METADATA) or {}
+        document_name = metadata.get("document_name") or metadata.get("filename")
+        if not document_name:
+            return raw_text
+        return f"Dokument: {document_name} | Tre\u015b\u0107: {raw_text}"
+
     def _rerank_search_results(
         self, search_text: str, all_queries_results: list
     ) -> list:
         re_results = []
         for query_results in all_queries_results:
             candidate_texts = [
-                result[self.DB_FIELD_TEXT] for result in query_results
+                self._rerank_candidate(result) for result in query_results
             ]
             # The backend answers with one score per candidate, in the order
             # they were sent; the sort below stays the single place where the
@@ -770,7 +838,14 @@ class MilvusHandler:
 
         if "filenames" in metadata_filter and len(metadata_filter["filenames"]):
             in_docs_str = ", ".join([f'"{d}"' for d in metadata_filter["filenames"]])
-            out_filter_opts += f' and {md_field}["filename"] in [{in_docs_str}]'
+            # Chunks were indexed under either key: the ingestion pipeline
+            # writes "filename", SearchEngineCore.index_collection wrote
+            # "document_name" only.  A filter which checked a single key
+            # returned no hit for the collections of the other one.
+            out_filter_opts += (
+                f' and ({md_field}["filename"] in [{in_docs_str}]'
+                f' or {md_field}["document_name"] in [{in_docs_str}])'
+            )
 
         if "relative_paths" in metadata_filter and len(
             metadata_filter["relative_paths"]

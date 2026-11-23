@@ -54,6 +54,9 @@ class SearchOptions:
     keywords_match: Optional[str] = None
     relative_path_contains: Optional[List[str]] = None
     metadata_filters: Optional[List[Dict[str, Any]]] = None
+    #: Filter groups of metadata expressions: a group is a list of up to
+    #: three expressions combined with AND, the groups with OR.
+    metadata_filter_groups: Optional[List[List[Dict[str, Any]]]] = None
     templates: Optional[int] = None
     only_template_documents: Optional[bool] = None
     max_results: Optional[int] = None
@@ -67,6 +70,15 @@ class SearchOptions:
     lexical_only: Optional[bool] = None
     min_similarity: Optional[float] = None
     rrf_k: Optional[int] = None
+    #: How many chunks of one document the answer may hold in front of the
+    #: chunks of the other documents; the rest is moved behind them, never
+    #: dropped.
+    max_chunks_per_document: Optional[int] = None
+    #: Share of the vector leg in the rank fusion of a hybrid search;
+    #: only the ratio with ``lexical_weight`` matters.
+    dense_weight: Optional[float] = None
+    #: Share of the full-text leg in the rank fusion of a hybrid search.
+    lexical_weight: Optional[float] = None
     use_and_operator: Optional[bool] = None
     #: Keys of this dict are merged into the payload; escape hatch for options
     #: that this release of the library does not know about yet.

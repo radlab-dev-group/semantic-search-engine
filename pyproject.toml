@@ -14,7 +14,7 @@ include = ["sse_api*", "sse_tools*"]
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "sse_api.tests.settings_django"
-testpaths = ["src/sse_api", "sse_lib"]
+testpaths = ["src/sse_api", "sse_lib", "src/sse_tools"]
 
 # --- formatting -------------------------------------------------------------
 [tool.black]

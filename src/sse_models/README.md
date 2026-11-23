@@ -45,6 +45,9 @@ codebase.
 |---|---|---|
 | `POST /v1/embed` | texts → vectors (indexing and query embedding) | `model`, `texts[]`, `normalize?`, `batch_size?` |
 | `POST /v1/rerank` | query + candidates → relevance scores | `model`, `query`, `documents[]`, `top_n?`, `return_documents?`, `batch_size?` |
+| `POST /v1/tokenize` | count tokens with a catalog model's tokenizer (no weights loaded) | `model`, `texts[]` |
+| `POST /v1/truncate` | cut texts to a token budget, token-exact | `model`, `texts[]`, `max_tokens` |
+| `POST /v1/denoise` | clean a noisy text (OCR artefacts) with the T5 denoiser | `text`, `max_length?`, `batch_size?` |
 | `GET /v1/models` | catalog this instance serves, with load state | — |
 | `GET /healthz` | liveness; no model, no credentials | — |
 | `GET /readyz` | readiness; reports per-model load errors | — |
@@ -113,12 +116,13 @@ Everything is configured by environment variables (`sse_models/settings.py`):
 |---|---|---|
 | `SSE_MODELS_HOST` | `0.0.0.0` | bind address |
 | `SSE_MODELS_PORT` | `8280` | bind port |
-| `SSE_MODELS_ROLE` | `all` | `all` \| `embed` \| `rerank`; the other endpoint answers 503 |
+| `SSE_MODELS_ROLE` | `all` | `all` \| `embed` \| `rerank` \| `denoise`; endpoints outside the role answer 503 |
 | `SSE_MODELS_API_TOKEN` | *(empty)* | when set, `/v1/*` requires `Authorization: Bearer`; health stays open |
 | `SSE_CONFIG_DIR` | `./configs` | where `embedders.json` / `rerankers.json` live |
 | `SSE_MODELS_WARM_MODELS` | `0` | preload every active model before binding the port |
 | `SSE_MODELS_RERANK_MAX_DOCUMENTS` | `256` | per-request candidate cap (413 above it) |
 | `SSE_MODELS_BATCH_SIZE` | *(unset)* | forward a batch size to the model; unset keeps the engine's own call shape |
+| `SSE_MODELS_DENOISE_MAX_MODEL_INPUT` | `256` | token window the denoiser feeds to T5 |
 | `SSE_MODELS_LOG_LEVEL` | `info` | logging level |
 
 The model catalog is the **same** `configs/embedders.json` and

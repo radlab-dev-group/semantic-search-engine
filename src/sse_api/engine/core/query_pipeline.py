@@ -18,7 +18,29 @@ from sse_api.engine.core.protocols import (
     ModelConfigProtocol,
 )
 from sse_api.data.controllers.constants import DEFAULT_MIN_SIMILARITY
-from sse_api.engine.core.search_engine import SearchEngineCore
+from sse_api.engine.core.search_engine import (
+    DEFAULT_DENSE_WEIGHT,
+    DEFAULT_LEXICAL_WEIGHT,
+    SearchEngineCore,
+)
+
+
+def _as_float(value, default: float) -> float:
+    """``value`` as a fraction of the fusion, ``default`` when unusable.
+
+    The weights come from a request or from the JSON profile of a
+    collection, so they may be anything; a broken value must not break a
+    search, it falls back to the default of the engine.
+    """
+    if isinstance(value, bool) or value is None:
+        return default
+    try:
+        weight = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not 0.0 <= weight <= 1.0:
+        return default
+    return weight
 
 
 class QueryPipeline:
@@ -69,6 +91,14 @@ class QueryPipeline:
         hybrid_search = bool(search_options.get("hybrid_search", True))
         rerank_results_flag = bool(search_options.get("rerank_results", False))
         min_similarity = search_options.get("min_similarity", DEFAULT_MIN_SIMILARITY)
+        # Share of every leg in the rank fusion; the request (or the profile
+        # of the collection) decides, the defaults of the engine otherwise.
+        dense_weight = _as_float(
+            search_options.get("dense_weight"), DEFAULT_DENSE_WEIGHT
+        )
+        lexical_weight = _as_float(
+            search_options.get("lexical_weight"), DEFAULT_LEXICAL_WEIGHT
+        )
 
         # Detect language if needed
         language: Optional[str] = None
@@ -117,6 +147,8 @@ class QueryPipeline:
             language=language,
             hybrid_search=hybrid_search,
             min_similarity=min_similarity,
+            dense_weight=dense_weight,
+            lexical_weight=lexical_weight,
         )
 
         return {

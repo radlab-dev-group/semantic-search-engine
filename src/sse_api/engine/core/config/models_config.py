@@ -201,6 +201,25 @@ class EmbeddingModelsConfig:
         return _max_model_length(ALL_AVAILABLE_EMBEDDERS_MODELS[model_name])
 
     @staticmethod
+    def get_embedder_query_instruction(model_name: str) -> str:
+        """
+        Prefix the embedder wants in front of a **query**, ``""`` when none.
+
+        Asymmetric models (``BAAI/bge-m3``, ``intfloat/multilingual-e5-*``,
+        ``google/embeddinggemma-*``) are trained with an instruction in front
+        of a query and without it in front of a passage.  Embedding a query
+        exactly like a document costs retrieval quality on those models, so
+        the prefix is a property of the model in ``configs/embedders.json``
+        (``query_instruction``) and the engine applies it when it embeds a
+        query.
+        """
+        _ensure_config_loaded()
+        instruction = ALL_AVAILABLE_EMBEDDERS_MODELS[model_name].get(
+            "query_instruction"
+        )
+        return instruction if isinstance(instruction, str) else ""
+
+    @staticmethod
     def get_reranker_path(model_name: str) -> str:
         """
         Return the filesystem path for the given reranker model.

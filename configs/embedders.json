@@ -12,7 +12,8 @@
       "path": "/mnt/data2/llms/models/community/google/embeddinggemma-2",
       "vector_size": 768,
       "max_model_length": 8192,
-      "device": "cpu"
+      "device": "cpu",
+      "query_instruction": "task: search result | query: "
     }
   ],
   "active_models": [

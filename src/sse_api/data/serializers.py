@@ -18,6 +18,11 @@ class CollectionOfDocumentsSerializer(serializers.ModelSerializer):
     (``chunking`` and ``strict_chunking``), so the UI can prefill its
     indexing form from what the collection already uses.
 
+    ``default_search_options`` and ``default_generation_options`` are the
+    profiles of the collection (the hyperparameters of the search and the
+    language model which answers about it) completed with the defaults of
+    the engine, so a client always reads a complete set.
+
     ``document_count`` is every document of the collection and
     ``active_document_count`` the documents which take part in the search
     (``use_in_search=True``).  Both are read from the annotation of
@@ -27,6 +32,8 @@ class CollectionOfDocumentsSerializer(serializers.ModelSerializer):
 
     document_count = serializers.SerializerMethodField()
     active_document_count = serializers.SerializerMethodField()
+    default_search_options = serializers.SerializerMethodField()
+    default_generation_options = serializers.SerializerMethodField()
 
     class Meta:
         model = CollectionOfDocuments
@@ -41,10 +48,22 @@ class CollectionOfDocumentsSerializer(serializers.ModelSerializer):
             "metadata_json",
             "document_count",
             "active_document_count",
+            "default_search_options",
+            "default_generation_options",
         ]
 
     def get_document_count(self, collection: CollectionOfDocuments) -> int:
         return self._count(collection, "document_count", Q())
+
+    def get_default_search_options(self, collection: CollectionOfDocuments) -> dict:
+        """Search profile of the collection with the defaults of the engine."""
+        return collection.search_options_with_defaults()
+
+    def get_default_generation_options(
+        self, collection: CollectionOfDocuments
+    ) -> dict:
+        """RAG profile of the collection with the defaults of the engine."""
+        return collection.generation_options_with_defaults()
 
     def get_active_document_count(self, collection: CollectionOfDocuments) -> int:
         return self._count(

@@ -27,7 +27,6 @@ import tqdm
 import json
 import pandas as pd
 from django.db.models import QuerySet
-from transformers import AutoTokenizer
 
 from radlab_data.text.utils import TextUtils
 
@@ -44,6 +43,7 @@ from sse_api.data.controllers.constants import (
     DEFAULT_MIN_SIMILARITY,
 )
 from sse_api.data.controllers.template import QueryTemplateController
+from sse_api.data.core.context_enrichment import build_enriched_chunk_text
 
 from sse_api.engine.models import UserQuery
 from sse_api.engine.controllers.database.milvus import MilvusHandler
@@ -52,13 +52,75 @@ from sse_api.engine.controllers.search.relational import DBTextSearchController
 from sse_api.engine.controllers.database.relational_db import RelationalDBController
 from sse_api.engine.core.config.models_config import EmbeddingModelsConfig
 from sse_api.engine.core.protocols import VectorStoreProtocol
+from sse_api.engine.core.diversity import (
+    DEFAULT_MAX_CHUNKS_PER_DOCUMENT,
+    apply_result_diversity,
+)
 from sse_api.engine.core.search_engine import (
+    DEFAULT_DENSE_WEIGHT,
+    HYBRID_CANDIDATE_POOL_FACTOR,
+    DEFAULT_LEXICAL_WEIGHT,
     annotate_chunk_scores,
     cosine_scores_by_text_id,
+    rrf_merge,
     prepare_documents_stats as compute_documents_stats,
     reformat_search_results_to_display as reformat_results,
     retrieval_score_scale,
 )
+
+#: Default size of the rerank candidate pool: the engine looks at least at
+#: this many candidates for the cross-encoder, and at
+#: ``max_results * DEFAULT_RERANK_POOL_FACTOR`` when that is more.
+DEFAULT_RERANK_POOL_FACTOR = 3
+
+#: Never fewer candidates than this, whatever the requested ``max_results``.
+MIN_RERANK_POOL = 50
+
+
+def default_rerank_pool(max_results: int) -> int:
+    """
+    Default number of candidates handed to the cross-encoder.
+
+    A reranker only reorders what it is given, so the default window
+    reaches well past the final count: a chunk which ranks 22nd after the
+    fusion is still scored when the answer shows ten results.
+    """
+    return max(MIN_RERANK_POOL, max(max_results, 0) * DEFAULT_RERANK_POOL_FACTOR)
+
+
+def _max_chunks_per_document(value) -> int:
+    """
+    Chunk cap of one document in the presented results, at least one.
+
+    The cap comes from the search options and may be anything; a value
+    which is not a usable integer falls back to the default of the engine.
+    """
+    if isinstance(value, bool) or value is None:
+        return DEFAULT_MAX_CHUNKS_PER_DOCUMENT
+    try:
+        cap = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_CHUNKS_PER_DOCUMENT
+    return max(cap, 1)
+
+
+def _fusion_weight(value, default: float) -> float:
+    """
+    Weight of a leg of the fusion, ``default`` when the value is unusable.
+
+    The weights arrive with the search options (a client, or the profile of
+    a collection), so they may be anything at all; a broken weight must
+    degrade to the default of the engine instead of failing the search.
+    """
+    if isinstance(value, bool) or value is None:
+        return default
+    try:
+        weight = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not 0.0 <= weight <= 1.0:
+        return default
+    return weight
 
 
 class DBSemanticSearchController:
@@ -118,6 +180,10 @@ class DBSemanticSearchController:
         self._milvus_handler: MilvusHandler | None = (
             None  # Legacy concrete (may be None)
         )
+        # Tokenizer of the embedder, loaded on first use only (and never when
+        # the model service performs embedding and truncation instead).
+        self._emb_tokenizer = None
+        self._embedder_model_path = None
 
         if vector_store is not None:
             # Protocol mode — no need to instantiate MilvusHandler.
@@ -129,7 +195,6 @@ class DBSemanticSearchController:
         embedder_device = ""
         embedder_model_path = None
         embedder_vector_size = -1
-        self.emb_tokenizer = None
         if embedder_model is not None and len(embedder_model):
             embedder_model_path = EmbeddingModelsConfig.get_embedder_path(
                 embedder_model
@@ -140,7 +205,7 @@ class DBSemanticSearchController:
             embedder_device = EmbeddingModelsConfig.get_embedder_device(
                 embedder_model
             )
-            self.emb_tokenizer = AutoTokenizer.from_pretrained(embedder_model_path)
+            self._embedder_model_path = embedder_model_path
 
         reranker_device = ""
         reranker_model_path = None
@@ -167,6 +232,84 @@ class DBSemanticSearchController:
 
         self._text_db_controller = RelationalDBController()
         self._template_controller = QueryTemplateController()
+
+    # ------------------------------------------------------------------
+    # embedding-side text preparation
+    # ------------------------------------------------------------------
+    def _text_for_embedding(
+        self,
+        text: str,
+        document_name: str,
+        category: str | None = None,
+        relative_path: str | None = None,
+    ) -> str:
+        """
+        Text as the embedder should see it.
+
+        The chunk is enriched with a context header (document, category,
+        path and section) so that the vector carries the identity of the
+        document it belongs to.  The header is bounded and never stacked
+        on an already enriched text; the raw text is what gets stored,
+        displayed and re-indexed.
+        """
+        if not text:
+            return text
+        return build_enriched_chunk_text(
+            text,
+            document_name=document_name,
+            category=category,
+            relative_path=relative_path,
+        )
+
+    @property
+    def emb_tokenizer(self):
+        """
+        Tokenizer of the embedder, loaded on first use.
+
+        ``transformers`` is imported here, not at module level: an engine
+        which delegates inference to the model service never loads it.
+        """
+        if self._emb_tokenizer is None and self._embedder_model_path:
+            from transformers import AutoTokenizer
+
+            self._emb_tokenizer = AutoTokenizer.from_pretrained(
+                self._embedder_model_path
+            )
+        return self._emb_tokenizer
+
+    def truncate_for_embedding(self, text: str) -> str:
+        """
+        Cut ``text`` to ``max_tokens_in_text`` tokens before embedding.
+
+        Through the model service when it is enabled (``POST /v1/truncate``,
+        the embedder's own tokenizer on the service side), otherwise with the
+        locally loaded tokenizer — the historical behaviour.
+        """
+        from sse_api.engine.core.models.backend import service_enabled
+
+        if service_enabled() and self._milvus_handler is not None:
+            truncated, was_truncated = (
+                self._milvus_handler.model_backend.truncate_texts(
+                    [text], self.max_tokens_in_text
+                )
+            )
+            if truncated and was_truncated and truncated[0] != text:
+                self._logger.debug(
+                    "chunk truncated to %d tokens before embedding",
+                    self.max_tokens_in_text,
+                )
+            return truncated[0] if truncated else text
+
+        tokenizer = self.emb_tokenizer
+        if tokenizer is None:
+            return text
+        text_tokens = tokenizer(text).input_ids
+        if len(text_tokens) <= self.max_tokens_in_text:
+            return text
+        return tokenizer.decode(
+            token_ids=text_tokens[: self.max_tokens_in_text],
+            skip_special_tokens=True,
+        )
 
     @staticmethod
     def prepare_controller_for_collection(
@@ -280,16 +423,25 @@ class DBSemanticSearchController:
                     "external_document_id": str(text.page.document.pk),
                     "external_collection_id": collection.pk,
                     "text_language": text.language,
+                    # Both keys name the same document: ``filename`` is what
+                    # older collections store and ``document_name`` what the
+                    # indexing of SearchEngineCore writes, and the Milvus
+                    # filter accepts either of them.
                     "filename": text.page.document.name,
+                    "document_name": text.page.document.name,
                     "relative_path": text.page.document.relative_path,
                 }
 
-                text_tokens = self.emb_tokenizer(str_text_to_index).input_ids
-                if len(text_tokens) > self.max_tokens_in_text:
-                    str_text_to_index = self.emb_tokenizer.decode(
-                        token_ids=text_tokens[: self.max_tokens_in_text],
-                        skip_special_tokens=True,
-                    )
+                document = text.page.document
+                # The vector carries the context of the document; the raw
+                # text stays what is stored and displayed.
+                str_text_to_index = self._text_for_embedding(
+                    str_text_to_index,
+                    document_name=document.name,
+                    category=getattr(document, "category", None),
+                    relative_path=getattr(document, "relative_path", None),
+                )
+                str_text_to_index = self.truncate_for_embedding(str_text_to_index)
 
                 batch_texts.append(str_text_to_index)
                 batch_metadata.append(text_metadata)
@@ -394,9 +546,21 @@ class DBSemanticSearchController:
         )
         return milvus_search
 
-    def _rrf_merge(self, milvus_results, postgres_results, k=60, max_results=100):
+    def _rrf_merge(
+        self,
+        milvus_results,
+        postgres_results,
+        k=60,
+        max_results=100,
+        dense_weight=DEFAULT_DENSE_WEIGHT,
+        lexical_weight=DEFAULT_LEXICAL_WEIGHT,
+    ):
         """
-        Merge results using Reciprocal Rank Fusion.
+        Merge results using **weighted** Reciprocal Rank Fusion.
+
+        A thin call of :func:`sse_api.engine.core.search_engine.rrf_merge`;
+        the fusion of the protocol pipeline and of this controller is one
+        implementation, so a weight means the same thing on both paths.
 
         Parameters
         ----------
@@ -408,32 +572,24 @@ class DBSemanticSearchController:
             RRF constant.
         max_results : int, default 100
             Maximum number of merged results to return.
+        dense_weight : float, default 0.6
+            Weight of the vector leg.
+        lexical_weight : float, default 0.4
+            Weight of the full-text leg.
 
         Returns
         -------
         tuple
             (sorted_ids, sorted_scores)
         """
-        scores = {}
-
-        # Process Milvus results
-        for rank, hit in enumerate(milvus_results, 1):
-            try:
-                text_id = int(hit["metadata"]["external_text_id"])
-                scores[text_id] = scores.get(text_id, 0) + 1.0 / (k + rank)
-            except (KeyError, ValueError, TypeError):
-                continue
-
-        # Process Postgres results
-        for rank, (text_id, _) in enumerate(postgres_results, 1):
-            scores[text_id] = scores.get(text_id, 0) + 1.0 / (k + rank)
-
-        # Sort by RRF score
-        sorted_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)[
-            :max_results
-        ]
-
-        return sorted_ids, [scores[tid] for tid in sorted_ids]
+        return rrf_merge(
+            milvus_results,
+            postgres_results,
+            k=k,
+            max_results=max_results,
+            dense_weight=dense_weight,
+            lexical_weight=lexical_weight,
+        )
 
     def rerank_results(
         self, question_str: str, results: list, max_results: int
@@ -810,9 +966,17 @@ class DBSemanticSearchController:
         # vectors.
         lexical_only = bool(search_params.get("lexical_only", False))
         rerank_max_results = int(
-            search_params.get("rerank_max_results", max_results * 2)
+            search_params.get("rerank_max_results", default_rerank_pool(max_results))
         )
         rrf_k = int(search_params.get("rrf_k", 60))
+        # Share of every leg in the fusion; the request (or the profile of
+        # the collection) decides, the defaults of the engine otherwise.
+        dense_weight = _fusion_weight(
+            search_params.get("dense_weight"), DEFAULT_DENSE_WEIGHT
+        )
+        lexical_weight = _fusion_weight(
+            search_params.get("lexical_weight"), DEFAULT_LEXICAL_WEIGHT
+        )
 
         # Cosine similarity cutoff. Accept a number in [0, 1]; anything else
         # (including booleans and non-numeric values) falls back to the default.
@@ -832,8 +996,19 @@ class DBSemanticSearchController:
         # The text leg asks the same question whether it is fused with the
         # vectors or is the whole search on its own; one definition keeps the
         # two from drifting apart.
+        #
+        # In a hybrid search the leg reaches as far as the vector leg does:
+        # a fusion ranks what both legs saw, and a text index limited to
+        # ``max_results`` loses every match from that position before the
+        # fusion happens, which quietly discards the identifier, the case
+        # number and the name the lexical leg is good at.
         fts_max_results = max_results
-        if lexical_only and do_rerank:
+        if hybrid_search:
+            fts_max_results = max(
+                rerank_max_results if do_rerank else max_results,
+                max_results * HYBRID_CANDIDATE_POOL_FACTOR,
+            )
+        elif lexical_only and do_rerank:
             # A reranker only reorders what it is given, so the leg that feeds
             # it reaches past the final count the way the vector leg does.
             fts_max_results = rerank_max_results
@@ -871,6 +1046,11 @@ class DBSemanticSearchController:
             milvus_max_results = max_results
             if hybrid_search and do_rerank:
                 milvus_max_results = rerank_max_results
+            if hybrid_search:
+                milvus_max_results = max(
+                    milvus_max_results,
+                    max_results * HYBRID_CANDIDATE_POOL_FACTOR,
+                )
 
             milvus_results = self.search(
                 search_text=question_str,
@@ -885,11 +1065,12 @@ class DBSemanticSearchController:
                 min_similarity=min_similarity,
             )[0]
 
-            # The cosine similarity of a chunk is reported only when the vector
-            # search is the single ranking criterion. In a hybrid search the
-            # ranking is decided by Reciprocal Rank Fusion, and chunks coming
-            # from the full-text side have no similarity at all — a cosine next
-            # to such a score would only be misleading.
+            # The cosine similarity of a chunk is a fact about the chunk and
+            # the query, not about the leg which found it, so it survives the
+            # fusion: the document statistics, the reranker and the RAG
+            # context keep a comparable score.  A chunk which only the text
+            # index found has no cosine and stays ``None``.
+            vector_similarity = cosine_scores_by_text_id(milvus_results)
             if hybrid_search:
                 postgres_results = full_text_search()
                 texts_ids, texts_scores = self._rrf_merge(
@@ -897,19 +1078,24 @@ class DBSemanticSearchController:
                     postgres_results=postgres_results,
                     k=rrf_k,
                     max_results=rerank_max_results if do_rerank else max_results,
+                    dense_weight=dense_weight,
+                    lexical_weight=lexical_weight,
                 )
             else:
                 if not len(milvus_results):
                     self._logger.warning("milvus_results is empty!")
                     return {}, {}, []
 
-                vector_similarity = cosine_scores_by_text_id(milvus_results)
                 for text_res in milvus_results:
                     texts_ids.append(int(text_res["metadata"]["external_text_id"]))
                     texts_scores.append(text_res["score"])
-                texts_similarity = [
-                    vector_similarity.get(text_id) for text_id in texts_ids
-                ]
+            texts_similarity = [
+                vector_similarity.get(text_id) for text_id in texts_ids
+            ]
+            if not any(value is not None for value in texts_similarity or []):
+                # Nothing came from the vectors: report no similarity at all
+                # rather than a list of nulls.
+                texts_similarity = None
 
         if not len(texts_ids):
             self._logger.warning(
@@ -936,6 +1122,21 @@ class DBSemanticSearchController:
         )
         annotate_chunk_scores(postgres_docs, score_scale, rrf_k)
 
+        # The order in which the results are shown is where the crowding
+        # hurts, so the diversification is the last thing which happens to
+        # them: a single document gets ``max_chunks_per_document`` chunks
+        # and a chunk of another document a chance to be seen.  The
+        # statistics are computed from the undiversified hits on purpose --
+        # the mass of a document is the evidence it offers, and the cap of
+        # a presentation rule says nothing about its relevance.
+        diversified_docs = apply_result_diversity(
+            postgres_docs,
+            max_results=max_results,
+            max_chunks_per_document=_max_chunks_per_document(
+                search_params.get("max_chunks_per_document")
+            ),
+        )
+
         results = {
             "query": question_str,
             "score_scale": score_scale,
@@ -948,7 +1149,7 @@ class DBSemanticSearchController:
                 remove_under_hits=1,
                 remove_under_pages=1,
             ),
-            "detailed_results": postgres_docs,
+            "detailed_results": diversified_docs,
         }
 
         structured_results = None
