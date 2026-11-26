@@ -10,7 +10,7 @@
       "name": "qwen/Qwen3-Reranker-0.6",
       "path": "/mnt/data2/llms/models/community/qwen/Qwen3-Reranker-0.6B",
       "max_model_length": 32000,
-      "device": "cuda:1"
+      "device": "cpu"
     },
     {
       "name": "BAAI/bge-reranker-v2-m3",

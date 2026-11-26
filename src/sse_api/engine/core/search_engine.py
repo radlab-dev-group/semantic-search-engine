@@ -785,6 +785,9 @@ def convert_search_results_to_enumerated_documents(
                         "left_context",
                         "char_start",
                         "char_end",
+                        "collection_name",
+                        "collection_display_name",
+                        "original_document_name",
                     )
                 },
             }
