@@ -47,7 +47,7 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cd src/sse_api
-./initialize.sh dep     # pip install radlab-data + llm-router (from git)
+./initialize.sh dep     # pip install llm-router (radlab-data comes with requirements.txt)
 ```
 
 Key packages: `django`, `djangorestframework`, `transformers`, `torch`, `sentence_transformers`, `spacy`,

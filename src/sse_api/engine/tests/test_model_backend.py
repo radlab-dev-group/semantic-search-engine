@@ -411,3 +411,130 @@ def test_build_extractive_qa_client_reports_a_bad_payload(monkeypatch):
     client = b.build_extractive_qa_client()
     with pytest.raises(b.ModelBackendError):
         client("q", ["abc"])
+
+
+# ----------------------------------------------------------------------
+# /v1/chunk
+# ----------------------------------------------------------------------
+def ok_chunk(chunks):
+    return FakeResponse(
+        200,
+        {"model": "m", "chunks": chunks, "chunk_counts": [len(c) for c in chunks]},
+    )
+
+
+def _remote_chunk_backend(monkeypatch, responses):
+    session = FakeSession(responses)
+    return (
+        b.RemoteBackend(
+            base_url="http://models:8280",
+            embed_model="m",
+            rerank_model=None,
+            fallback=None,
+            session=session,
+        ),
+        session,
+    )
+
+
+def test_remote_chunk_posts_expected_payload():
+    backend, session = _remote_chunk_backend(
+        None, [ok_chunk([["a b", "c d"], ["x"]])]
+    )
+    assert backend.chunk_texts(["a b c d", "x"], 2, 1) == [["a b", "c d"], ["x"]]
+    call = session.calls[0]
+    assert call["url"] == "http://models:8280/v1/chunk"
+    assert call["json"] == {
+        "model": "m",
+        "texts": ["a b c d", "x"],
+        "max_tokens": 2,
+        "overlap": 1,
+    }
+
+
+def test_remote_chunk_requires_one_result_per_text():
+    backend, _ = _remote_chunk_backend(None, [ok_chunk([["a b"]])])
+    with pytest.raises(b.ModelBackendError):
+        backend.chunk_texts(["a b c d", "x"], 2)
+
+
+def test_remote_chunk_falls_back_to_local_on_outage():
+    class Local:
+        def chunk_texts(self, texts, max_tokens, overlap=0):
+            return [["local:" + text] for text in texts]
+
+    backend, _ = _remote_chunk_backend(None, [FakeResponse(503, text="down")])
+    backend._fallback = Local()
+    assert backend.chunk_texts(["a b c d"], 2) == [["local:a b c d"]]
+
+
+def test_local_backend_chunks_with_the_embedder_tokenizer():
+    class Tokenizer:
+        def encode(self, text, add_special_tokens=False):
+            return list(range(len(text.split())))
+
+        def decode(self, token_ids, skip_special_tokens=True):
+            return " ".join(f"w{i}" for i in token_ids)
+
+    class Embedder:
+        tokenizer = Tokenizer()
+
+    backend = b.LocalBackend(embedder_provider=lambda: Embedder())
+    assert backend.chunk_texts(["a b c d e"], 2) == [["w0 w1", "w2 w3", "w4"]]
+    assert backend.chunk_texts(["a b c d e"], 2, overlap=1) == [
+        ["w0 w1", "w1 w2", "w2 w3", "w3 w4", "w4"],
+    ]
+    assert backend.chunk_texts(["a"], 2) == [["a"]]
+
+
+def test_build_chunk_client_off_by_default(monkeypatch):
+    monkeypatch.delenv(b.ENV_MODEL_SERVICE_ENABLED, raising=False)
+    assert b.build_chunk_client("m") is None
+
+
+def test_build_chunk_client_on(monkeypatch):
+    monkeypatch.setenv(b.ENV_MODEL_SERVICE_ENABLED, "1")
+    monkeypatch.setenv(b.ENV_MODEL_SERVICE_URL, "http://models:8280")
+    monkeypatch.setenv(b.ENV_MODEL_SERVICE_TOKEN, "sekret")
+
+    import requests
+
+    calls = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        calls["url"] = url
+        calls["json"] = json
+        calls["headers"] = headers
+        return FakeResponse(200, {"chunks": [["a b", "c"]], "chunk_counts": [2]})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    client = b.build_chunk_client("m")
+    assert client is not None
+    assert client(["a b c"], 2, 1) == [["a b", "c"]]
+    assert calls["url"] == "http://models:8280/v1/chunk"
+    assert calls["json"] == {
+        "model": "m",
+        "texts": ["a b c"],
+        "max_tokens": 2,
+        "overlap": 1,
+    }
+    assert calls["headers"]["Authorization"] == "Bearer sekret"
+
+
+def test_build_chunk_client_reports_a_bad_payload(monkeypatch):
+    monkeypatch.setenv(b.ENV_MODEL_SERVICE_ENABLED, "1")
+    monkeypatch.setenv(b.ENV_MODEL_SERVICE_URL, "http://models:8280")
+
+    import requests
+
+    monkeypatch.setattr(
+        requests,
+        "post",
+        lambda url, json=None, headers=None, timeout=None: FakeResponse(
+            200, {"chunks": []}
+        ),
+    )
+    client = b.build_chunk_client("m")
+    with pytest.raises(b.ModelBackendError):
+        client(["a b c"], 2)

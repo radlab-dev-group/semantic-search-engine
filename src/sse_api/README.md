@@ -34,10 +34,13 @@ single-host deployment.  `src/sse_api/engine/tests/test_import_boundaries.py`
 imports the engine in a process where those packages raise `ImportError`, so
 the boundary cannot quietly regress.
 
-The exception is **file indexing**: `radlab_data` reads and tokenizes the
-uploaded documents and imports `transformers` itself, so a host which ingests
-files installs the model stack (`requirements-models.txt`) as well.  A host
-which only answers searches does not.
+File indexing reads the uploaded documents with the light core of
+`radlab_data` (≥ 0.0.4, from PyPI), which imports without `torch` or `transformers`,
+and *token* chunking (`max_tokens_in_chunk`) is a model-service operation
+(`POST /v1/chunk`): the pages are cut with the tokenizer of the collection's
+embedder, on the model host.  No engine host therefore needs the model
+stack; only a single-host deployment without the service falls back to the
+reader's own tokenizer, and that host installs the stack.
 
 ## Quick Start
 

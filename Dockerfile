@@ -4,11 +4,11 @@
 #
 #   docker build -t sse-api:0.1.0 .
 #
-# The two git-installed dependencies are optional (they are not on PyPI), so
-# they are switched on with build args, exactly like `initialize.sh dep` does:
+# radlab-data comes from `requirements.txt` (PyPI); the remaining optional
+# dependency, llm-router (no release yet), is built from git behind a build
+# arg, exactly like `initialize.sh dep` does:
 #
-#   docker build --build-arg INSTALL_RADLAB_DATA=1 \
-#                --build-arg INSTALL_LLM_ROUTER=1 -t sse-api:0.1.0 .
+#   docker build --build-arg INSTALL_LLM_ROUTER=1 -t sse-api:0.1.0 .
 #
 # Runtime configuration (`configs/*.json`, `secret-key.txt`) is NOT baked in —
 # mount the repo-level `configs/` directory at run time. See
@@ -21,9 +21,7 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-ARG INSTALL_RADLAB_DATA=0
 ARG INSTALL_LLM_ROUTER=0
-ARG RADLAB_DATA_REF=master
 ARG LLM_ROUTER_REF=master
 
 # Runtime configuration is mounted at /app/configs and located through the
@@ -43,9 +41,6 @@ RUN apt-get update \
         python3-dev \
         git \
     && pip install -r requirements.txt \
-    && if [ "${INSTALL_RADLAB_DATA}" = "1" ]; then \
-         pip install "git+https://github.com/radlab-dev-group/radlab-data.git@${RADLAB_DATA_REF}"; \
-       fi \
     && if [ "${INSTALL_LLM_ROUTER}" = "1" ]; then \
          pip install "git+https://github.com/radlab-dev-group/llm-router.git@${LLM_ROUTER_REF}"; \
        fi \

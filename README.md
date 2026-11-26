@@ -161,7 +161,7 @@ semantic-search-engine/
 | **Milvus**                   | 2.3+                  | Vector database for semantic embeddings.                                                         |
 | **Django**                   | 4.x                   | Core web framework for the API layer.                                                            |
 | **boto3**                    | any                   | Required only if you enable AWS S3 storage.                                                      |
-| **radlab_data** package      | ≥ 0.2.0               | Reads and splits the uploaded files during indexing; pulls the model stack with it (see below).  |
+| **radlab_data** package      | ≥ 0.0.4 (PyPI)        | Reads and splits the uploaded files during indexing (light core: no `torch` / `transformers` at import time — see below).  |
 | **CUDA (optional)**          | 11+                   | If you want to run embeddings / LLMs on GPU.                                                     |
 | **Deepl API key** (optional) | –                     | Enables answer translation.                                                                      |
 
@@ -175,13 +175,19 @@ service (`requirements-models.txt`, installed on the model host), and the
 engine refuses no request when that service is down — it degrades to its
 in-process fallback when one is configured and to a plain answer otherwise.
 
-The one remaining consumer of the model stack on the API side is **file
-indexing**: the `radlab_data` package reads and tokenizes the uploaded
-documents and imports `transformers`, so an API host which ingests files
-installs the model stack too, while a host which only serves queries does
-not.  `src/sse_api/engine/tests/test_import_boundaries.py` guards that
-boundary: it imports the engine in a process where `torch`, `transformers`
-and `sentence-transformers` raise `ImportError`.
+File indexing reads the uploaded documents with the light core of the
+`radlab_data` package (≥ 0.0.4, from PyPI): its document loaders, `Document`,
+`DirectoryFileReader` and `TextUtils` import without `torch` or
+`transformers`.  Token chunking is one of the service's operations too
+(`POST /v1/chunk`): the pages of an upload are cut with the tokenizer of the
+embedder of the collection, on the model host, so **no** host of the engine
+installs the model stack — not the one which only answers queries, and not
+the one which ingests files.  Without a configured service the reader chunks
+with its own tokenizer instead, which is the only case in which an indexing
+host still installs the model stack.
+`src/sse_api/engine/tests/test_import_boundaries.py` guards the boundary: it
+imports the engine in a process where `torch`, `transformers` and
+`sentence-transformers` raise `ImportError`.
 
 ---  
 

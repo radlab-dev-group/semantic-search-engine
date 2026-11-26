@@ -17,6 +17,10 @@ from sse_api.data.models import (
     QueryTemplate,
 )
 from sse_api.data.controllers.denoiser import DenoiserController
+from sse_api.data.controllers.token_chunking import (
+    chunk_document_dict,
+    token_chunker_for,
+)
 from sse_api.data.core.constants import DOCUMENT_STATUS_PENDING
 from sse_api.data.core.file_metadata import apply_file_metadata
 from sse_api.engine.controllers.models_logic.embedders_rerankers import (
@@ -30,11 +34,13 @@ def directory_file_reader(**options):
     """
     A reader of the files of an upload, imported when files are really read.
 
-    ``radlab_data`` imports ``transformers`` as soon as its loaders are
-    imported, and the engine — the API, the search, a worker which never
-    ingests a file — must stay importable on a host without the model stack.
-    A function rather than a module-level name, so that a test can hand out
-    its own reader.
+    ``radlab_data`` is an optional dependency of the engine: a host which
+    only answers queries may not have it installed at all, so the import
+    stays inside the call (and a test can hand out its own reader).  Since
+    ``radlab_data`` 0.0.4 its light core — document loaders, ``Document``,
+    ``DirectoryFileReader`` — imports without the model stack; the only part
+    that still needs it is token chunking, which loads the tokenizer from
+    ``transformers`` on first use.
     """
     from radlab_data.text.reader import DirectoryFileReader
 
@@ -151,27 +157,6 @@ class RelationalDBController:
         :param file_metadata: Validated per-file category and metadata options
         :return: UploadedDocuments
         """
-        self.dir_reader = directory_file_reader(
-            main_dir_path=uploaded_document.dir_path,
-            read_sub_dirs=True,
-            processes_count=number_of_process,
-        )
-
-        self.dir_reader.load(
-            prepare_proper_pages=prepare_proper_pages,
-            merge_document_pages=merge_document_pages,
-            clear_texts=clear_texts,
-            use_text_denoiser=use_text_denoiser,
-            max_tokens_in_chunk=max_tokens_in_chunk,
-            number_of_overlap_tokens=number_of_overlap_tokens,
-            check_text_language=check_text_language,
-        )
-
-        documents = apply_file_metadata(
-            [doc.as_dict for doc in self.dir_reader.documents],
-            file_metadata,
-            uploaded_document.dir_path,
-        )
         collection = self.get_add_collection(
             collection_name=collection_name,
             created_by=organisation_user,
@@ -183,6 +168,46 @@ class RelationalDBController:
             embedder_index_params="",
             embedder_search_params="",
         )
+
+        # Token chunking of the pages is the model service's work (the tokens
+        # of the embedder of the collection); without a service the reader
+        # chunks with its own tokenizer, as it always did.
+        chunker = token_chunker_for(collection.model_embedder, max_tokens_in_chunk)
+
+        self.dir_reader = directory_file_reader(
+            main_dir_path=uploaded_document.dir_path,
+            read_sub_dirs=True,
+            processes_count=number_of_process,
+        )
+
+        self.dir_reader.load(
+            prepare_proper_pages=prepare_proper_pages,
+            merge_document_pages=merge_document_pages,
+            clear_texts=clear_texts,
+            use_text_denoiser=use_text_denoiser,
+            max_tokens_in_chunk=None if chunker else max_tokens_in_chunk,
+            number_of_overlap_tokens=None if chunker else number_of_overlap_tokens,
+            check_text_language=check_text_language,
+        )
+
+        documents = apply_file_metadata(
+            [doc.as_dict for doc in self.dir_reader.documents],
+            file_metadata,
+            uploaded_document.dir_path,
+        )
+        if chunker is not None:
+            documents = [
+                (
+                    chunk_document_dict(
+                        doc_as_dict,
+                        chunker,
+                        max_tokens_in_chunk,
+                        number_of_overlap_tokens or 0,
+                    ),
+                    explicit_category,
+                )
+                for doc_as_dict, explicit_category in documents
+            ]
 
         added_document_chunks = []
         with tqdm.tqdm(
@@ -224,6 +249,12 @@ class RelationalDBController:
         indexing_job=None,
     ):
         indexed_documents = []
+        # The tokens of a chunk are the tokens of the embedder of the
+        # collection, so the service cuts the texts when it is reachable.
+        max_tokens = indexing_options["max_tokens_in_chunk"]
+        overlap = indexing_options["number_of_overlap_tokens"]
+        chunker = token_chunker_for(collection.model_embedder, max_tokens)
+
         for doc_as_dict in texts:
             for page in doc_as_dict["pages"]:
                 doc_to_db = input_text_document(
@@ -234,10 +265,8 @@ class RelationalDBController:
                     merge_document_pages=indexing_options["merge_document_pages"],
                     clear_texts=indexing_options["clear_text"],
                     use_text_denoiser=indexing_options["use_text_denoiser"],
-                    max_tokens_in_chunk=indexing_options["max_tokens_in_chunk"],
-                    number_of_overlap_tokens=indexing_options[
-                        "number_of_overlap_tokens"
-                    ],
+                    max_tokens_in_chunk=None if chunker else max_tokens,
+                    number_of_overlap_tokens=None if chunker else overlap,
                     check_text_language=indexing_options["check_text_lang"],
                     document_category=doc_as_dict["category"],
                     document_content=page["page_content"],
@@ -245,6 +274,10 @@ class RelationalDBController:
                 doc_to_db.load()
 
                 d_as_dict = doc_to_db.as_dict
+                if chunker is not None:
+                    d_as_dict = chunk_document_dict(
+                        d_as_dict, chunker, max_tokens, overlap
+                    )
                 if self.exists_document_in_db(
                     doc_as_dict=d_as_dict, collection=collection
                 ):

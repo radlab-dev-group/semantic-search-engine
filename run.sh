@@ -449,7 +449,7 @@ setup() {
 
   "$pip" install --no-deps -e "$API_DIR" --break-system-packages
 
-  log "Installing the dependencies from git (radlab-data, llm-router)"
+  log "Installing the extra dependencies (radlab-data from PyPI, llm-router)"
   ( cd "$API_DIR/src/sse_api" && ./initialize.sh dep )
 }
 
