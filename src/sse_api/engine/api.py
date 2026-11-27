@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 
@@ -18,6 +17,10 @@ from sse_api.core.validation import (
     search_options,
     generation_options,
     rating_integer,
+    collection_names,
+    multi_collection_mode,
+    DEFAULT_MULTI_COLLECTION_MODE,
+    MULTI_COLLECTION_MODES,
 )
 from sse_api.core.errors import error_response
 from sse_api.core.errors_list import INVALID_PARAMS
@@ -47,42 +50,36 @@ from sse_api.engine.controllers.models_logic.embedders_rerankers import (
 )
 from sse_api.engine.models import UserQuery, UserQueryResponse
 from sse_api.engine.controllers.search.semantic import DBSemanticSearchController
-
-
-def optional_collection_names(value):
-    if value is None:
-        return None
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except Exception:
-            raise ValueError("Expected list of collection names")
-    if not isinstance(value, (list, tuple)):
-        raise ValueError("Expected list of collection names")
-    parsed = []
-    for item in value:
-        if not isinstance(item, str) or not item.strip():
-            raise ValueError("Expected nonempty string collection name")
-        parsed.append(item.strip())
-    return parsed
+from sse_api.engine.core.multi_collection import (
+    aggregate_results,
+    annotate_results,
+    collection_display_name,
+    dedupe_collection_names,
+    detailed_items,
+    shared_search_options,
+)
 
 
 class SearchWithOptions(APIView):
-    """
-    sample_options = {
-        "categories": [],
-        "documents_names": [],
-        "max_results": 50,
-        "rerank_results": False,
-        "return_with_factored_fields": False,
-    }
+    """Search one collection or merge the results of several of them.
+
+    ``collection_name`` is kept for backwards compatibility: callers which
+    send only that field get the traditional single-collection response.
+    ``collection_names`` accepts a list (a JSON string in a form body) and
+    ``options.multi_collection_mode`` selects the aggregation strategy.
     """
 
-    required_params = ["collection_name", "query_str", "options"]
-    optional_params = ["collection_names", "ignore_question_lang_detect"]
+    required_params = ["query_str", "options"]
+    optional_params = [
+        "collection_name",
+        "collection_names",
+        "multi_collection_mode",
+        "ignore_question_lang_detect",
+    ]
     input_validators = {
-        "collection_name": required_text,
-        "collection_names": optional_collection_names,
+        "collection_name": optional_text,
+        "collection_names": collection_names,
+        "multi_collection_mode": multi_collection_mode,
         "query_str": required_text,
         "options": search_options,
         "ignore_question_lang_detect": boolean,
@@ -96,31 +93,33 @@ class SearchWithOptions(APIView):
     def post(self, language, organisation_user, request):
         params = request_params(request)
         query_str = params.get("query_str")
-        collection_name = params.get("collection_name")
-        collection_names_param = params.get("collection_names")
-        options_dict = params.get("options")
+        options_dict = dict(params.get("options") or {})
         ignore_question_lang_detect = params.get(
             "ignore_question_lang_detect", False
         )
 
-        multi_coll_mode = options_dict.get("multi_collection_mode", "global_limit")
-        if multi_coll_mode not in ("per_collection", "global_limit"):
-            multi_coll_mode = "global_limit"
-
-        if collection_names_param:
-            target_collection_names = collection_names_param
-        elif collection_name:
-            target_collection_names = [collection_name]
-        else:
-            target_collection_names = []
-
+        target_collection_names = dedupe_collection_names(
+            params.get("collection_names") or []
+        )
+        legacy_name = params.get("collection_name")
+        if not target_collection_names and isinstance(legacy_name, str):
+            target_collection_names = dedupe_collection_names([legacy_name])
         if not target_collection_names:
-            return response_with_status(
-                status=False,
-                language=language,
-                error_name=COLLECTION_ACCESS_DENIED,
-                response_body={},
-            )
+            return error_response(INVALID_PARAMS, language)
+
+        # The mode can come from the options object (the documented place) or
+        # from a top-level form field sent by older UI builds.
+        mode = (
+            params.get("multi_collection_mode")
+            or options_dict.get("multi_collection_mode")
+            or DEFAULT_MULTI_COLLECTION_MODE
+        )
+        if mode not in MULTI_COLLECTION_MODES:
+            mode = DEFAULT_MULTI_COLLECTION_MODE
+        options_dict["multi_collection_mode"] = mode
+        # Remembered on the UserQuery: the history of a multi-collection
+        # search has one ``collection`` FK but knows the whole selection.
+        options_dict["collection_names"] = target_collection_names
 
         collections = []
         for cname in target_collection_names:
@@ -140,9 +139,11 @@ class SearchWithOptions(APIView):
 
         if len(collections) == 1:
             collection = collections[0]
+            # What the request does not say, the collection decides: the saved
+            # profile of the collection fills every missing option, and the
+            # engine's own defaults fill what the collection does not declare.
             if hasattr(collection, "apply_search_defaults"):
                 options_dict = collection.apply_search_defaults(options_dict)
-
             results = SearchQueryController.new_query(
                 query_str=query_str,
                 search_options_dict=options_dict,
@@ -150,22 +151,8 @@ class SearchWithOptions(APIView):
                 organisation_user=organisation_user,
                 sse_engin_config_path=sse_engin_config_path,
                 ignore_question_lang_detect=ignore_question_lang_detect,
+                annotate_collection=True,
             )
-            if isinstance(results, dict) and "results" in results:
-                detailed = results["results"].get("detailed_results", {})
-                if isinstance(detailed, dict):
-                    for item in detailed.values():
-                        if isinstance(item, dict):
-                            item.setdefault("collection_name", collection.name)
-                            item.setdefault(
-                                "collection_display_name",
-                                collection.display_name or collection.name,
-                            )
-                            item.setdefault(
-                                "original_document_name",
-                                item.get("document_name"),
-                            )
-
             return response_with_status(
                 status=True,
                 language=language,
@@ -173,7 +160,16 @@ class SearchWithOptions(APIView):
                 response_body=results,
             )
 
-        # Multi-collection search
+        # A document filter of one collection must not be applied to another
+        # one: only the options shared by all collections travel with every
+        # per-collection search.
+        per_collection_options = shared_search_options(options_dict)
+        max_results = options_dict.get("max_results") or 50
+        try:
+            max_results = int(max_results)
+        except (TypeError, ValueError):
+            max_results = 50
+
         primary_collection = collections[0]
         new_query_obj = UserQuery.objects.create(
             organisation_user=organisation_user,
@@ -186,14 +182,10 @@ class SearchWithOptions(APIView):
         all_stats = {}
         all_template_prompts = []
         all_structured_results = []
-        max_results = options_dict.get("max_results") or 50
-        try:
-            max_results = int(max_results)
-        except (ValueError, TypeError):
-            max_results = 50
+        score_scales = {}
 
         for coll in collections:
-            coll_opts = dict(options_dict)
+            coll_opts = dict(per_collection_options)
             if hasattr(coll, "apply_search_defaults"):
                 coll_opts = coll.apply_search_defaults(coll_opts)
 
@@ -216,89 +208,50 @@ class SearchWithOptions(APIView):
             )
             if coll_template_prompts:
                 all_template_prompts.extend(coll_template_prompts)
-            if coll_structured:
-                all_structured_results.extend(coll_structured)
-
-            coll_detailed = coll_results.get("detailed_results", {})
-            items = (
-                list(coll_detailed.values())
-                if isinstance(coll_detailed, dict)
-                else list(coll_detailed or [])
-            )
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                orig_doc = item.get("document_name", "")
-                annotated_doc = (
-                    f"[{coll.display_name or coll.name}] {orig_doc}"
-                )
-                item_copy = dict(item)
-                item_copy["original_document_name"] = orig_doc
-                item_copy["document_name"] = annotated_doc
-                item_copy["collection_name"] = coll.name
-                item_copy["collection_display_name"] = (
-                    coll.display_name or coll.name
-                )
-                all_detailed.append(item_copy)
-
-            coll_stats = coll_results.get("stats", {})
-            if isinstance(coll_stats, dict):
-                for doc_name, stat_val in coll_stats.items():
-                    if isinstance(stat_val, dict):
-                        annotated_doc = (
-                            f"[{coll.display_name or coll.name}] {doc_name}"
+            if isinstance(coll_structured, (list, tuple)):
+                for structured in coll_structured:
+                    if isinstance(structured, dict):
+                        tagged = dict(structured)
+                        tagged.setdefault("collection_name", getattr(coll, "name", None))
+                        tagged.setdefault(
+                            "collection_display_name",
+                            collection_display_name(coll),
                         )
-                        stat_copy = dict(stat_val)
-                        stat_copy["original_document_name"] = doc_name
-                        stat_copy["document_name"] = annotated_doc
-                        stat_copy["collection_name"] = coll.name
-                        stat_copy["collection_display_name"] = (
-                            coll.display_name or coll.name
-                        )
-                        all_stats[annotated_doc] = stat_copy
+                        all_structured_results.append(tagged)
+                    else:
+                        all_structured_results.append(structured)
 
-        if multi_coll_mode == "global_limit":
-            all_detailed.sort(
-                key=lambda x: x.get("score")
-                if isinstance(x.get("score"), (int, float))
-                else 0.0,
-                reverse=True,
+            annotated = annotate_results(
+                coll_results, coll, rename_document=True
             )
-            final_detailed_list = all_detailed[:max_results]
-            kept_doc_names = {
-                x["document_name"]
-                for x in final_detailed_list
-                if "document_name" in x
-            }
-            final_stats = {
-                k: v for k, v in all_stats.items() if k in kept_doc_names
-            }
-        else:
-            final_detailed_list = all_detailed
-            final_stats = all_stats
+            all_detailed.extend(detailed_items(annotated))
+            for doc_name, value in (annotated.get("stats") or {}).items():
+                if isinstance(value, dict):
+                    all_stats[doc_name] = dict(value)
+            if isinstance(coll_results, dict) and coll_results.get("score_scale"):
+                score_scales[getattr(coll, "name", str(len(score_scales)))] = (
+                    coll_results["score_scale"]
+                )
 
-        total_score_weighted = sum(
-            v.get("score_weighted", 0.0)
-            for v in final_stats.values()
-            if isinstance(v.get("score_weighted"), (int, float))
+        final_detailed_list, final_stats = aggregate_results(
+            all_detailed,
+            all_stats,
+            mode=mode,
+            max_results=max_results,
         )
-        if total_score_weighted > 0:
-            for v in final_stats.values():
-                if isinstance(v.get("score_weighted"), (int, float)):
-                    v["score_weighted_scaled"] = (
-                        v["score_weighted"] / total_score_weighted
-                    )
-
         final_detailed_dict = {
             str(idx): item for idx, item in enumerate(final_detailed_list)
         }
 
         merged_results = {
+            "query": query_str,
             "stats": final_stats,
             "detailed_results": final_detailed_dict,
         }
         if all_structured_results:
             merged_results["structured_results"] = all_structured_results
+        if score_scales:
+            merged_results["collection_score_scales"] = score_scales
 
         query_response = UserQueryResponse.objects.create(
             user_query=new_query_obj,

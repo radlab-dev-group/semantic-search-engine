@@ -41,6 +41,49 @@ def _as_params(body):
     return params
 
 
+#: Strategies of merging results of a multi-collection search.  ``global_limit``
+#: is the default: it keeps the LLM context from growing with the number of
+#: selected collections.
+MULTI_COLLECTION_MODES = ("per_collection", "global_limit")
+DEFAULT_MULTI_COLLECTION_MODE = "global_limit"
+
+
+def multi_collection_mode(value):
+    if not isinstance(value, str) or value.strip() not in MULTI_COLLECTION_MODES:
+        raise ValueError("Expected per_collection or global_limit")
+    return value.strip()
+
+
+def collection_names(value):
+    """Validate the ``collection_names`` parameter of a search request.
+
+    The UI sends a JSON-encoded list in a form field; JSON clients can send a
+    real list.  A single (unquoted) collection name is accepted as a one-item
+    list so the endpoint stays friendly to hand-written requests.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            parsed = [value]
+        if isinstance(parsed, str):
+            parsed = [parsed]
+    elif isinstance(value, (list, tuple)):
+        parsed = list(value)
+    else:
+        raise ValueError("Expected list of collection names")
+    if not isinstance(parsed, list):
+        raise ValueError("Expected list of collection names")
+    cleaned = []
+    for item in parsed:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError("Expected nonempty string collection name")
+        cleaned.append(item.strip())
+    return cleaned
+
+
 def required_text(value):
     if not isinstance(value, str) or not value.strip():
         raise ValueError("Expected nonempty text")
@@ -169,6 +212,10 @@ def search_options(value):
             value["templates"] = identifier(templates)
     if "keywords_match" in value:
         value["keywords_match"] = keyword_match_mode(value["keywords_match"])
+    if "multi_collection_mode" in value and value["multi_collection_mode"] is not None:
+        value["multi_collection_mode"] = multi_collection_mode(
+            value["multi_collection_mode"]
+        )
     groups = value.get("metadata_filter_groups", [])
     if not isinstance(groups, list) or len(groups) > 8:
         raise ValueError("Expected up to eight metadata filter groups")

@@ -746,8 +746,24 @@ def convert_search_results_to_doc2answer(
             doc2answers[doc_name] = []
 
         text_str = result["text_str"]
-        if use_doc_names_in_response:
-            text_str = f"{doc_name}: {text_str}"
+        # In a multi-collection search the router receives a flat knowledge
+        # base of passages.  Keep the collection in the passage itself, so the
+        # model can cite it even when the caller disabled document-name
+        # prefixes and the router does not render the dictionary keys.
+        coll_disp = result.get("collection_display_name") or result.get(
+            "collection_name"
+        )
+        original_name = result.get("original_document_name")
+        is_multi_collection = bool(
+            coll_disp and original_name and doc_name != original_name
+        )
+        if use_doc_names_in_response or is_multi_collection:
+            label = (
+                f"[[Kolekcja: {coll_disp}] {original_name}]"
+                if is_multi_collection
+                else doc_name
+            )
+            text_str = f"{label}: {text_str}"
         doc2answers[doc_name].append(text_str)
 
     return doc2answers
