@@ -181,6 +181,41 @@ JSONField `query_options`. Nie trzeba wykonywać migracji schematu bazy.
 W zaktualizowanym kliencie Python można użyć
 `SearchOptions(keywords=[...], keywords_match="any")` lub słownika opcji.
 
+### Wyszukiwanie w wielu kolekcjach: `collection_names`
+
+`POST /api/search_with_options` przyjmuje `collection_names` (lista nazw lub
+lista zakodowana jako JSON w formularzu) obok dotychczasowego
+`collection_name`. Gdy podano tylko jedną kolekcję, endpoint zachowuje się jak
+dawniej, a każdy wynik dostaje dodatkowe pola `collection_name`,
+`collection_display_name` i `original_document_name` (nazwa dokumentu bez
+zmian). Dla kilku kolekcji `options.multi_collection_mode` wybiera agregację:
+
+* `per_collection` — każda kolekcja zwraca do `options.max_results` fragmentów,
+  a wszystkie trafiają do jednej puli (`N × max_results` wyników);
+* `global_limit` (domyślnie) — fragmenty ze wszystkich kolekcji są razem
+  sortowane po `score` i odcinane do `options.max_results`.
+
+Wyniki wielokolekcyjne mają `document_name` z prefiksem kolekcji, np.
+`[Kolekcja B] regulamin.pdf`, oraz pola pochodzenia; statystyki `stats` są
+przeliczane globalnie (`score_weighted_scaled` sumuje się do `1.0`), więc
+`POST /api/generative_answer` może z nich bezpośrednio wybrać dokumenty.
+System prompt generatywny dostaje instrukcję cytowania kolekcji i dokumentu,
+a metadane odpowiedzi (`citations`) zawierają kolekcję każdego źródła.
+Filtry nazw dokumentów jednej kolekcji (`documents`, `categories`,
+`relative_paths`, `templates`, `metadata_filters`) są pomijane w zapytaniach
+wielokolekcyjnych, aby nie wyciszyć wyników pozostałych kolekcji. Pełna lista
+wybranych kolekcji i tryb są zapisywane w `UserQuery.query_options`, dzięki
+czemu historia wyszukiwań nie traci informacji o zasięgu zapytania.
+
+```json
+{
+  "collection_name": "hr",
+  "collection_names": ["hr", "finance"],
+  "query_str": "Ile dni urlopu przysługuje pracownikowi?",
+  "options": {"max_results": 10, "multi_collection_mode": "global_limit"}
+}
+```
+
 W polu `stats` (statystyki na poziomie dokumentu) każdy wynik z chunka jest
 najpierw normalizowany do przedziału `[0, 1]` -- w zależności od etapu
 wyszukiwania jest to podobieństwo cosine, wartość RRF lub logit
