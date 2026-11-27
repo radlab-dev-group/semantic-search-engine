@@ -33,6 +33,51 @@ from sse_api.engine.controllers.search.semantic import (
 )  # noqa: F401
 
 
+#: The RAG context of a multi-collection search carries collection-prefixed
+#: document names.  The router must be told explicitly to keep that prefix in
+#: its citations, otherwise the model tends to shorten ``[HR] regulamin.pdf``
+#: to ``regulamin.pdf`` and the origin of a claim is lost.
+MULTI_COLLECTION_CITATION_INSTRUCTION = (
+    "Kontekst pochodzi z wielu kolekcji. Po każdym zdaniu opartym na dokumentach "
+    "podaj w nawiasie kwadratowym kolekcję i dokument, z którego pochodzi "
+    "informacja, np. [[Kolekcja: HR] regulamin.pdf]. Zachowaj pełną nazwę "
+    "dokumentu z prefiksem kolekcji i cytuj wyłącznie dokumenty z kontekstu."
+)
+MULTI_COLLECTION_ENUMERATED_INSTRUCTION = (
+    "Kontekst pochodzi z wielu kolekcji. Cytuj każdy wykorzystany fragment "
+    "jego numerem w nawiasie kwadratowym, np. [1], i przy każdej informacji "
+    "wymień także kolekcję źródłową, np. [Kolekcja: HR]. Nie usuwaj prefiksu "
+    "kolekcji z nazw dokumentów."
+)
+
+
+def has_collection_provenance(search_results) -> bool:
+    """Whether any fragment of a stored response knows its collection."""
+    items = (
+        search_results.values()
+        if isinstance(search_results, dict)
+        else (search_results or [])
+    )
+    return any(
+        isinstance(item, dict)
+        and (item.get("collection_name") or item.get("collection_display_name"))
+        for item in items
+    )
+
+
+def collection_citation_instruction(
+    search_results, system_prompt_with_enumerated_documents: bool
+) -> str | None:
+    """Citation instruction for a multi-collection RAG context, if needed."""
+    if not has_collection_provenance(search_results):
+        return None
+    return (
+        MULTI_COLLECTION_ENUMERATED_INSTRUCTION
+        if system_prompt_with_enumerated_documents
+        else MULTI_COLLECTION_CITATION_INSTRUCTION
+    )
+
+
 class GenerativeModelConfig:
     """
     Konfigurator modeli generatywnych.
@@ -287,8 +332,17 @@ class GenerativeModelControllerApi:
             if not len(request_data["texts"]):
                 return None, None
 
-        if system_prompt is not None and len(system_prompt.strip()):
-            request_data["system_prompt"] = system_prompt
+        effective_system_prompt = system_prompt
+        instruction = collection_citation_instruction(
+            search_results, system_prompt_with_enumerated_documents
+        )
+        if instruction is not None:
+            base = system_prompt.strip() if isinstance(system_prompt, str) else ""
+            effective_system_prompt = (
+                f"{base}\n\n{instruction}" if base else instruction
+            )
+        if isinstance(effective_system_prompt, str) and effective_system_prompt.strip():
+            request_data["system_prompt"] = effective_system_prompt.strip()
 
         _r_client = self._create_router_client(qa_gen_model)
         generate = (
@@ -311,13 +365,35 @@ class GenerativeModelControllerApi:
                     "Generated answer contains unknown citation numbers"
                 )
 
-        if response_metadata is not None and system_prompt_with_enumerated_documents:
-            response_metadata.update(generated_answer.model_dump())
-            response_metadata["citations"] = request_data["enumerated_documents"]
-            if rag_context is not None:
-                response_metadata["citation_registry"] = rag_context["registry"]
-                response_metadata["answer_source"] = (
-                    "history" if rag_context["history_only"] else "rag"
+        if response_metadata is not None:
+            if system_prompt_with_enumerated_documents:
+                response_metadata.update(generated_answer.model_dump())
+                response_metadata["citations"] = request_data[
+                    "enumerated_documents"
+                ]
+                if rag_context is not None:
+                    response_metadata["citation_registry"] = rag_context["registry"]
+                    response_metadata["answer_source"] = (
+                        "history" if rag_context["history_only"] else "rag"
+                    )
+            elif has_collection_provenance(search_results):
+                # The legacy prompt has no numbered fragments, but the UI
+                # still needs a source list with the collection of each cited
+                # document.  Derive it from the same chunks that built the
+                # context so the badges cannot drift from the answer.
+                response_metadata.update(generated_answer.model_dump())
+                results_dict = (
+                    search_results
+                    if isinstance(search_results, dict)
+                    else {
+                        str(idx): item
+                        for idx, item in enumerate(search_results or [])
+                    }
+                )
+                response_metadata["citations"] = (
+                    convert_search_results_to_enumerated_documents(
+                        results_dict, which_docs
+                    )
                 )
 
         generation_time = generated_answer.generation_time

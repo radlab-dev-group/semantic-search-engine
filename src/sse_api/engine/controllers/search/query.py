@@ -10,6 +10,7 @@ from sse_api.engine.models import (
     UserQueryResponseAnswer,
 )
 from sse_api.engine.controllers.search.semantic import DBSemanticSearchController
+from sse_api.engine.core.multi_collection import annotate_results
 
 
 class SearchQueryController:
@@ -35,6 +36,7 @@ class SearchQueryController:
         organisation_user: OrganisationUser,
         sse_engin_config_path: str,
         ignore_question_lang_detect: bool = False,
+        annotate_collection: bool = False,
     ):
         """
         Create a new user query, execute the search and persist the response.
@@ -53,6 +55,13 @@ class SearchQueryController:
             Path to the semantic search engine configuration file.
         ignore_question_lang_detect : bool, optional
             If ``True`` the language detection step is skipped.
+        annotate_collection : bool, optional
+            Tag every result with ``collection_name``,
+            ``collection_display_name`` and ``original_document_name`` before
+            it is returned *and* persisted.  The persisted copy is what the
+            generative answer and the search history read later.  Document
+            names stay unchanged, so a single-collection search keeps its
+            traditional presentation.
 
         Returns
         -------
@@ -87,6 +96,11 @@ class SearchQueryController:
                 user_query=new_query_obj,
             )
         )
+
+        if annotate_collection:
+            results = annotate_results(
+                results, collection, rename_document=False
+            )
 
         query_response = UserQueryResponse.objects.create(
             user_query=new_query_obj,
@@ -225,6 +239,14 @@ class SearchQueryController:
             ),
             "collection_name": (
                 user_query.collection.name if user_query.collection else None
+            ),
+            # A multi-collection query belongs to its first collection in the
+            # database, but the whole selection is kept in query_options.
+            "collection_names": (user_query.query_options or {}).get(
+                "collection_names"
+            ),
+            "multi_collection_mode": (user_query.query_options or {}).get(
+                "multi_collection_mode"
             ),
             "query_options": user_query.query_options or {},
             "results": {
